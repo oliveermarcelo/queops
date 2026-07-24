@@ -1,0 +1,6 @@
+{
+  "name": "Quéops Pirâmides",
+  "description": "Loja de pirâmides artesanais, cristais, incensos e artigos espirituais. Peças proporcionais à Grande Pirâmide de Quéops, feitas à mão desde 1990.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

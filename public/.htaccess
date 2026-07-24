@@ -1,0 +1,32 @@
+# ---- SPA routing (React) ----
+# Faz /admin e qualquer outra rota carregarem o index.html em vez de 404.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Se o arquivo/pasta existir de verdade (assets, imagens), serve normalmente.
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Caso contrário, devolve o index.html (o roteador do React resolve a rota).
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# ---- Compressão (gzip) ----
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript application/json image/svg+xml
+</IfModule>
+
+# ---- Cache dos assets com hash (Vite gera nomes únicos por build) ----
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  # O HTML nunca deve ser cacheado, para sempre pegar o build novo.
+  ExpiresByType text/html "access plus 0 seconds"
+</IfModule>
