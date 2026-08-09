@@ -8,6 +8,7 @@ import { ShoppingCart, ImageOff } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Product } from '../types';
 import { safeImageSrc } from '../utils/safeUrl';
+import { brlNumber } from '../utils/currency';
 
 interface ProductCardProps {
   product: Product;
@@ -23,7 +24,7 @@ export default function ProductCard({ product, onSelect, onAddToCart }: ProductC
   const discountPct = hasDiscount
     ? Math.round((1 - product.price / (product.oldPrice as number)) * 100)
     : 0;
-  const installment = (product.price / 3).toFixed(2);
+  const installment = brlNumber(product.price / 3);
 
   return (
     <motion.div
@@ -47,6 +48,8 @@ export default function ProductCard({ product, onSelect, onAddToCart }: ProductC
             src={safeImageSrc(product.image)}
             alt={product.name}
             onError={() => setImgError(true)}
+            loading="lazy"
+            decoding="async"
             className="max-h-full max-w-full object-contain transform transition-transform duration-500 group-hover:scale-110 drop-shadow-sm"
             referrerPolicy="no-referrer"
           />
@@ -78,12 +81,12 @@ export default function ProductCard({ product, onSelect, onAddToCart }: ProductC
         <div className="mt-auto">
           {hasDiscount && (
             <span className="text-xs text-gray-400 line-through font-medium block">
-              R$ {(product.oldPrice as number).toFixed(2)}
+              R$ {brlNumber(product.oldPrice as number)}
             </span>
           )}
           <div className="flex items-baseline gap-1.5">
             <span className={`text-xl font-extrabold ${hasDiscount ? 'text-brand-red' : 'text-gray-900'}`}>
-              R$ {product.price.toFixed(2)}
+              R$ {brlNumber(product.price)}
             </span>
           </div>
           <span className="text-[11px] text-emerald-600 font-semibold">

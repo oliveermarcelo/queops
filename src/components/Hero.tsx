@@ -46,7 +46,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
       subtitle: 'Ametistas, quartzos e minerais escolhidos individualmente por procedência e beleza natural.',
       cta: 'Ver cristais',
       action: () => onSelectCategory('cristais'),
-      image: 'https://images.unsplash.com/photo-1610561712021-2c8b3d3e8b9c?q=80&w=1200&auto=format&fit=crop',
+      image: 'https://queopspiramides.com.br/wp-content/uploads/2026/03/IMG-20260311-WA0088.png',
       tint: 'from-[#2a1206]/95 via-[#42210b]/75 to-transparent',
     },
     {

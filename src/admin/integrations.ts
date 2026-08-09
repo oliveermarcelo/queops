@@ -160,7 +160,7 @@ export const PROVIDERS: ProviderMeta[] = [
     docsUrl: 'https://doc.evolution-api.com',
     fields: [
       { key: 'baseUrl', label: 'URL base', type: 'url', placeholder: 'https://evolution.suaempresa.com' },
-      { key: 'instance', label: 'Nome da instância', placeholder: 'km-alimentos' },
+      { key: 'instance', label: 'Nome da instância', placeholder: 'queops-piramides' },
       { key: 'apiKey', label: 'API Key', type: 'password' },
     ],
   },

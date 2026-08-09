@@ -12,10 +12,12 @@ import {defineConfig, Plugin} from 'vite';
  *  - script-src 'self'  → no inline <script>, no eval; scripts only from our origin
  *  - img-src https: data: → catalog images, admin-pasted URLs and inline uploads
  *  - connect-src https:  → admin panel calls payment/ERP/WhatsApp APIs directly
- *  - object-src 'none', base-uri 'self', form-action 'self', frame-ancestors 'none'
+ *  - object-src 'none', base-uri 'self', form-action 'self'
  *
- * NOTE: a <meta> CSP cannot enforce frame-ancestors or send reports. For
- * production, ALSO set this (and HSTS) as a real HTTP header on the server/CDN.
+ * NOTE: a <meta> CSP cannot enforce frame-ancestors or send reports — the
+ * browser ignores the directive and logs a console warning, so it is set as a
+ * real HTTP header in public/.htaccess instead (along with HSTS). For
+ * production, ALSO serve this whole policy as a header on the server/CDN.
  * Revisit when the backend is added.
  */
 const CSP = [
@@ -28,7 +30,7 @@ const CSP = [
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
-  "frame-ancestors 'none'",
+  // frame-ancestors intentionally omitted: ignored in <meta>, set via .htaccess.
   'upgrade-insecure-requests',
 ].join('; ');
 

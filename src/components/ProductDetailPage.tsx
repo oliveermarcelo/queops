@@ -12,6 +12,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Product } from '../types';
 import { safeImageSrc } from '../utils/safeUrl';
+import { brlNumber } from '../utils/currency';
 
 interface ProductDetailPageProps {
   product: Product;
@@ -79,7 +80,7 @@ export default function ProductDetailPage({
     ? Math.round((1 - product.price / (product.oldPrice as number)) * 100)
     : 0;
   const savings = hasDiscount ? (product.oldPrice as number) - product.price : 0;
-  const installment = (product.price / 3).toFixed(2);
+  const installment = brlNumber(product.price / 3);
   const pixPrice = product.price * 0.95; // 5% Pix discount (matches checkout)
 
   // Stock signal
@@ -338,10 +339,10 @@ export default function ProductDetailPage({
                 {hasDiscount && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-400 line-through font-medium">
-                      R$ {(product.oldPrice as number).toFixed(2)}
+                      R$ {brlNumber(product.oldPrice as number)}
                     </span>
                     <span className="text-[11px] font-extrabold text-brand-red bg-brand-red/10 px-2 py-0.5 rounded-full">
-                      Economize R$ {savings.toFixed(2)}
+                      Economize R$ {brlNumber(savings)}
                     </span>
                   </div>
                 )}
@@ -349,7 +350,7 @@ export default function ProductDetailPage({
                 <div className="flex items-end justify-between gap-3">
                   <div className="flex items-baseline gap-1.5">
                     <span className={`text-4xl font-black tracking-tight ${hasDiscount ? 'text-brand-red' : 'text-gray-900'}`}>
-                      R$ {product.price.toFixed(2)}
+                      R$ {brlNumber(product.price)}
                     </span>
                     <span className="text-sm text-gray-400 font-semibold">/ {product.weight}</span>
                   </div>
@@ -358,7 +359,7 @@ export default function ProductDetailPage({
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-1">
                   <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
                     <QrCode className="w-4 h-4" />
-                    R$ {pixPrice.toFixed(2)} no Pix
+                    R$ {brlNumber(pixPrice)} no Pix
                   </span>
                   <span className="inline-flex items-center gap-1.5 text-[13px] text-gray-500">
                     <CreditCard className="w-4 h-4 text-gray-400" />
@@ -434,7 +435,7 @@ export default function ProductDetailPage({
                     ) : (
                       <>
                         <ShoppingCart className="w-5 h-5" />
-                        <span>Adicionar • R$ {subtotalSum.toFixed(2)}</span>
+                        <span>Adicionar • R$ {brlNumber(subtotalSum)}</span>
                       </>
                     )}
                   </button>
@@ -648,11 +649,11 @@ export default function ProductDetailPage({
                     </h4>
                     <div className="mt-auto pt-2.5">
                       {pDiscount && (
-                        <span className="text-[11px] text-gray-400 line-through block">R$ {(p.oldPrice as number).toFixed(2)}</span>
+                        <span className="text-[11px] text-gray-400 line-through block">R$ {brlNumber(p.oldPrice as number)}</span>
                       )}
                       <div className="flex items-center justify-between">
                         <span className={`text-lg font-extrabold ${pDiscount ? 'text-brand-red' : 'text-gray-900'}`}>
-                          R$ {p.price.toFixed(2)}
+                          R$ {brlNumber(p.price)}
                         </span>
                         <button
                           onClick={(e) => {

@@ -44,11 +44,11 @@ export default function App() {
   // Cart State (Pre-populated with exactly 2 items to match the "2" badge in the mockup)
   const [cartItems, setCartItems] = useState<CartItem[]>([
     {
-      product: PRODUCTS[0], // Palmito Inteiro Premium
+      product: PRODUCTS[0], // Placa de Cobre M
       quantity: 1,
     },
     {
-      product: PRODUCTS[1], // Azeitonas Verdes Recheadas
+      product: PRODUCTS[1], // Pirâmide de Cobre Fechada 15cm
       quantity: 1,
     },
   ]);

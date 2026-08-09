@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { CartItem } from '../types';
 import { CustomerAccount } from '../account/session';
 import { safeImageSrc } from '../utils/safeUrl';
+import { brlNumber } from '../utils/currency';
 
 interface CheckoutPageProps {
   cartItems: CartItem[];
@@ -222,7 +223,7 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
               <div className="flex justify-between items-center"><span className="text-gray-400 flex items-center gap-1.5"><Truck className="w-4 h-4" /> Entrega prevista</span><span className="font-semibold text-gray-800">{order?.deliveryDate}</span></div>
               <div className="border-t border-dashed border-gray-200 pt-3.5 flex justify-between items-baseline">
                 <span className="font-bold text-gray-900">Total pago</span>
-                <span className="text-2xl font-extrabold text-primary-blue">R$ {order?.total.toFixed(2)}</span>
+                <span className="text-2xl font-extrabold text-primary-blue">R$ {order ? brlNumber(order.total) : ''}</span>
               </div>
             </div>
             <button
@@ -490,25 +491,25 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="text-sm font-semibold text-gray-800 truncate">{item.product.name}</h4>
-                      <p className="text-[11px] text-gray-400">R$ {item.product.price.toFixed(2)} / un</p>
+                      <p className="text-[11px] text-gray-400">R$ {brlNumber(item.product.price)} / un</p>
                     </div>
-                    <span className="text-sm font-bold text-gray-900">R$ {(item.product.price * item.quantity).toFixed(2)}</span>
+                    <span className="text-sm font-bold text-gray-900">R$ {brlNumber(item.product.price * item.quantity)}</span>
                   </div>
                 ))}
               </div>
 
               <div className="px-6 py-5 border-t border-gray-100 space-y-2.5 text-sm">
-                <div className="flex justify-between text-gray-500"><span>Subtotal</span><span>R$ {subtotal.toFixed(2)}</span></div>
+                <div className="flex justify-between text-gray-500"><span>Subtotal</span><span>R$ {brlNumber(subtotal)}</span></div>
                 {isPixSelected && (
-                  <div className="flex justify-between text-emerald-600 font-medium"><span>Desconto Pix (5%)</span><span>- R$ {pixDiscount.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-emerald-600 font-medium"><span>Desconto Pix (5%)</span><span>- R$ {brlNumber(pixDiscount)}</span></div>
                 )}
                 <div className="flex justify-between text-gray-500">
                   <span>Frete</span>
-                  <span className={shippingCost === 0 ? 'text-emerald-600 font-semibold' : ''}>{shippingCost === 0 ? 'Grátis' : `R$ ${shippingCost.toFixed(2)}`}</span>
+                  <span className={shippingCost === 0 ? 'text-emerald-600 font-semibold' : ''}>{shippingCost === 0 ? 'Grátis' : `R$ ${brlNumber(shippingCost)}`}</span>
                 </div>
                 <div className="flex justify-between items-baseline pt-3.5 border-t border-dashed border-gray-200">
                   <span className="font-bold text-gray-900">Total</span>
-                  <span className="text-2xl font-extrabold text-primary-blue">R$ {grandTotal.toFixed(2)}</span>
+                  <span className="text-2xl font-extrabold text-primary-blue">R$ {brlNumber(grandTotal)}</span>
                 </div>
               </div>
 

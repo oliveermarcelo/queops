@@ -14,8 +14,8 @@ import { safeImageSrc } from '../../utils/safeUrl';
 const blank = (): Product => ({
   id: '',
   name: '',
-  category: 'palmitos',
-  categoryLabel: 'Palmitos',
+  category: 'piramides',
+  categoryLabel: 'Pirâmides',
   description: '',
   price: 0,
   stock: 0,
@@ -79,7 +79,9 @@ export default function ProductsAdmin() {
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
                         {p.image
-                          ? <img src={safeImageSrc(p.image)} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                          // lazy: a listagem tem dezenas de miniaturas remotas; carregar
+                          // apenas as visíveis faz a tabela aparecer preenchida de imediato.
+                          ? <img src={safeImageSrc(p.image)} alt="" loading="lazy" decoding="async" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                           : <span className="text-[9px] text-gray-300">s/ img</span>}
                       </div>
                       <div className="min-w-0">
@@ -163,7 +165,8 @@ function ProductEditor({ initial, onCancel, onSave }: {
                 }}
                 className={inputCls}
               >
-                {MENU_CATEGORIES.filter((c) => c.subcategories.length > 0 || ['palmitos', 'azeitonas'].includes(c.id)).map((c) => (
+                {/* 'Destaques' é uma vitrine, não uma categoria de catálogo: fica de fora. */}
+                {MENU_CATEGORIES.filter((c) => c.subcategories.length > 0).map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>

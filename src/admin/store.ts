@@ -108,12 +108,12 @@ const CUSTOMERS_POOL = [
   { name: 'João Santos', email: 'joao.santos@email.com' },
   { name: 'Ana Costa', email: 'ana.costa@email.com' },
   { name: 'Pedro Lima', email: 'pedro.lima@email.com' },
-  { name: 'Restaurante Sabor & Arte', email: 'compras@saborarte.com' },
+  { name: 'Espaço Terapêutico Luz Interior', email: 'compras@luzinterior.com.br' },
   { name: 'Carla Mendes', email: 'carla.mendes@email.com' },
-  { name: 'Bistrô da Praça', email: 'contato@bistrodapraca.com' },
+  { name: 'Loja Caminho de Cristal', email: 'contato@caminhodecristal.com.br' },
   { name: 'Lucas Ferreira', email: 'lucas.ferreira@email.com' },
   { name: 'Juliana Prado', email: 'juliana.prado@email.com' },
-  { name: 'Mercado Bom Preço', email: 'pedidos@bompreco.com' },
+  { name: 'Terapias Harmonia Zen', email: 'pedidos@harmoniazen.com.br' },
   { name: 'Rafael Almeida', email: 'rafael.almeida@email.com' },
   { name: 'Beatriz Souza', email: 'beatriz.souza@email.com' },
 ];
@@ -195,7 +195,7 @@ function seedAbandoned(): AbandonedCart[] {
   const samples = [
     { name: 'Fernanda Alves', phone: '5511988887777', email: 'fernanda@email.com', idxs: [0, 4], hoursAgo: 2 },
     { name: 'Ricardo Souza', phone: '5511977776666', email: 'ricardo@email.com', idxs: [1], hoursAgo: 8 },
-    { name: 'Bistrô da Praça', phone: '5511966665555', email: 'compras@bistro.com', idxs: [2, 3, 5], hoursAgo: 26 },
+    { name: 'Loja Caminho de Cristal', phone: '5511966665555', email: 'contato@caminhodecristal.com.br', idxs: [2, 3, 5], hoursAgo: 26 },
     { name: 'Juliana Prado', phone: '5511955554444', email: 'juliana@email.com', idxs: [6], hoursAgo: 50 },
   ];
   return samples.map((s, i) => {

@@ -8,6 +8,7 @@ import { Search, ShoppingBag, Menu, X, User, Truck, Headset, CreditCard } from '
 import { AnimatePresence } from 'motion/react';
 import logoUrl from '../assets/logo.svg';
 import MegaMenu, { MegaMenuMobile } from './MegaMenu';
+import { brlNumber } from '../utils/currency';
 
 interface HeaderProps {
   cartCount: number;
@@ -141,7 +142,7 @@ export default function Header({
                 </div>
                 <span className="hidden sm:flex flex-col leading-tight text-left">
                   <span className="text-[10px] text-gray-400">Sacola</span>
-                  <span className="text-xs font-bold font-mono">R$ {cartTotal.toFixed(2)}</span>
+                  <span className="text-xs font-bold font-mono">R$ {brlNumber(cartTotal)}</span>
                 </span>
               </button>
 

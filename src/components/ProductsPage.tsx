@@ -8,6 +8,7 @@ import { Search, SlidersHorizontal, X, ChevronDown } from 'lucide-react';
 import { Product } from '../types';
 import { PRODUCTS, MENU_CATEGORIES } from '../data';
 import ProductCard from './ProductCard';
+import { brlNumber } from '../utils/currency';
 
 interface ProductsPageProps {
   activeCategory: string;
@@ -186,8 +187,8 @@ export default function ProductsPage({
           className="w-full accent-primary-blue cursor-pointer"
         />
         <div className="flex items-center justify-between text-xs text-gray-500 font-mono">
-          <span>R$ {MIN_PRICE.toFixed(2)}</span>
-          <span className="font-bold text-primary-blue">até R$ {maxPrice.toFixed(2)}</span>
+          <span>R$ {brlNumber(MIN_PRICE)}</span>
+          <span className="font-bold text-primary-blue">até R$ {brlNumber(maxPrice)}</span>
         </div>
       </div>
 
