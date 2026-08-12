@@ -92,7 +92,7 @@ export default function ProductCard({ product, onSelect, onAddToCart }: ProductC
               R$ {brlNumber(product.price)}
             </span>
           </div>
-          <span className="text-[11px] text-emerald-600 font-semibold">
+          <span className="text-[11px] text-primary-container font-semibold">
             {INSTALLMENTS}x de R$ {installment} sem juros
           </span>
         </div>

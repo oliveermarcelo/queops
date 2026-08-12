@@ -30,7 +30,7 @@ export default function CategoryFilter({ setActiveCategory }: CategoryFilterProp
         {/* Section header */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-10">
           <div>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.25em] text-brand-red">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.25em] text-primary-blue">
               Navegue
             </span>
             <h2 className="mt-3 font-display font-bold text-3xl sm:text-4xl text-primary-blue tracking-tight">
@@ -55,7 +55,7 @@ export default function CategoryFilter({ setActiveCategory }: CategoryFilterProp
               transition={{ duration: 0.5, delay: i * 0.06 }}
               className="group relative h-44 sm:h-60 rounded-2xl overflow-hidden text-left cursor-pointer shadow-sm hover:shadow-2xl transition-all duration-300"
             >
-              <div className="absolute inset-0 bg-gradient-to-br from-[#f0eae0] to-[#e6ded0]" />
+              <div className="absolute inset-0 bg-gradient-to-br from-brand-green-200 to-brand-green-300" />
               <img
                 src={cat.image}
                 alt={cat.name}
@@ -64,7 +64,7 @@ export default function CategoryFilter({ setActiveCategory }: CategoryFilterProp
                 referrerPolicy="no-referrer"
               />
               {/* Readability gradient */}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#232819]/85 via-[#414a36]/25 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#1b2b18]/85 via-[#3a5634]/25 to-transparent" />
 
               <div className="absolute inset-0 p-5 sm:p-6 flex flex-col justify-end">
                 <h3 className="text-lg sm:text-2xl font-extrabold text-white leading-tight drop-shadow-sm">

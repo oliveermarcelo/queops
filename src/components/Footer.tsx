@@ -31,7 +31,7 @@ export default function Footer({ onOpenStory, onOpenCertifications }: FooterProp
   };
 
   return (
-    <footer id="main-footer" className="relative bg-[#232819] text-white overflow-hidden">
+    <footer id="main-footer" className="relative bg-[#1b2b18] text-white overflow-hidden">
       <div className="absolute -top-24 right-1/4 w-96 h-96 rounded-full bg-brand-gold/5 blur-3xl pointer-events-none" />
 
       {/* Newsletter band */}
@@ -54,7 +54,7 @@ export default function Footer({ onOpenStory, onOpenCertifications }: FooterProp
               />
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-brand-gold hover:bg-white text-primary-blue font-bold text-sm uppercase tracking-wider transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-brand-rose-deep hover:bg-brand-rose text-brand-ink font-bold text-sm uppercase tracking-wider transition-colors whitespace-nowrap"
               >
                 <Send size={15} /> Cadastrar
               </button>

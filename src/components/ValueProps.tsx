@@ -41,7 +41,7 @@ export default function ValueProps() {
   return (
     <section
       id="brand-values"
-      className="relative overflow-hidden bg-gradient-to-br from-[#232819] via-primary-blue to-primary-container text-white py-24 lg:py-32"
+      className="relative overflow-hidden bg-gradient-to-br from-[#1b2b18] via-primary-blue to-primary-container text-white py-24 lg:py-32"
     >
       {/* Ambient glows */}
       <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-brand-gold/10 blur-3xl pointer-events-none" />

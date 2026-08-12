@@ -60,7 +60,7 @@ export default function IntegrationsAdmin() {
   return (
     <div className="space-y-8">
       {/* Hero header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#232819] via-primary-blue to-primary-container text-white p-6 sm:p-8">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b2b18] via-primary-blue to-primary-container text-white p-6 sm:p-8">
         <Plug size={150} className="absolute -right-6 -bottom-8 text-white/10" />
         <div className="absolute -top-10 -left-10 w-40 h-40 rounded-full bg-brand-gold/15 blur-3xl" />
         <div className="relative">

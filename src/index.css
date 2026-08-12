@@ -25,38 +25,65 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
   /* ==================================================================
-     PALETA — creme, verde sálvia/oliva e cobre.
+     PALETA — escala de verdes derivada de #AFC8AA (a cor da marca), com
+     creme no fundo e cobre no acento.
 
-     O verde é a cor estrutural (cabeçalho, botões, títulos), o cobre é o
-     acento metálico (preços, chamadas) e o creme é o fundo.
+     Todos os tons abaixo têm o MESMO matiz (110°) e a mesma família de
+     saturação do verde original; só a luminosidade muda. É isso que faz a
+     loja parecer pintada com uma cor só, em vez de com verdes parecidos.
 
-     Contraste com branco (WCAG 2.1), medido:
-       forest  #414A36 → 9,3:1  ✓ AAA — botões, sidebar, títulos
-       olive   #5E6650 → 6,0:1  ✓ AA  — hover
-       copper  #9C6238 → 5,0:1  ✓ AA  — acento em texto normal
-       sage    #7C8466 → 3,9:1  — área e ícone, nunca texto pequeno
-       gold    #C9A14A → 2,4:1  — decorativo, só sobre fundo escuro
-     Texto ink #2B3125 sobre creme #F4EFE7 → 11,7:1 ✓ AAA
+     brand-green-300 é exatamente a cor enviada. Os tons escuros existem
+     porque texto branco sobre o 300 dá 1,8:1 — ilegível; sobre o 700 dá 8,2:1.
+
+     Contraste medido (WCAG 2.1):
+       branco sobre green-900 #1B2B18 → 14,9:1 ✓ AAA
+       branco sobre green-800 #2A4125 → 11,2:1 ✓ AAA  (hover)
+       branco sobre green-700 #3A5634 →  8,2:1 ✓ AAA  (botões, faixa, sidebar)
+       branco sobre green-600 #4E7047 →  5,6:1 ✓ AA
+       green-700 como texto sobre creme        →  7,2:1 ✓ AAA
+       branco sobre cobre #9C6238              →  5,0:1 ✓ AA   (CTA)
+       rosê sobre green-800                    →  6,2:1 ✓ AA   (números, realces)
+       texto ink sobre rose-deep               →  4,8:1 ✓ AA   (botão do rodapé)
+       texto ink #2B3125 sobre creme           → 11,7:1 ✓ AAA
      ================================================================== */
-  --color-brand-cream: #f4efe7;       /* fundo geral (areia clara) */
-  --color-brand-sand: #e6ded0;        /* blocos claros, bordas suaves */
-  --color-brand-sage: #7c8466;        /* verde sálvia — faixas e ícones */
-  --color-brand-olive: #5e6650;       /* verde médio — hover */
-  --color-brand-forest: #414a36;      /* oliva profundo — estrutural */
-  --color-brand-ink: #2b3125;         /* texto principal */
-  --color-brand-copper: #9c6238;      /* cobre — preços e CTA */
-  --color-brand-copper-soft: #b87a4e; /* cobre claro — sobre fundo escuro */
-  --color-brand-copper-dark: #82502d; /* cobre escuro — hover de CTA */
-  --color-brand-gold: #c9a14a;        /* dourado — selos e detalhes */
+  --color-brand-green-50: #f4f6f3;
+  --color-brand-green-100: #e5ece4;
+  --color-brand-green-200: #cedccb;
+  --color-brand-green-300: #afc8aa;   /* a cor da marca */
+  --color-brand-green-400: #8aaf83;
+  --color-brand-green-500: #67925e;
+  --color-brand-green-600: #4e7047;
+  --color-brand-green-700: #3a5634;   /* estrutural: botões, faixa, sidebar */
+  --color-brand-green-800: #2a4125;   /* hover */
+  --color-brand-green-900: #1b2b18;   /* fundos escuros e gradientes */
 
-  /* Aliases herdados do template original. Ficam porque estão espalhados por
-     centenas de classes; os valores são os da paleta acima. Em código novo,
-     prefira os nomes brand-* (forest, copper, cream). */
-  --color-primary-blue: #414a36;      /* = brand-forest */
-  --color-primary-container: #5e6650; /* = brand-olive */
+  --color-brand-cream: #f4efe7;       /* fundo geral (areia clara) */
+  --color-brand-sand: #e6ded0;        /* bordas suaves, gradientes */
+  --color-brand-ink: #2b3125;         /* texto principal */
+  --color-brand-copper: #9c6238;      /* cobre — acento e CTA */
+  --color-brand-copper-soft: #b87a4e; /* cobre claro — sobre fundo escuro */
+  --color-brand-copper-dark: #82502d; /* cobre escuro — hover do CTA */
+  /* Metal da marca: rosê (antes dourado). O 'gold' abaixo é apelido do rosê,
+     porque a classe brand-gold aparece em 52 lugares — trocar o valor repinta
+     tudo de uma vez, sem caçar classe por classe.
+       rose        #E5B6A6 — metal padrão; 6,2:1 sobre o verde 800  ✓ AA
+       rose-light  #EEC7BA — brilho e realces
+       rose-deep   #C98B80 — preenchimentos com texto escuro em cima (4,8:1) */
+  --color-brand-rose: #e5b6a6;
+  --color-brand-rose-light: #eec7ba;
+  --color-brand-rose-deep: #c98b80;
+  --color-brand-gold: #e5b6a6;        /* = brand-rose (apelido herdado) */
+
+  /* Apelidos herdados do template original. Ficam porque estão em centenas de
+     classes; apontam para a escala acima. Em código novo, use brand-green-*. */
+  --color-primary-blue: #3a5634;      /* = brand-green-700 */
+  --color-primary-container: #2a4125; /* = brand-green-800 */
   --color-brand-red: #9c6238;         /* = brand-copper */
   --color-brand-bg: #f4efe7;          /* = brand-cream */
   --color-brand-text: #2b3125;        /* = brand-ink */
+  --color-brand-sage: #8aaf83;        /* = brand-green-400 */
+  --color-brand-forest: #3a5634;      /* = brand-green-700 */
+  --color-brand-olive: #2a4125;       /* = brand-green-800 */
 
   /* O Tailwind não define gray-150, e o projeto usa essa classe em 31 lugares:
      as bordas simplesmente não apareciam. Definida aqui, entre 100 e 200. */

@@ -123,7 +123,7 @@ export default function ProductsPage({
               }}
               className={`w-full flex items-center justify-between text-left py-2 px-3 rounded-lg text-sm transition-colors ${
                 activeCategory === 'all'
-                  ? 'bg-primary-blue/5 text-primary-blue font-bold'
+                  ? 'bg-brand-green-100 text-brand-green-700 font-bold'
                   : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -144,7 +144,7 @@ export default function ProductsPage({
                   }}
                   className={`w-full flex items-center justify-between text-left py-2 px-3 rounded-lg text-sm transition-colors ${
                     isActiveCat
-                      ? 'bg-primary-blue/5 text-primary-blue font-bold'
+                      ? 'bg-brand-green-100 text-brand-green-700 font-bold'
                       : cat.featured
                         ? 'text-brand-red font-semibold hover:bg-gray-50'
                         : 'text-gray-600 hover:bg-gray-50'

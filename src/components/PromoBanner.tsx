@@ -27,7 +27,7 @@ export default function PromoBanner({ onOpenProducts }: PromoBannerProps) {
             className="absolute inset-0 w-full h-full object-cover opacity-30"
             referrerPolicy="no-referrer"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#232819] via-primary-blue/90 to-primary-blue/40" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#1b2b18] via-primary-blue/90 to-primary-blue/40" />
           <div className="absolute -top-20 -right-16 w-80 h-80 rounded-full bg-brand-gold/15 blur-3xl pointer-events-none" />
 
           <div className="relative px-7 py-14 sm:px-14 sm:py-20 lg:px-20 max-w-2xl">

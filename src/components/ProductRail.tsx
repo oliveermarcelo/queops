@@ -37,13 +37,13 @@ export default function ProductRail({
   };
 
   return (
-    <section className={`py-10 lg:py-12 ${alt ? 'bg-white' : 'bg-brand-bg'}`}>
+    <section className={`py-10 lg:py-12 ${alt ? 'bg-brand-green-50' : 'bg-brand-bg'}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="flex items-end justify-between gap-4 mb-6">
           <div>
             {eyebrow && (
-              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-brand-red">
+              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary-blue">
                 {eyebrow}
               </span>
             )}

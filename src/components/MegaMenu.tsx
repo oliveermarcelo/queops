@@ -144,7 +144,7 @@ export default function MegaMenu({ onSelect }: MegaMenuProps) {
               </div>
 
               {/* Promo column */}
-              <div className="hidden lg:flex w-[220px] flex-shrink-0 bg-gradient-to-br from-[#232819] via-primary-blue to-primary-container text-white p-6 flex-col justify-between relative overflow-hidden">
+              <div className="hidden lg:flex w-[220px] flex-shrink-0 bg-gradient-to-br from-[#1b2b18] via-primary-blue to-primary-container text-white p-6 flex-col justify-between relative overflow-hidden">
                 <Sparkles size={90} className="absolute -right-3 -bottom-3 text-white/10" />
                 <div className="relative">
                   <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-brand-gold">Destaques</span>

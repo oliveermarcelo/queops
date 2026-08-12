@@ -37,7 +37,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
       cta: 'Ver pirâmides',
       action: () => onSelectCategory('piramides'),
       image: BANNERS.heroPiramides,
-      tint: 'from-[#232819]/95 via-[#414a36]/80 to-[#414a36]/20',
+      tint: 'from-[#1b2b18]/95 via-[#3a5634]/80 to-[#3a5634]/20',
     },
     {
       id: 'cristais',
@@ -48,7 +48,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
       cta: 'Ver cristais',
       action: () => onSelectCategory('cristais'),
       image: BANNERS.heroCristais,
-      tint: 'from-[#232819]/95 via-[#414a36]/75 to-transparent',
+      tint: 'from-[#1b2b18]/95 via-[#3a5634]/75 to-transparent',
     },
     {
       id: 'incensos',
@@ -59,7 +59,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
       cta: 'Ver incensos',
       action: () => onSelectCategory('incensos'),
       image: BANNERS.heroIncensos,
-      tint: 'from-[#232819]/95 via-[#414a36]/80 to-[#414a36]/20',
+      tint: 'from-[#1b2b18]/95 via-[#3a5634]/80 to-[#3a5634]/20',
     },
   ];
 
@@ -163,7 +163,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
             {/* Free shipping */}
             <button
               onClick={onOpenProducts}
-              className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#232819] via-primary-blue to-primary-container text-white p-5 sm:p-6 text-left flex flex-col justify-between h-[120px] sm:h-[170px] lg:h-[200px] hover:shadow-xl transition-shadow group cursor-pointer"
+              className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#1b2b18] via-primary-blue to-primary-container text-white p-5 sm:p-6 text-left flex flex-col justify-between h-[120px] sm:h-[170px] lg:h-[200px] hover:shadow-xl transition-shadow group cursor-pointer"
             >
               <Truck size={120} className="absolute -right-5 -bottom-6 text-white/10 group-hover:scale-110 transition-transform duration-500" />
               <div className="absolute -top-8 -left-8 w-32 h-32 rounded-full bg-brand-gold/10 blur-2xl pointer-events-none" />
