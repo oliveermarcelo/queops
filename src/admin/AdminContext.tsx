@@ -1,136 +1,257 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Estado do painel administrativo.
+ *
+ * As telas continuam chamando `upsertProduct(...)`, `setOrderStatus(...)` e
+ * companhia como antes. O que mudou por baixo: cada ação agora fala com a API,
+ * atualiza a tela na hora (resposta otimista) e, se o servidor recusar,
+ * recarrega o estado e mostra o erro — em vez de gravar no localStorage e
+ * fingir que deu certo.
  */
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+} from 'react';
 import { Product } from '../types';
-import { AdminState, Order, OrderStatus, Coupon, StoreSettings, IntegrationConfig, IntegrationId, AbandonedStatus, RecoveryConfig, Webhook, ShippingConfig } from './types';
-import { loadState, saveState, resetState, generateToken } from './store';
+import {
+  AdminState, Order, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
+  IntegrationId, AbandonedStatus, RecoveryConfig, Webhook, ShippingConfig,
+} from './types';
+import * as store from './store';
 
 interface AdminContextValue {
   state: AdminState;
-  // products
-  upsertProduct: (p: Product) => void;
-  deleteProduct: (id: string) => void;
-  // orders
-  setOrderStatus: (id: string, status: OrderStatus) => void;
-  // coupons
-  upsertCoupon: (c: Coupon) => void;
-  deleteCoupon: (id: string) => void;
-  // settings
-  updateSettings: (patch: Partial<StoreSettings>) => void;
-  // integrations
-  updateIntegration: (id: IntegrationId, patch: Partial<IntegrationConfig>) => void;
-  // abandoned carts
-  setCartStatus: (id: string, status: AbandonedStatus) => void;
-  markReminderSent: (id: string) => void;
-  updateRecovery: (patch: Partial<RecoveryConfig>) => void;
-  // public API
-  createApiKey: (name: string) => string;
-  revokeApiKey: (id: string) => void;
-  deleteApiKey: (id: string) => void;
-  addWebhook: (w: Omit<Webhook, 'id'>) => void;
-  removeWebhook: (id: string) => void;
-  // shipping
-  updateShipping: (patch: Partial<ShippingConfig>) => void;
-  reset: () => void;
+  loading: boolean;
+  /** Última falha de gravação, para a tela avisar o operador. */
+  error: string | null;
+  clearError: () => void;
+  refresh: () => Promise<void>;
+
+  upsertProduct: (p: Product) => Promise<void>;
+  deleteProduct: (id: string) => Promise<void>;
+  setOrderStatus: (id: string, status: OrderStatus) => Promise<void>;
+  upsertCoupon: (c: Coupon) => Promise<void>;
+  deleteCoupon: (id: string) => Promise<void>;
+  updateSettings: (patch: Partial<StoreSettings>) => Promise<void>;
+  updateIntegration: (id: IntegrationId, patch: Partial<IntegrationConfig>) => Promise<void>;
+  testIntegration: (id: IntegrationId) => Promise<{ ok: boolean; message: string }>;
+  setCartStatus: (id: string, status: AbandonedStatus) => Promise<void>;
+  sendCartReminder: (id: string) => Promise<{ ok: boolean; message: string }>;
+  updateRecovery: (patch: Partial<RecoveryConfig>) => Promise<void>;
+  createApiKey: (name: string) => Promise<string>;
+  revokeApiKey: (id: string) => Promise<void>;
+  deleteApiKey: (id: string) => Promise<void>;
+  addWebhook: (w: Omit<Webhook, 'id'>) => Promise<void>;
+  removeWebhook: (id: string) => Promise<void>;
+  updateShipping: (patch: Partial<ShippingConfig>) => Promise<void>;
 }
 
 const Ctx = createContext<AdminContextValue | null>(null);
 
+/** Estado vazio, exibido enquanto a primeira carga não chega. */
+const EMPTY: AdminState = {
+  menu: [],
+  products: [], orders: [], customers: [], coupons: [],
+  settings: {
+    name: '', email: '', phone: '', whatsapp: '',
+    pixDiscountPct: 0,
+    payments: { card: true, pix: true, boleto: true },
+  },
+  integrations: {} as AdminState['integrations'],
+  abandonedCarts: [], recovery: { enabled: false, delayMinutes: 60, message: '', couponCode: '' },
+  apiKeys: [], webhooks: [],
+  shipping: {
+    defaultPrice: 0, perState: {}, cepRanges: [],
+    freeShipping: { enabled: false, minOrder: 0, states: [] },
+  },
+};
+
 export function AdminProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AdminState>(() => loadState());
+  const [state, setState] = useState<AdminState>(EMPTY);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const alive = useRef(true);
 
   useEffect(() => {
-    saveState(state);
-  }, [state]);
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
-  const value = useMemo<AdminContextValue>(() => ({
-    state,
-    upsertProduct: (p) =>
-      setState((s) => {
-        const exists = s.products.some((x) => x.id === p.id);
-        return {
-          ...s,
-          products: exists
-            ? s.products.map((x) => (x.id === p.id ? p : x))
-            : [p, ...s.products],
-        };
-      }),
-    deleteProduct: (id) =>
-      setState((s) => ({ ...s, products: s.products.filter((x) => x.id !== id) })),
-    setOrderStatus: (id, status) =>
-      setState((s) => ({
-        ...s,
-        orders: s.orders.map((o) => (o.id === id ? { ...o, status } : o)),
-      })),
-    upsertCoupon: (c) =>
-      setState((s) => {
-        const exists = s.coupons.some((x) => x.id === c.id);
-        return {
-          ...s,
-          coupons: exists ? s.coupons.map((x) => (x.id === c.id ? c : x)) : [c, ...s.coupons],
-        };
-      }),
-    deleteCoupon: (id) =>
-      setState((s) => ({ ...s, coupons: s.coupons.filter((x) => x.id !== id) })),
-    updateSettings: (patch) =>
-      setState((s) => ({ ...s, settings: { ...s.settings, ...patch } })),
-    updateIntegration: (id, patch) =>
-      setState((s) => ({
-        ...s,
-        integrations: { ...s.integrations, [id]: { ...s.integrations[id], ...patch } },
-      })),
-    setCartStatus: (id, status) =>
-      setState((s) => ({
-        ...s,
-        abandonedCarts: s.abandonedCarts.map((c) => (c.id === id ? { ...c, status } : c)),
-      })),
-    markReminderSent: (id) =>
-      setState((s) => ({
-        ...s,
-        abandonedCarts: s.abandonedCarts.map((c) =>
-          c.id === id ? { ...c, remindersSent: c.remindersSent + 1 } : c
-        ),
-      })),
-    updateRecovery: (patch) =>
-      setState((s) => ({ ...s, recovery: { ...s.recovery, ...patch } })),
-    createApiKey: (name) => {
-      const token = generateToken();
-      setState((s) => ({
-        ...s,
-        apiKeys: [
-          { id: `key-${Date.now()}`, name: name || 'Nova chave', token, createdAt: new Date().toISOString() },
-          ...s.apiKeys,
-        ],
-      }));
-      return token;
+  const refresh = useCallback(async () => {
+    try {
+      const fresh = await store.loadState();
+      if (alive.current) setState(fresh);
+    } catch (e) {
+      if (alive.current) setError(e instanceof Error ? e.message : 'Falha ao carregar os dados.');
+    } finally {
+      if (alive.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  /**
+   * Aplica a mudança na tela imediatamente e envia ao servidor. Se o servidor
+   * recusar, desfaz recarregando o estado real — nunca deixa a tela mostrar
+   * algo que não foi gravado.
+   */
+  const mutate = useCallback(
+    async (optimistic: (s: AdminState) => AdminState, call: () => Promise<unknown>) => {
+      setError(null);
+      setState(optimistic);
+      try {
+        await call();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Não foi possível salvar.');
+      } finally {
+        await refresh();
+      }
     },
-    revokeApiKey: (id) =>
-      setState((s) => ({
-        ...s,
-        apiKeys: s.apiKeys.map((k) => (k.id === id ? { ...k, revoked: true } : k)),
-      })),
-    deleteApiKey: (id) =>
-      setState((s) => ({ ...s, apiKeys: s.apiKeys.filter((k) => k.id !== id) })),
-    addWebhook: (w) =>
-      setState((s) => ({
-        ...s,
-        webhooks: [{ id: `wh-${Date.now()}`, ...w }, ...s.webhooks],
-      })),
-    removeWebhook: (id) =>
-      setState((s) => ({ ...s, webhooks: s.webhooks.filter((w) => w.id !== id) })),
-    updateShipping: (patch) =>
-      setState((s) => ({ ...s, shipping: { ...s.shipping, ...patch } })),
-    reset: () => setState(resetState()),
-  }), [state]);
+    [refresh],
+  );
+
+  const value = useMemo<AdminContextValue>(
+    () => ({
+      state,
+      loading,
+      error,
+      clearError: () => setError(null),
+      refresh,
+
+      upsertProduct: (p) =>
+        mutate(
+          (s) => ({
+            ...s,
+            products: s.products.some((x) => x.id === p.id)
+              ? s.products.map((x) => (x.id === p.id ? p : x))
+              : [p, ...s.products],
+          }),
+          () => store.upsertProduct(p),
+        ),
+
+      deleteProduct: (id) =>
+        mutate(
+          (s) => ({ ...s, products: s.products.filter((x) => x.id !== id) }),
+          () => store.deleteProduct(id),
+        ),
+
+      setOrderStatus: (id, status) =>
+        mutate(
+          (s) => ({
+            ...s,
+            orders: s.orders.map((o: Order) => (o.id === id ? { ...o, status } : o)),
+          }),
+          () => store.setOrderStatus(id, status),
+        ),
+
+      upsertCoupon: (c) =>
+        mutate(
+          (s) => ({
+            ...s,
+            coupons: s.coupons.some((x) => x.id === c.id)
+              ? s.coupons.map((x) => (x.id === c.id ? c : x))
+              : [c, ...s.coupons],
+          }),
+          () => store.upsertCoupon(c),
+        ),
+
+      deleteCoupon: (id) =>
+        mutate(
+          (s) => ({ ...s, coupons: s.coupons.filter((x) => x.id !== id) }),
+          () => store.deleteCoupon(id),
+        ),
+
+      updateSettings: (patch) =>
+        mutate(
+          (s) => ({ ...s, settings: { ...s.settings, ...patch } }),
+          () => store.updateSettings(patch),
+        ),
+
+      updateShipping: (patch) =>
+        mutate(
+          (s) => ({ ...s, shipping: { ...s.shipping, ...patch } }),
+          () => store.updateShipping(patch),
+        ),
+
+      updateRecovery: (patch) =>
+        mutate(
+          (s) => ({ ...s, recovery: { ...s.recovery, ...patch } }),
+          () => store.updateRecovery(patch),
+        ),
+
+      updateIntegration: (id, patch) =>
+        mutate(
+          (s) => ({
+            ...s,
+            integrations: { ...s.integrations, [id]: { ...s.integrations[id], ...patch } },
+          }),
+          () => store.updateIntegration(id, patch),
+        ),
+
+      testIntegration: async (id) => {
+        const result = await store.testIntegration(id);
+        await refresh();
+        return result;
+      },
+
+      setCartStatus: (id, status) =>
+        mutate(
+          (s) => ({
+            ...s,
+            abandonedCarts: s.abandonedCarts.map((c) => (c.id === id ? { ...c, status } : c)),
+          }),
+          () => store.setCartStatus(id, status),
+        ),
+
+      sendCartReminder: async (id) => {
+        const result = await store.sendCartReminder(id);
+        await refresh();
+        return result;
+      },
+
+      createApiKey: async (name) => {
+        const created = await store.createApiKey(name);
+        await refresh();
+        return created.token;
+      },
+
+      revokeApiKey: (id) =>
+        mutate(
+          (s) => ({
+            ...s,
+            apiKeys: s.apiKeys.map((k) => (k.id === id ? { ...k, revoked: true } : k)),
+          }),
+          () => store.revokeApiKey(id),
+        ),
+
+      deleteApiKey: (id) =>
+        mutate(
+          (s) => ({ ...s, apiKeys: s.apiKeys.filter((k) => k.id !== id) }),
+          () => store.deleteApiKey(id),
+        ),
+
+      addWebhook: (w) => mutate((s) => s, () => store.addWebhook(w)),
+
+      removeWebhook: (id) =>
+        mutate(
+          (s) => ({ ...s, webhooks: s.webhooks.filter((w) => w.id !== id) }),
+          () => store.removeWebhook(id),
+        ),
+    }),
+    [state, loading, error, mutate, refresh],
+  );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useAdmin(): AdminContextValue {
   const v = useContext(Ctx);
-  if (!v) throw new Error('useAdmin must be used within AdminProvider');
+  if (!v) throw new Error('useAdmin precisa estar dentro de <AdminProvider>');
   return v;
 }

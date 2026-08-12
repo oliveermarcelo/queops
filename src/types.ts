@@ -6,9 +6,9 @@
 export interface Product {
   id: string;
   name: string;
-  category: string; // parent category slug, e.g. 'palmitos', 'azeitonas', 'derivados-do-mar'
-  subcategory?: string; // subcategory slug, e.g. 'palmito-pupunha', 'azeitona-verde'
-  categoryLabel: string; // e.g., 'Palmitos', 'Conservas', 'Cogumelos', 'Pescados'
+  category: string; // slug da categoria-mãe, ex.: 'piramides', 'cristais'
+  subcategory?: string; // slug da subcategoria, ex.: 'piramides-de-cobre'
+  categoryLabel: string; // rótulo exibido, ex.: 'Pirâmides de Cobre'
   description: string;
   longDescription?: string;
   price: number;
@@ -16,18 +16,13 @@ export interface Product {
   stock?: number; // units in stock
   image: string;
   highlight?: boolean;
-  tag?: string; // e.g., 'DESTAQUE', 'NOVO', 'SUPREMO'
-  weight: string; // e.g., 'Frasco 300g líquido', 'Drenado 250g'
+  tag?: string; // ex.: 'DESTAQUE', 'NOVIDADE'
+  weight: string; // medida/formato da peça, ex.: 'Base 15cm · cobre'
   sku: string;
+  /** Materiais e composição da peça. */
   ingredients?: string;
-  nutritionalFacts?: {
-    calorias: string;
-    sodio: string;
-    carboidratos: string;
-    proteinas: string;
-    gorduras: string;
-    fibra: string;
-  };
+  /** false = fora da vitrine (exclusão suave). Só o painel recebe este campo. */
+  active?: boolean;
 }
 
 export interface CartItem {

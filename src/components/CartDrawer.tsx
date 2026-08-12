@@ -8,6 +8,9 @@ import { X, ShoppingBag, Trash2, ArrowRight, Minus, Plus, Truck, ShieldCheck, Lo
 import { motion } from 'motion/react';
 import { CartItem } from '../types';
 import { safeImageSrc } from '../utils/safeUrl';
+import { brl } from '../utils/currency';
+import { useCatalog } from '../catalog/CatalogContext';
+import ModalShell from './ModalShell';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -18,41 +21,41 @@ interface CartDrawerProps {
   onProceedToCheckout: () => void;
 }
 
-const FREE_SHIPPING = 199;
-const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
 export default function CartDrawer({
   isOpen, onClose, cartItems, onUpdateQty, onRemoveItem, onProceedToCheckout,
 }: CartDrawerProps) {
+  const { settings } = useCatalog();
+
   if (!isOpen) return null;
+
+  // Estimativa: as regras de frete (faixa de CEP, UF) dependem do endereço,
+  // que só existe no checkout. Aqui usamos o valor padrão da loja e deixamos
+  // claro que o número final é calculado no servidor, na finalização.
+  const freeShippingFrom = settings?.freeShippingFrom ?? 0;
+  const shippingFrom = settings?.shippingFrom ?? 0;
 
   const subtotal = cartItems.reduce((acc, item) => acc + item.product.price * item.quantity, 0);
   const itemCount = cartItems.reduce((acc, item) => acc + item.quantity, 0);
-  const hasFreeShipping = subtotal >= FREE_SHIPPING;
-  const shipping = hasFreeShipping || subtotal === 0 ? 0 : 19.9;
+  const hasFreeShipping = freeShippingFrom > 0 && subtotal >= freeShippingFrom;
+  const shipping = hasFreeShipping || subtotal === 0 ? 0 : shippingFrom;
   const total = subtotal + shipping;
-  const progress = Math.min(100, (subtotal / FREE_SHIPPING) * 100);
-  const remaining = Math.max(0, FREE_SHIPPING - subtotal);
+  const progress = freeShippingFrom > 0 ? Math.min(100, (subtotal / freeShippingFrom) * 100) : 100;
+  const remaining = Math.max(0, freeShippingFrom - subtotal);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Drawer */}
+    <ModalShell
+      onClose={onClose}
+      labelledBy="cart-drawer-title"
+      overlayClassName="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm"
+      className="w-full max-w-md h-full"
+    >
       <motion.div
         id="cart-drawer-container"
         initial={{ x: '100%' }}
         animate={{ x: 0 }}
         exit={{ x: '100%' }}
         transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-        className="relative bg-[#fcf9f8] w-full max-w-md h-full shadow-2xl flex flex-col"
+        className="relative bg-brand-cream w-full h-full shadow-2xl flex flex-col"
       >
         {/* Header */}
         <div className="px-5 py-4 bg-white border-b border-gray-100 flex items-center justify-between flex-shrink-0">
@@ -65,7 +68,7 @@ export default function CartDrawer({
                 </span>
               )}
             </div>
-            <h2 className="text-lg font-extrabold text-gray-900">Sua sacola</h2>
+            <h2 id="cart-drawer-title" className="text-lg font-extrabold text-gray-900">Sua sacola</h2>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition">
             <X size={20} />
@@ -119,7 +122,7 @@ export default function CartDrawer({
                   <div
                     id={`cart-row-${item.product.id}`}
                     key={item.product.id}
-                    className="bg-white p-3 rounded-2xl border border-gray-100 shadow-[0_2px_8px_rgba(21,20,125,0.04)] flex gap-3 group"
+                    className="bg-white p-3 rounded-2xl border border-gray-100 shadow-[0_2px_8px_rgba(43,49,37,0.04)] flex gap-3 group"
                   >
                     {/* Image */}
                     <div className="w-20 h-20 bg-gray-50 rounded-xl flex-shrink-0 flex items-center justify-center overflow-hidden">
@@ -183,21 +186,24 @@ export default function CartDrawer({
                   <span>Subtotal</span><span>{brl(subtotal)}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
-                  <span>Frete</span>
+                  <span>Frete estimado</span>
                   <span className={shipping === 0 ? 'text-emerald-600 font-semibold' : ''}>
-                    {shipping === 0 ? 'Grátis' : brl(shipping)}
+                    {shipping === 0 ? 'Grátis' : `a partir de ${brl(shipping)}`}
                   </span>
                 </div>
                 <div className="flex justify-between items-baseline pt-2 border-t border-dashed border-gray-200">
-                  <span className="font-bold text-gray-900">Total</span>
+                  <span className="font-bold text-gray-900">Total estimado</span>
                   <span className="text-2xl font-extrabold text-primary-blue">{brl(total)}</span>
                 </div>
+                <p className="text-[11px] text-gray-400 pt-1">
+                  O frete exato depende do CEP e é calculado na finalização.
+                </p>
               </div>
 
               <button
                 id="btn-checkout"
                 onClick={onProceedToCheckout}
-                className="w-full py-4 bg-brand-red hover:bg-[#a10100] text-white font-bold text-sm uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 shadow-md active:scale-[0.98] cursor-pointer"
+                className="w-full py-4 bg-brand-red hover:bg-[#82502d] text-white font-bold text-sm uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 shadow-md active:scale-[0.98] cursor-pointer"
               >
                 Finalizar compra
                 <ArrowRight className="w-4 h-4" />
@@ -211,6 +217,6 @@ export default function CartDrawer({
           </>
         )}
       </motion.div>
-    </div>
+    </ModalShell>
   );
 }

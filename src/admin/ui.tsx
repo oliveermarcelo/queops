@@ -7,11 +7,14 @@
 
 import React from 'react';
 
-export const brl = (n: number) =>
-  n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Reexporta o helper único de moeda (src/utils/currency.ts) — antes existia
+// uma segunda implementação aqui, que podia divergir da usada na loja.
+export { brl } from '../utils/currency';
 
-export const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+export const fmtDate = (iso: string | null | undefined) =>
+  iso
+    ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : '—';
 
 export function Card({ children, className = '' }: { children: React.ReactNode; className?: string; key?: React.Key }) {
   return (
@@ -26,7 +29,7 @@ export function PageActions({ children }: { children: React.ReactNode }) {
 }
 
 export function Btn({
-  children, onClick, variant = 'primary', type = 'button', className = '', disabled,
+  children, onClick, variant = 'primary', type = 'button', className = '', disabled, autoFocus,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -34,6 +37,7 @@ export function Btn({
   type?: 'button' | 'submit';
   className?: string;
   disabled?: boolean;
+  autoFocus?: boolean;
 }) {
   const styles = {
     primary: 'bg-primary-blue hover:bg-primary-container text-white',
@@ -45,6 +49,7 @@ export function Btn({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      autoFocus={autoFocus}
       className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${styles} ${className}`}
     >
       {children}
@@ -86,5 +91,44 @@ export function StatusBadge({ status }: { status: string }) {
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${map[status] ?? 'bg-gray-100 text-gray-500'}`}>
       {labels[status] ?? status}
     </span>
+  );
+}
+
+/**
+ * Diálogo de confirmação do painel.
+ *
+ * Substitui o `confirm()` nativo, que ignorava o visual do sistema, não dava
+ * para rotular a ação destrutiva e bloqueava a aba inteira.
+ */
+export function ConfirmDialog({
+  title, message, confirmLabel = 'Confirmar', onConfirm, onCancel, danger = true,
+}: {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onCancel} aria-hidden="true" />
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        aria-describedby="confirm-msg"
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6"
+      >
+        <h3 id="confirm-title" className="font-extrabold text-gray-900">{title}</h3>
+        <p id="confirm-msg" className="text-sm text-gray-500 mt-2 leading-relaxed">{message}</p>
+        <div className="flex justify-end gap-2 mt-6">
+          <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+          <Btn variant={danger ? 'danger' : 'primary'} onClick={onConfirm} autoFocus>
+            {confirmLabel}
+          </Btn>
+        </div>
+      </div>
+    </div>
   );
 }

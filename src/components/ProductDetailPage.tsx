@@ -13,6 +13,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Product } from '../types';
 import { safeImageSrc } from '../utils/safeUrl';
 import { brlNumber } from '../utils/currency';
+import { api } from '../api/client';
+import { useCatalog } from '../catalog/CatalogContext';
+import { INSTALLMENTS } from '../config';
 
 interface ProductDetailPageProps {
   product: Product;
@@ -22,6 +25,13 @@ interface ProductDetailPageProps {
   onSelectProduct: (product: Product) => void;
 }
 
+interface ShippingEstimate {
+  shipping: number;
+  shippingLabel: string;
+  deliveryDays: number;
+  uf: string;
+}
+
 export default function ProductDetailPage({
   product,
   products,
@@ -29,21 +39,16 @@ export default function ProductDetailPage({
   onAddToCart,
   onSelectProduct,
 }: ProductDetailPageProps) {
+  const { settings } = useCatalog();
   const [quantity, setQuantity] = useState(1);
   const [successAnimation, setSuccessAnimation] = useState(false);
-  const [activeTab, setActiveTab] = useState<'details' | 'ingredients' | 'nutritional'>('details');
+  const [activeTab, setActiveTab] = useState<'ficha' | 'garantias' | 'cuidados'>('ficha');
   const [isFavorite, setIsFavorite] = useState(false);
 
-  // Shipping states
+  // Simulação de frete — os valores vêm do servidor, com as regras do painel.
   const [cep, setCep] = useState('');
-  const [shippingResult, setShippingResult] = useState<{
-    success: boolean;
-    state?: string;
-    carrier?: string;
-    price?: string;
-    days?: number;
-    description?: string;
-  } | null>(null);
+  const [shippingResult, setShippingResult] = useState<ShippingEstimate | null>(null);
+  const [shippingError, setShippingError] = useState('');
   const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
 
   // Scroll to top when product changes
@@ -51,8 +56,9 @@ export default function ProductDetailPage({
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setQuantity(1);
     setShippingResult(null);
+    setShippingError('');
     setCep('');
-    setActiveTab('details');
+    setActiveTab('ficha');
     setIsFavorite(false);
   }, [product]);
 
@@ -80,8 +86,13 @@ export default function ProductDetailPage({
     ? Math.round((1 - product.price / (product.oldPrice as number)) * 100)
     : 0;
   const savings = hasDiscount ? (product.oldPrice as number) - product.price : 0;
-  const installment = brlNumber(product.price / 3);
-  const pixPrice = product.price * 0.95; // 5% Pix discount (matches checkout)
+  // Parcelamento e desconto do Pix saem das configurações da loja. O 0,95
+  // cravado aqui não acompanhava o painel: mudar o percentual em
+  // Configurações não alterava este preço, e o checkout cobrava outro valor.
+  const parcelas = INSTALLMENTS;
+  const installment = brlNumber(product.price / parcelas);
+  const pixPct = settings?.pixDiscountPct ?? 0;
+  const pixPrice = product.price * (1 - pixPct / 100);
 
   // Stock signal
   const stock = product.stock ?? 0;
@@ -98,71 +109,37 @@ export default function ProductDetailPage({
     return list.slice(0, 4);
   }, [products, product]);
 
-  // Handle shipping simulation based on standard CEP region prefixes
-  const handleCalculateShipping = (e: React.FormEvent) => {
+  /**
+   * Consulta o frete real no servidor.
+   *
+   * A versão anterior "calculava" pelo primeiro dígito do CEP, com valores
+   * fixos no código — não tinha relação com as regras de frete do painel e
+   * ainda falava em "preservar o frescor dos produtos", texto herdado de uma
+   * loja de alimentos.
+   */
+  const handleCalculateShipping = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cep || cep.replace(/\D/g, '').length < 8) {
-      alert('Por favor, informe um CEP brasileiro de 8 dígitos para calcular o frete.');
+    if (cep.replace(/\D/g, '').length !== 8) {
+      setShippingError('Informe um CEP com 8 dígitos.');
+      setShippingResult(null);
       return;
     }
 
     setIsCalculatingShipping(true);
-
-    setTimeout(() => {
-      const cleanCep = cep.replace(/\D/g, '');
-      const firstDigit = cleanCep.charAt(0);
-
-      // Simple region lookup rule based on Brazilian postal codes
-      let result = {
-        success: true,
-        state: 'São Paulo (SP)',
-        carrier: 'Entrega Expressa',
-        price: 'Grátis',
-        days: 2,
-        description: 'Entrega cuidadosamente embalada para preservar o frescor dos produtos.',
-      };
-
-      if (firstDigit === '0' || firstDigit === '1') {
-        result = {
-          success: true,
-          state: 'São Paulo (Interior/Capital)',
-          carrier: 'Entrega Expressa',
-          price: 'R$ 19,90',
-          days: 2,
-          description: 'Embalagem reforçada para pirâmides e cristais, com proteção total no transporte.',
-        };
-      } else if (firstDigit === '2' || firstDigit === '3') {
-        result = {
-          success: true,
-          state: 'Rio de Janeiro / Espírito Santo / Minas Gerais',
-          carrier: 'Transportadora Parceira',
-          price: 'R$ 29,90',
-          days: 3,
-          description: 'Envio com embalagem reforçada para manter a qualidade durante o transporte.',
-        };
-      } else if (firstDigit === '8' || firstDigit === '9') {
-        result = {
-          success: true,
-          state: 'Região Sul',
-          carrier: 'Transportadora Parceira',
-          price: 'R$ 34,90',
-          days: 4,
-          description: 'Acompanhamento do envio até a sua porta, com chegada preservada garantida.',
-        };
-      } else {
-        result = {
-          success: true,
-          state: 'Demais Regiões do Brasil',
-          carrier: 'Transportadora Parceira',
-          price: 'A calcular no checkout',
-          days: 5,
-          description: 'Prazo pode variar conforme a região. O valor final é confirmado na finalização.',
-        };
-      }
-
-      setShippingResult(result);
+    setShippingError('');
+    try {
+      const quote = await api.post<ShippingEstimate>('/checkout/quote', {
+        items: [{ productId: product.id, quantity }],
+        cep,
+        payment: 'card',
+      });
+      setShippingResult(quote);
+    } catch (err) {
+      setShippingResult(null);
+      setShippingError(err instanceof Error ? err.message : 'Não foi possível calcular o frete.');
+    } finally {
       setIsCalculatingShipping(false);
-    }, 800);
+    }
   };
 
   const formatCepChange = (v: string) => {
@@ -191,7 +168,7 @@ export default function ProductDetailPage({
   }, [product]);
 
   return (
-    <div id="single-product-page-detail" className="pt-40 lg:pt-44 pb-20 bg-[#fcf9f8] text-left">
+    <div id="single-product-page-detail" className="pt-40 lg:pt-44 pb-20 bg-brand-cream text-left">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
         {/* Breadcrumb Navigation Line */}
@@ -222,7 +199,7 @@ export default function ProductDetailPage({
 
           {/* ─────────── Left Column: Premium Visual Showcase ─────────── */}
           <div className="lg:col-span-6 lg:sticky lg:top-44 space-y-5">
-            <div className="group relative bg-gradient-to-br from-white via-white to-gray-50/80 rounded-3xl border border-gray-150 p-8 sm:p-14 flex items-center justify-center shadow-[0_8px_40px_rgba(21,20,125,0.07)] overflow-hidden min-h-[380px] sm:min-h-[520px]">
+            <div className="group relative bg-gradient-to-br from-white via-white to-gray-50/80 rounded-3xl border border-gray-150 p-8 sm:p-14 flex items-center justify-center shadow-[0_8px_40px_rgba(43,49,37,0.07)] overflow-hidden min-h-[380px] sm:min-h-[520px]">
 
               {/* Soft brand glow */}
               <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full bg-primary-blue/[0.05] blur-3xl" />
@@ -268,7 +245,7 @@ export default function ProductDetailPage({
               <img
                 src={safeImageSrc(product.image)}
                 alt={product.name}
-                className="relative max-h-[300px] sm:max-h-[420px] object-contain drop-shadow-[0_24px_40px_rgba(21,20,125,0.14)] transform group-hover:scale-105 transition-transform duration-700 ease-out"
+                className="relative max-h-[300px] sm:max-h-[420px] object-contain drop-shadow-[0_24px_40px_rgba(43,49,37,0.14)] transform group-hover:scale-105 transition-transform duration-700 ease-out"
                 referrerPolicy="no-referrer"
               />
 
@@ -298,7 +275,7 @@ export default function ProductDetailPage({
 
           {/* ─────────── Right Column: Info, Price, Buy ─────────── */}
           <div className="lg:col-span-6 space-y-5">
-            <div className="bg-white rounded-3xl border border-gray-150 p-6 sm:p-8 space-y-6 shadow-[0_8px_30px_rgba(21,20,125,0.06)]">
+            <div className="bg-white rounded-3xl border border-gray-150 p-6 sm:p-8 space-y-6 shadow-[0_8px_30px_rgba(43,49,37,0.06)]">
 
               {/* Product Metadata */}
               <div className="space-y-3">
@@ -349,7 +326,7 @@ export default function ProductDetailPage({
 
                 <div className="flex items-end justify-between gap-3">
                   <div className="flex items-baseline gap-1.5">
-                    <span className={`text-4xl font-black tracking-tight ${hasDiscount ? 'text-brand-red' : 'text-gray-900'}`}>
+                    <span className={`text-4xl font-black tracking-tight ${hasDiscount ? 'text-brand-copper' : 'text-brand-ink'}`}>
                       R$ {brlNumber(product.price)}
                     </span>
                     <span className="text-sm text-gray-400 font-semibold">/ {product.weight}</span>
@@ -360,10 +337,11 @@ export default function ProductDetailPage({
                   <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
                     <QrCode className="w-4 h-4" />
                     R$ {brlNumber(pixPrice)} no Pix
+                    {pixPct > 0 && ` (${brlNumber(pixPct).replace(',00', '')}% off)`}
                   </span>
                   <span className="inline-flex items-center gap-1.5 text-[13px] text-gray-500">
                     <CreditCard className="w-4 h-4 text-gray-400" />
-                    3x de R$ {installment} sem juros
+                    {parcelas}x de R$ {installment} sem juros
                   </span>
                 </div>
               </div>
@@ -448,7 +426,7 @@ export default function ProductDetailPage({
             </div>
 
             {/* Interactive Shipping ZIP Code Simulator */}
-            <div className="bg-white rounded-3xl border border-gray-150 p-6 sm:p-7 space-y-4 shadow-[0_8px_30px_rgba(21,20,125,0.06)]">
+            <div className="bg-white rounded-3xl border border-gray-150 p-6 sm:p-7 space-y-4 shadow-[0_8px_30px_rgba(43,49,37,0.06)]">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-primary-blue/10 flex items-center justify-center">
                   <Truck className="w-4.5 h-4.5 text-primary-blue" />
@@ -477,7 +455,11 @@ export default function ProductDetailPage({
                 </button>
               </form>
 
-              {/* Shipping consultation result popup */}
+              {shippingError && (
+                <p role="alert" className="text-xs text-brand-red font-medium">{shippingError}</p>
+              )}
+
+              {/* Resultado da simulação */}
               <AnimatePresence>
                 {shippingResult && (
                   <motion.div
@@ -489,22 +471,33 @@ export default function ProductDetailPage({
                     <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl space-y-2.5">
                       <div className="flex justify-between text-[13px]">
                         <span className="text-gray-500 font-medium">Destino</span>
-                        <span className="text-gray-800 font-semibold text-right">{shippingResult.state}</span>
+                        <span className="text-gray-800 font-semibold text-right">
+                          {shippingResult.uf || 'Brasil'}
+                        </span>
                       </div>
                       <div className="flex justify-between text-[13px]">
-                        <span className="text-gray-500 font-medium">Envio</span>
-                        <span className="text-gray-800 font-semibold">{shippingResult.carrier}</span>
+                        <span className="text-gray-500 font-medium">Modalidade</span>
+                        <span className="text-gray-800 font-semibold">
+                          {shippingResult.shippingLabel || 'Entrega padrão'}
+                        </span>
                       </div>
                       <div className="flex justify-between text-[13px]">
-                        <span className="text-gray-500 font-medium">Frete</span>
-                        <span className="text-emerald-700 font-bold">{shippingResult.price}</span>
+                        <span className="text-gray-500 font-medium">
+                          Frete para {quantity} {quantity === 1 ? 'unidade' : 'unidades'}
+                        </span>
+                        <span className="text-emerald-700 font-bold">
+                          {shippingResult.shipping === 0 ? 'Grátis' : `R$ ${brlNumber(shippingResult.shipping)}`}
+                        </span>
                       </div>
                       <div className="flex justify-between text-[13px] border-t border-emerald-100 pt-2.5">
                         <span className="text-gray-500 font-medium">Prazo estimado</span>
-                        <span className="text-primary-blue font-extrabold">{shippingResult.days} dias úteis</span>
+                        <span className="text-primary-blue font-extrabold">
+                          {shippingResult.deliveryDays} dias úteis
+                        </span>
                       </div>
                       <p className="text-[11px] text-gray-500 leading-normal pt-1">
-                        {shippingResult.description}
+                        Cada peça segue com embalagem reforçada para pirâmides e cristais. O valor
+                        final é confirmado no checkout.
                       </p>
                     </div>
                   </motion.div>
@@ -515,14 +508,14 @@ export default function ProductDetailPage({
         </div>
 
         {/* Detailed technical Tab selector for specs */}
-        <div className="mt-14 bg-white rounded-3xl border border-gray-150 overflow-hidden shadow-[0_8px_30px_rgba(21,20,125,0.06)]">
+        <div className="mt-14 bg-white rounded-3xl border border-gray-150 overflow-hidden shadow-[0_8px_30px_rgba(43,49,37,0.06)]">
 
           {/* Tab Button list headers */}
           <div className="flex border-b border-gray-150 bg-gray-50/50 overflow-x-auto">
             {([
-              { id: 'details', label: 'Ficha Técnica', icon: Package },
-              { id: 'ingredients', label: 'Selos & Garantias', icon: Leaf },
-              { id: 'nutritional', label: 'Cuidados', icon: Info },
+              { id: 'ficha', label: 'Ficha Técnica', icon: Package },
+              { id: 'garantias', label: 'Selos & Garantias', icon: Leaf },
+              { id: 'cuidados', label: 'Cuidados', icon: Info },
             ] as const).map((t) => (
               <button
                 key={t.id}
@@ -548,7 +541,7 @@ export default function ProductDetailPage({
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.2 }}
               >
-                {activeTab === 'details' && (
+                {activeTab === 'ficha' && (
                   <div className="space-y-4 max-w-3xl">
                     <h3 className="text-base font-bold text-gray-900">Sobre o produto</h3>
                     <p className="text-sm text-gray-600 leading-relaxed">
@@ -575,7 +568,7 @@ export default function ProductDetailPage({
                   </div>
                 )}
 
-                {activeTab === 'ingredients' && (
+                {activeTab === 'garantias' && (
                   <div className="space-y-4 max-w-3xl">
                     <h3 className="text-base font-bold text-gray-900">Nossas garantias</h3>
                     <ul className="text-sm text-gray-600 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-150/40 space-y-2 list-disc list-inside">
@@ -591,7 +584,7 @@ export default function ProductDetailPage({
                   </div>
                 )}
 
-                {activeTab === 'nutritional' && (
+                {activeTab === 'cuidados' && (
                   <div className="space-y-4 max-w-3xl">
                     <h3 className="text-base font-bold text-gray-900">Cuidados e conservação</h3>
                     <ul className="text-sm text-gray-600 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-150/40 space-y-2 list-disc list-inside">
@@ -625,7 +618,7 @@ export default function ProductDetailPage({
                   key={p.id}
                   whileHover={{ y: -4 }}
                   onClick={() => onSelectProduct(p)}
-                  className="bg-white rounded-2xl overflow-hidden border border-gray-150/70 hover:shadow-[0_16px_40px_rgba(21,20,125,0.12)] transition-shadow duration-300 flex flex-col h-full cursor-pointer group"
+                  className="bg-white rounded-2xl overflow-hidden border border-gray-150/70 hover:shadow-[0_16px_40px_rgba(43,49,37,0.12)] transition-shadow duration-300 flex flex-col h-full cursor-pointer group"
                 >
                   {/* Image */}
                   <div className="aspect-square w-full bg-gradient-to-b from-gray-50/80 to-white p-4 flex items-center justify-center overflow-hidden relative">

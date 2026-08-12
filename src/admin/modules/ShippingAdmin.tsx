@@ -14,30 +14,52 @@ import { brl, Card, Btn, inputCls } from '../ui';
 const UFS = ['SP', 'RJ', 'MG', 'ES', 'PR', 'SC', 'RS', 'BA', 'PE', 'CE', 'GO', 'DF', 'AM', 'PA', 'MT', 'MS'];
 const onlyDigits = (s: string) => s.replace(/\D/g, '');
 
-/** Computes shipping for a given cart value, UF and CEP, following the rules. */
+/**
+ * Simulador de frete do painel.
+ *
+ * ATENÇÃO: esta função precisa espelhar exatamente `calculate_shipping()` em
+ * `api/lib/pricing.php` — quem cobra de verdade é o servidor. As duas já
+ * divergiram na ordem das regras, e o painel prometia R$ 9,90 num carrinho que
+ * saía com frete grátis. Alterou uma? Altere a outra e rode
+ * `php tests/pricing_test.php`.
+ *
+ * Ordem: UF sempre grátis → faixa de CEP grátis → faixa de CEP com preço
+ * (zerada pelo mínimo) → grátis por valor mínimo → preço por UF → padrão.
+ */
 export function computeShipping(cfg: ShippingConfig, cartTotal: number, uf: string, cep: string): { price: number; reason: string } {
   const cleanCep = onlyDigits(cep);
-  // 1) CEP ranges have top priority
-  for (const r of cfg.cepRanges) {
-    const from = onlyDigits(r.from), to = onlyDigits(r.to);
-    if (cleanCep && from && to && cleanCep >= from && cleanCep <= to) {
-      if (r.free) return { price: 0, reason: `Grátis · faixa de CEP ${r.label || `${r.from}–${r.to}`}` };
-      return { price: r.price, reason: `Faixa de CEP ${r.label || `${r.from}–${r.to}`}` };
-    }
-  }
-  // 2) Free shipping by state
-  if (cfg.freeShipping.enabled && cfg.freeShipping.states.includes(uf)) {
+  const free = cfg.freeShipping;
+  // minOrder 0 = regra desligada (não "grátis a partir de zero").
+  const minOrder = free.enabled && free.minOrder > 0 ? free.minOrder : Infinity;
+  const atingiuMinimo = cartTotal > 0 && cartTotal >= minOrder;
+
+  // 1) UF com frete grátis incondicional
+  if (free.enabled && uf && free.states.includes(uf)) {
     return { price: 0, reason: `Grátis para ${uf}` };
   }
-  // 3) Free shipping by minimum order
-  if (cfg.freeShipping.enabled && cfg.freeShipping.minOrder > 0 && cartTotal >= cfg.freeShipping.minOrder) {
-    return { price: 0, reason: `Grátis acima de ${brl(cfg.freeShipping.minOrder)}` };
+
+  // 2 e 3) Faixas de CEP
+  for (const r of cfg.cepRanges) {
+    const from = onlyDigits(r.from), to = onlyDigits(r.to);
+    if (cleanCep && from && to && Number(cleanCep) >= Number(from) && Number(cleanCep) <= Number(to)) {
+      const nome = r.label || `${r.from}–${r.to}`;
+      if (r.free) return { price: 0, reason: `Grátis · faixa de CEP ${nome}` };
+      if (atingiuMinimo) return { price: 0, reason: `Grátis acima de ${brl(free.minOrder)}` };
+      return { price: r.price, reason: `Faixa de CEP ${nome}` };
+    }
   }
-  // 4) Per-state price
+
+  // 4) Frete grátis por valor mínimo
+  if (atingiuMinimo) {
+    return { price: 0, reason: `Grátis acima de ${brl(free.minOrder)}` };
+  }
+
+  // 5) Preço por UF
   if (cfg.perState[uf] != null) {
     return { price: cfg.perState[uf], reason: `Tabela ${uf}` };
   }
-  // 5) Default flat rate
+
+  // 6) Valor padrão
   return { price: cfg.defaultPrice, reason: 'Valor padrão' };
 }
 

@@ -2,8 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Catálogo da Quéops Pirâmides — dados coletados do site oficial
- * (queopspiramides.com.br) via API pública do WooCommerce. Amostra curada.
+ * SEMENTE do catálogo — não é mais lida pela loja em tempo de execução.
+ *
+ * A vitrine e o painel consomem o banco (`GET /api/catalog`). Este arquivo
+ * alimenta a carga inicial: `node scripts/export-catalog.mjs` transforma estes
+ * arrays em `api/seed/catalog.json`, que o `php api/migrate.php` importa.
+ *
+ * Dados coletados do site oficial (queopspiramides.com.br) via API pública do
+ * WooCommerce. Depois da carga, edite os produtos pelo painel, não aqui.
  */
 
 import { Product, Category, ValueProp, MenuCategory } from './types';
@@ -119,27 +125,6 @@ export const MENU_CATEGORIES: MenuCategory[] = [
     ],
   },
   { id: 'novidades', name: 'Novidades', icon: 'Sparkles', featured: true, subcategories: [] },
-];
-
-export const VALUE_PROPS: ValueProp[] = [
-  {
-    id: 'artesanal',
-    title: 'Feito à Mão desde 1990',
-    description: 'Pirâmides lapidadas artesanalmente, proporcionais à Grande Pirâmide de Quéops.',
-    icon: 'Hammer',
-  },
-  {
-    id: 'entrega',
-    title: 'Envio para Todo o Brasil',
-    description: 'Embalagem cuidadosa e logística que protege cada peça até a sua casa.',
-    icon: 'Truck',
-  },
-  {
-    id: 'energia',
-    title: 'Harmonia e Equilíbrio',
-    description: 'Cristais, incensos e pirâmides selecionados para o seu bem-estar espiritual.',
-    icon: 'Sparkles',
-  },
 ];
 
 export const PRODUCTS: Product[] = [
@@ -1160,18 +1145,3 @@ export const PRODUCTS: Product[] = [
     sku: 'QP-1072',
   },
 ];
-
-export const COMPANY_HISTORY = {
-  title: 'Harmonia, Felicidade e Paz',
-  paragraphs: [
-    'A Quéops Pirâmides fabrica pirâmides artesanais desde 1990, todas proporcionais à Grande Pirâmide de Quéops. Desde 1996 trabalhamos o cobre e, a partir de 2019, passamos a lapidar pirâmides de cristal com técnica própria.',
-    'Muito além das pirâmides, reunimos um universo de artigos para o corpo e o espírito: cristais, incensos, imagens sacras, pêndulos de radiestesia e peças de decoração escolhidas com cuidado.',
-    'Nossa missão é criar possibilidades para que as pessoas alcancem a Harmonia, a Felicidade e a Paz — levando energia, beleza e significado para cada ambiente.',
-  ],
-  stats: [
-    { label: 'Anos de Tradição', value: '35+' },
-    { label: 'Peças no Catálogo', value: '1.400+' },
-    { label: 'Feito à Mão', value: '100%' },
-    { label: 'Avaliação Média', value: '4.9★' },
-  ],
-};

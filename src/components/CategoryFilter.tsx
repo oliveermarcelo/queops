@@ -6,6 +6,7 @@
 import React from 'react';
 import { ArrowUpRight } from 'lucide-react';
 import { motion } from 'motion/react';
+import { CATEGORY_COVERS } from '../media';
 
 interface CategoryFilterProps {
   activeCategory: string;
@@ -14,12 +15,12 @@ interface CategoryFilterProps {
 
 // Full-bleed lookbook cards com fotos reais do catálogo Quéops.
 const CATEGORY_CARDS = [
-  { id: 'piramides', name: 'Pirâmides', blurb: 'Cobre, cristal e veludo azul', image: 'https://queopspiramides.com.br/wp-content/uploads/2025/09/1758721809_22221a183cf9ca0bf61bda8d798c97b0.png' },
-  { id: 'cristais', name: 'Cristais', blurb: 'Ametistas, quartzos e minerais', image: 'https://queopspiramides.com.br/wp-content/uploads/2026/03/1774655704_ebc7b372efd257d5191b0d2af5446f04.png' },
-  { id: 'incensos', name: 'Incensos', blurb: 'Incensos, incensários e essências', image: 'https://queopspiramides.com.br/wp-content/uploads/2026/05/1000631104.png' },
-  { id: 'acessorios', name: 'Acessórios', blurb: 'Pingentes, pulseiras e prata', image: 'https://queopspiramides.com.br/wp-content/uploads/2026/03/1771962305_8002c2dda5a1b133a27566679045dd0f.png' },
-  { id: 'religiosos', name: 'Religiosos', blurb: 'Cruzes, santos e egípcios', image: 'https://queopspiramides.com.br/wp-content/uploads/2026/05/1000632566.png' },
-  { id: 'decoracao', name: 'Decoração', blurb: 'Estátuas, quadros e velas', image: 'https://queopspiramides.com.br/wp-content/uploads/2026/05/1000630391.png' },
+  { id: 'piramides', name: 'Pirâmides', blurb: 'Cobre, cristal e veludo azul', image: CATEGORY_COVERS.piramides },
+  { id: 'cristais', name: 'Cristais', blurb: 'Ametistas, quartzos e minerais', image: CATEGORY_COVERS.cristais },
+  { id: 'incensos', name: 'Incensos', blurb: 'Incensos, incensários e essências', image: CATEGORY_COVERS.incensos },
+  { id: 'acessorios', name: 'Acessórios', blurb: 'Pingentes, pulseiras e prata', image: CATEGORY_COVERS.acessorios },
+  { id: 'religiosos', name: 'Religiosos', blurb: 'Cruzes, santos e egípcios', image: CATEGORY_COVERS.religiosos },
+  { id: 'decoracao', name: 'Decoração', blurb: 'Estátuas, quadros e velas', image: CATEGORY_COVERS.decoracao },
 ] as const;
 
 export default function CategoryFilter({ setActiveCategory }: CategoryFilterProps) {
@@ -54,7 +55,7 @@ export default function CategoryFilter({ setActiveCategory }: CategoryFilterProp
               transition={{ duration: 0.5, delay: i * 0.06 }}
               className="group relative h-44 sm:h-60 rounded-2xl overflow-hidden text-left cursor-pointer shadow-sm hover:shadow-2xl transition-all duration-300"
             >
-              <div className="absolute inset-0 bg-gradient-to-br from-[#f6efe6] to-[#e7d8c4]" />
+              <div className="absolute inset-0 bg-gradient-to-br from-[#f0eae0] to-[#e6ded0]" />
               <img
                 src={cat.image}
                 alt={cat.name}
@@ -63,7 +64,7 @@ export default function CategoryFilter({ setActiveCategory }: CategoryFilterProp
                 referrerPolicy="no-referrer"
               />
               {/* Readability gradient */}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#2a1206]/85 via-[#42210b]/25 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#232819]/85 via-[#414a36]/25 to-transparent" />
 
               <div className="absolute inset-0 p-5 sm:p-6 flex flex-col justify-end">
                 <h3 className="text-lg sm:text-2xl font-extrabold text-white leading-tight drop-shadow-sm">

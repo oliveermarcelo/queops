@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 
-// Data and Types
 import { Product, CartItem } from './types';
-import { PRODUCTS } from './data';
+import { useCatalog } from './catalog/CatalogContext';
+import { loadCart, saveCart, clearCart as clearStoredCart, StoredCartLine } from './cart/storage';
+import { CustomerAccount, fetchAccount, logout as endSession } from './account/session';
 
-// Components
 import Header from './components/Header';
 import Hero from './components/Hero';
 import CategoryFilter from './components/CategoryFilter';
@@ -21,7 +21,6 @@ import PromoBanner from './components/PromoBanner';
 import TrustBar from './components/TrustBar';
 import Footer from './components/Footer';
 
-// Modals and Drawers
 import CartDrawer from './components/CartDrawer';
 import ProductDetailPage from './components/ProductDetailPage';
 import CheckoutPage from './components/CheckoutPage';
@@ -29,42 +28,60 @@ import StoryModal from './components/StoryModal';
 import CertificationsModal from './components/CertificationsModal';
 import AccountModal from './components/AccountModal';
 import AccountPage from './components/AccountPage';
-import { CustomerAccount, getSession, saveSession, endSession, startSession } from './account/session';
 
 type View = 'home' | 'products' | 'detail' | 'checkout' | 'account';
 
 export default function App() {
-  // Navigation & Filtering States
+  const { products, loading, error, reload, productById } = useCatalog();
+
   const [view, setView] = useState<View>('home');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [activeSubcategory, setActiveSubcategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
-  // Cart State (Pre-populated with exactly 2 items to match the "2" badge in the mockup)
-  const [cartItems, setCartItems] = useState<CartItem[]>([
-    {
-      product: PRODUCTS[0], // Placa de Cobre M
-      quantity: 1,
-    },
-    {
-      product: PRODUCTS[1], // Pirâmide de Cobre Fechada 15cm
-      quantity: 1,
-    },
-  ]);
-
-  // UI Control States
+  // A sacola guarda só id + quantidade; os dados do produto vêm do catálogo.
+  const [lines, setLines] = useState<StoredCartLine[]>(() => loadCart());
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isStoryOpen, setIsStoryOpen] = useState(false);
   const [isCertificationsOpen, setIsCertificationsOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
 
-  // Customer session (mock)
-  const [account, setAccount] = useState<CustomerAccount | null>(() => getSession());
+  const [account, setAccount] = useState<CustomerAccount | null>(null);
 
-  const persistAccount = (acc: CustomerAccount) => { saveSession(acc); setAccount(acc); };
+  // Quem já tem sessão ativa volta logado ao abrir o site.
+  useEffect(() => {
+    let alive = true;
+    fetchAccount()
+      .then((acc) => {
+        if (alive) setAccount(acc);
+      })
+      .catch(() => {
+        /* visitante sem sessão: segue anônimo */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-  // Header "Minha Conta": if logged in → account page, else open login modal
+  useEffect(() => {
+    saveCart(lines);
+  }, [lines]);
+
+  // Junta as linhas salvas com o catálogo atual. Item que saiu do ar some da
+  // sacola sozinho, em vez de quebrar o carrinho.
+  const cartItems = useMemo<CartItem[]>(() => {
+    if (!products.length) return [];
+    return lines
+      .map((line) => {
+        const product = productById(line.id);
+        return product ? { product, quantity: line.qty } : null;
+      })
+      .filter((x): x is CartItem => x !== null);
+  }, [lines, products, productById]);
+
+  const scrollTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+
   const handleAccountClick = () => {
     if (account) {
       setSelectedProduct(null);
@@ -75,9 +92,6 @@ export default function App() {
     }
   };
 
-  const scrollTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
-
-  // Navigation helpers
   const goHome = () => {
     setSelectedProduct(null);
     setActiveCategory('all');
@@ -86,7 +100,6 @@ export default function App() {
     scrollTop();
   };
 
-  // Open the products listing, optionally scoped to a category / subcategory
   const selectCategory = (categoryId: string, subcategoryId?: string) => {
     setSelectedProduct(null);
     setActiveCategory(categoryId);
@@ -96,7 +109,6 @@ export default function App() {
     scrollTop();
   };
 
-  // Open the full listing without changing the active category
   const openProducts = () => {
     setSelectedProduct(null);
     setView('products');
@@ -109,56 +121,83 @@ export default function App() {
     scrollTop();
   };
 
-  // Cart operations
-  const handleAddToCart = (product: Product, quantity: number = 1) => {
-    setCartItems((prevItems) => {
-      const existing = prevItems.find((item) => item.product.id === product.id);
+  // ---- Operações da sacola ----
+  const handleAddToCart = useCallback((product: Product, quantity: number = 1) => {
+    setLines((prev) => {
+      const existing = prev.find((l) => l.id === product.id);
       if (existing) {
-        return prevItems.map((item) =>
-          item.product.id === product.id
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
+        return prev.map((l) =>
+          l.id === product.id ? { ...l, qty: Math.min(999, l.qty + quantity) } : l,
         );
       }
-      return [...prevItems, { product, quantity }];
+      return [...prev, { id: product.id, qty: quantity }];
     });
-  };
+  }, []);
 
-  const handleUpdateCartQty = (productId: string, quantity: number) => {
-    if (quantity < 1) {
-      handleRemoveCartItem(productId);
-      return;
-    }
-    setCartItems((prevItems) =>
-      prevItems.map((item) =>
-        item.product.id === productId ? { ...item, quantity } : item
-      )
-    );
-  };
+  const handleRemoveCartItem = useCallback((productId: string) => {
+    setLines((prev) => prev.filter((l) => l.id !== productId));
+  }, []);
 
-  const handleRemoveCartItem = (productId: string) => {
-    setCartItems((prevItems) => prevItems.filter((item) => item.product.id !== productId));
-  };
+  const handleUpdateCartQty = useCallback(
+    (productId: string, quantity: number) => {
+      if (quantity < 1) {
+        handleRemoveCartItem(productId);
+        return;
+      }
+      setLines((prev) =>
+        prev.map((l) => (l.id === productId ? { ...l, qty: Math.min(999, quantity) } : l)),
+      );
+    },
+    [handleRemoveCartItem],
+  );
 
-  const handleClearCart = () => {
-    setCartItems([]);
-  };
+  const handleClearCart = useCallback(() => {
+    setLines([]);
+    clearStoredCart();
+  }, []);
 
-  // Totals for the navbar
   const totalItemsCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
-  // Home product rails
-  const onSale = PRODUCTS.filter((p) => p.oldPrice && p.oldPrice > p.price);
-  const newArrivals = PRODUCTS.filter((p) => p.tag === 'NOVIDADE');
-  const bestSellers = [...PRODUCTS]
-    .filter((p) => p.tag !== 'NOVIDADE')
-    .slice(0, 12);
+  // ---- Vitrines da home ----
+  const onSale = useMemo(
+    () => products.filter((p) => p.oldPrice && p.oldPrice > p.price),
+    [products],
+  );
+  const newArrivals = useMemo(() => products.filter((p) => p.tag === 'NOVIDADE'), [products]);
+  const bestSellers = useMemo(
+    () => products.filter((p) => p.tag !== 'NOVIDADE').slice(0, 12),
+    [products],
+  );
+
+  // ---- Estados de carregamento / falha do catálogo ----
+  if (loading && !products.length) {
+    return (
+      <div className="min-h-screen bg-brand-cream flex items-center justify-center">
+        <p className="text-sm text-gray-500 animate-pulse">Carregando a loja…</p>
+      </div>
+    );
+  }
+
+  if (error && !products.length) {
+    return (
+      <div className="min-h-screen bg-brand-cream flex items-center justify-center px-6">
+        <div className="max-w-md text-center space-y-4">
+          <h1 className="text-xl font-extrabold text-primary-blue">A loja não respondeu</h1>
+          <p className="text-sm text-gray-500 leading-relaxed">{error}</p>
+          <button
+            onClick={reload}
+            className="px-6 py-3 rounded-full bg-primary-blue text-white text-xs font-bold uppercase tracking-wider"
+          >
+            Tentar de novo
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#fcf9f8] text-brand-text font-sans antialiased flex flex-col justify-between">
-
-      {/* Navbar Container */}
+    <div className="min-h-screen bg-brand-cream text-brand-text font-sans antialiased flex flex-col justify-between">
       <Header
         cartCount={totalItemsCount}
         cartTotal={cartTotal}
@@ -178,8 +217,12 @@ export default function App() {
       {view === 'account' && account ? (
         <AccountPage
           account={account}
-          onSave={persistAccount}
-          onLogout={() => { endSession(); setAccount(null); goHome(); }}
+          onSave={setAccount}
+          onLogout={async () => {
+            await endSession().catch(() => undefined);
+            setAccount(null);
+            goHome();
+          }}
           onBack={goHome}
           onSelectProduct={openProductDetail}
         />
@@ -189,28 +232,12 @@ export default function App() {
           account={account}
           onBack={() => setView('home')}
           onClearCart={handleClearCart}
-          onSaveProfile={(data) => {
-            if (!account) return;
-            const addr = {
-              id: account.addresses[0]?.id ?? `addr-${Date.now()}`,
-              label: account.addresses[0]?.label ?? 'Principal',
-              ...data.address,
-              isDefault: true,
-            };
-            persistAccount({
-              ...account,
-              name: data.name || account.name,
-              cpf: data.cpf || account.cpf,
-              phone: data.phone || account.phone,
-              email: data.email || account.email,
-              addresses: [addr, ...account.addresses.filter((a) => a.id !== addr.id)],
-            });
-          }}
+          onProfileSaved={setAccount}
         />
       ) : view === 'detail' && selectedProduct ? (
         <ProductDetailPage
           product={selectedProduct}
-          products={PRODUCTS}
+          products={products}
           onBack={() => openProducts()}
           onAddToCart={handleAddToCart}
           onSelectProduct={openProductDetail}
@@ -227,22 +254,12 @@ export default function App() {
         />
       ) : (
         <>
-          {/* Hero: rotating shop banner + side mini-banners */}
-          <Hero
-            onOpenProducts={() => selectCategory('all')}
-            onSelectCategory={selectCategory}
-          />
-
-          {/* Trust / benefits strip */}
+          <Hero onOpenProducts={() => selectCategory('all')} onSelectCategory={selectCategory} />
           <TrustBar />
-
-          {/* Shop by category (lookbook) */}
           <CategoryFilter
             activeCategory={activeCategory}
             setActiveCategory={(cat) => selectCategory(cat)}
           />
-
-          {/* Best sellers rail */}
           <ProductRail
             eyebrow="Favoritos da casa"
             title="Mais vendidos"
@@ -251,8 +268,6 @@ export default function App() {
             onAddToCart={handleAddToCart}
             onViewAll={() => selectCategory('all')}
           />
-
-          {/* Offers rail */}
           <ProductRail
             alt
             eyebrow="Aproveite"
@@ -262,11 +277,7 @@ export default function App() {
             onAddToCart={handleAddToCart}
             onViewAll={() => selectCategory('destaques')}
           />
-
-          {/* Editorial promo / CTA */}
           <PromoBanner onOpenProducts={() => selectCategory('all')} />
-
-          {/* New arrivals rail */}
           <ProductRail
             eyebrow="Acabou de chegar"
             title="Novidades"
@@ -275,19 +286,15 @@ export default function App() {
             onAddToCart={handleAddToCart}
             onViewAll={() => selectCategory('novidades')}
           />
-
-          {/* Why Quéops Pirâmides */}
           <ValueProps />
         </>
       )}
 
-      {/* Main Footer structure */}
       <Footer
         onOpenStory={() => setIsStoryOpen(true)}
         onOpenCertifications={() => setIsCertificationsOpen(true)}
       />
 
-      {/* Drawers and Modals Overlays with AnimatePresence */}
       <AnimatePresence>
         {isCartOpen && (
           <CartDrawer
@@ -306,9 +313,7 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {isStoryOpen && (
-          <StoryModal onClose={() => setIsStoryOpen(false)} />
-        )}
+        {isStoryOpen && <StoryModal onClose={() => setIsStoryOpen(false)} />}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -321,8 +326,7 @@ export default function App() {
         {isAccountOpen && (
           <AccountModal
             onClose={() => setIsAccountOpen(false)}
-            onSuccess={(name, email) => {
-              const acc = startSession(name, email);
+            onSuccess={(acc) => {
               setAccount(acc);
               setIsAccountOpen(false);
               setSelectedProduct(null);

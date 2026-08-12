@@ -1,0 +1,9 @@
+# Quéops Pirâmides
+User-agent: *
+Allow: /
+
+# Áreas que não devem ser indexadas: painel e API.
+Disallow: /admin
+Disallow: /api/
+
+Sitemap: https://queopspiramides.com.br/sitemap.xml

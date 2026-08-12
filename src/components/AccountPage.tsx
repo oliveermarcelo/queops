@@ -8,10 +8,15 @@ import {
   Package, User, MapPin, Heart, LogOut, ArrowLeft, Check, X, Plus,
   Pencil, Trash2, ChevronRight,
 } from 'lucide-react';
-import { CustomerAccount, CustomerAddress } from '../account/session';
+import {
+  CustomerAccount, CustomerAddress, ORDER_STATUS_LABEL,
+  createAddress, deleteAddress, saveFavorites, saveProfile, updateAddress,
+} from '../account/session';
 import { Product } from '../types';
-import { PRODUCTS } from '../data';
+import { useCatalog } from '../catalog/CatalogContext';
 import { safeImageSrc } from '../utils/safeUrl';
+import { brl } from '../utils/currency';
+import ModalShell from './ModalShell';
 
 type Tab = 'orders' | 'profile' | 'addresses' | 'favorites';
 
@@ -23,14 +28,16 @@ interface AccountPageProps {
   onSelectProduct: (p: Product) => void;
 }
 
-const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-const ORDER_STATUS: Record<string, { label: string; cls: string }> = {
-  processing: { label: 'Em preparação', cls: 'bg-amber-100 text-amber-700' },
-  shipped: { label: 'Enviado', cls: 'bg-blue-100 text-blue-700' },
-  delivered: { label: 'Entregue', cls: 'bg-emerald-100 text-emerald-700' },
-  canceled: { label: 'Cancelado', cls: 'bg-gray-200 text-gray-500' },
+// Cores por status; os rótulos vêm de ORDER_STATUS_LABEL para não divergirem
+// do que o painel administrativo mostra.
+const ORDER_STATUS_CLS: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700',
+  paid: 'bg-blue-100 text-blue-700',
+  shipped: 'bg-indigo-100 text-indigo-700',
+  delivered: 'bg-emerald-100 text-emerald-700',
+  canceled: 'bg-gray-200 text-gray-500',
 };
 
 const inputCls = 'w-full text-sm border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-blue/20 focus:border-primary-blue transition';
@@ -46,7 +53,7 @@ export default function AccountPage({ account, onSave, onLogout, onBack, onSelec
   ];
 
   return (
-    <div className="pt-40 lg:pt-44 pb-20 bg-[#fcf9f8] min-h-screen">
+    <div className="pt-40 lg:pt-44 pb-20 bg-brand-cream min-h-screen">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
 
         <button onClick={onBack} className="inline-flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-primary-blue transition-colors group mb-6">
@@ -114,13 +121,14 @@ function OrdersTab({ account }: { account: CustomerAccount }) {
   return (
     <div className="space-y-4">
       {account.orders.map((o) => {
-        const st = ORDER_STATUS[o.status];
+        const statusCls = ORDER_STATUS_CLS[o.status] ?? 'bg-gray-100 text-gray-500';
+        const statusLabel = ORDER_STATUS_LABEL[o.status] ?? o.status;
         return (
           <div key={o.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 bg-gray-50/50">
               <div className="flex items-center gap-3">
                 <span className="font-mono font-bold text-sm text-gray-700">{o.id}</span>
-                <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${st.cls}`}>{st.label}</span>
+                <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${statusCls}`}>{statusLabel}</span>
               </div>
               <span className="text-xs text-gray-400">{fmtDate(o.date)}</span>
             </div>
@@ -147,7 +155,24 @@ function OrdersTab({ account }: { account: CustomerAccount }) {
 function ProfileTab({ account, onSave }: { account: CustomerAccount; onSave: (a: CustomerAccount) => void }) {
   const [form, setForm] = useState(account);
   const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const set = (patch: Partial<CustomerAccount>) => { setForm((f) => ({ ...f, ...patch })); setSaved(false); };
+
+  const handleSave = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await saveProfile({ name: form.name, phone: form.phone, cpf: form.cpf });
+      onSave(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível salvar.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-8 max-w-2xl">
@@ -159,7 +184,9 @@ function ProfileTab({ account, onSave }: { account: CustomerAccount; onSave: (a:
         </div>
         <div>
           <label className="block text-[13px] font-semibold text-gray-700 mb-1.5">E-mail</label>
-          <input value={form.email} onChange={(e) => set({ email: e.target.value })} className={inputCls} />
+          {/* O e-mail identifica a conta e o histórico de pedidos: trocar por
+              aqui exigiria reconfirmar a identidade, então fica só de leitura. */}
+          <input value={form.email} readOnly disabled className={`${inputCls} bg-gray-50 text-gray-500`} />
         </div>
         <div>
           <label className="block text-[13px] font-semibold text-gray-700 mb-1.5">Telefone</label>
@@ -170,14 +197,16 @@ function ProfileTab({ account, onSave }: { account: CustomerAccount; onSave: (a:
           <input value={form.cpf} onChange={(e) => set({ cpf: e.target.value })} placeholder="000.000.000-00" className={inputCls} />
         </div>
       </div>
+      {error && <p role="alert" className="text-sm text-brand-red font-medium mt-4">{error}</p>}
       <div className="flex items-center gap-3 mt-6">
         <button
-          onClick={() => { onSave(form); setSaved(true); setTimeout(() => setSaved(false), 2500); }}
-          className="px-7 py-3 rounded-xl bg-primary-blue hover:bg-primary-container text-white text-sm font-bold uppercase tracking-wider transition-colors"
+          onClick={handleSave}
+          disabled={busy}
+          className="px-7 py-3 rounded-xl bg-primary-blue hover:bg-primary-container disabled:opacity-60 text-white text-sm font-bold uppercase tracking-wider transition-colors"
         >
-          Salvar alterações
+          {busy ? 'Salvando…' : 'Salvar alterações'}
         </button>
-        {saved && <span className="text-sm text-emerald-600 font-medium inline-flex items-center gap-1"><Check size={16} /> Salvo!</span>}
+        {saved && <span className="text-sm text-emerald-600 font-medium inline-flex items-center gap-1"><Check size={16} aria-hidden="true" /> Salvo!</span>}
       </div>
     </div>
   );
@@ -187,21 +216,34 @@ function ProfileTab({ account, onSave }: { account: CustomerAccount; onSave: (a:
 function AddressesTab({ account, onSave }: { account: CustomerAccount; onSave: (a: CustomerAccount) => void }) {
   const [editing, setEditing] = useState<CustomerAddress | null>(null);
 
-  const save = (addr: CustomerAddress) => {
-    const exists = account.addresses.some((a) => a.id === addr.id);
-    const addresses = exists
-      ? account.addresses.map((a) => (a.id === addr.id ? addr : a))
-      : [...account.addresses, addr];
-    onSave({ ...account, addresses });
-    setEditing(null);
+  const [error, setError] = useState('');
+
+  const save = async (addr: CustomerAddress) => {
+    setError('');
+    try {
+      const exists = account.addresses.some((a) => a.id === addr.id);
+      const updated = exists ? await updateAddress(addr) : await createAddress(addr);
+      onSave(updated);
+      setEditing(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível salvar o endereço.');
+    }
   };
-  const remove = (id: string) => onSave({ ...account, addresses: account.addresses.filter((a) => a.id !== id) });
+
+  const remove = async (id: string) => {
+    setError('');
+    try {
+      onSave(await deleteAddress(id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível excluir o endereço.');
+    }
+  };
 
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
         <button
-          onClick={() => setEditing({ id: `addr-${Date.now()}`, label: '', cep: '', street: '', number: '', neighborhood: '', city: '', state: 'SP' })}
+          onClick={() => setEditing({ id: '', label: '', cep: '', street: '', number: '', neighborhood: '', city: '', state: 'SP' })}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-blue hover:bg-primary-container text-white text-xs font-bold uppercase tracking-wider"
         >
           <Plus size={15} /> Novo endereço
@@ -220,8 +262,8 @@ function AddressesTab({ account, onSave }: { account: CustomerAccount; onSave: (
                   {a.isDefault && <span className="text-[10px] font-bold bg-primary-blue/10 text-primary-blue px-2 py-0.5 rounded-full">Padrão</span>}
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={() => setEditing(a)} className="p-1.5 text-gray-400 hover:text-primary-blue rounded-lg hover:bg-gray-100"><Pencil size={14} /></button>
-                  <button onClick={() => remove(a.id)} className="p-1.5 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100"><Trash2 size={14} /></button>
+                  <button onClick={() => setEditing(a)} aria-label={`Editar ${a.label || 'endereço'}`} className="p-1.5 text-gray-400 hover:text-primary-blue rounded-lg hover:bg-gray-100"><Pencil size={14} aria-hidden="true" /></button>
+                  <button onClick={() => remove(a.id)} aria-label={`Excluir ${a.label || 'endereço'}`} className="p-1.5 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100"><Trash2 size={14} aria-hidden="true" /></button>
                 </div>
               </div>
               <p className="text-sm text-gray-600 mt-2 leading-relaxed">
@@ -234,21 +276,26 @@ function AddressesTab({ account, onSave }: { account: CustomerAccount; onSave: (
         </div>
       )}
 
+      {error && <p role="alert" className="text-sm text-brand-red font-medium">{error}</p>}
       {editing && <AddressEditor initial={editing} onSave={save} onCancel={() => setEditing(null)} />}
     </div>
   );
 }
 
-function AddressEditor({ initial, onSave, onCancel }: { initial: CustomerAddress; onSave: (a: CustomerAddress) => void; onCancel: () => void }) {
+function AddressEditor({ initial, onSave, onCancel }: { initial: CustomerAddress; onSave: (a: CustomerAddress) => void | Promise<void>; onCancel: () => void }) {
   const [a, setA] = useState(initial);
   const set = (patch: Partial<CustomerAddress>) => setA((cur) => ({ ...cur, ...patch }));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <ModalShell
+      onClose={onCancel}
+      labelledBy="address-editor-title"
+      overlayClassName="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+    >
+      <div>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h3 className="font-bold text-gray-800">{account_has(initial) ? 'Editar endereço' : 'Novo endereço'}</h3>
-          <button onClick={onCancel} className="p-1.5 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100"><X size={18} /></button>
+          <h3 id="address-editor-title" className="font-bold text-gray-800">{initial.id ? 'Editar endereço' : 'Novo endereço'}</h3>
+          <button onClick={onCancel} aria-label="Fechar" className="p-1.5 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100"><X size={18} aria-hidden="true" /></button>
         </div>
         <div className="p-6 grid grid-cols-1 sm:grid-cols-12 gap-4">
           <div className="sm:col-span-12">
@@ -289,15 +336,18 @@ function AddressEditor({ initial, onSave, onCancel }: { initial: CustomerAddress
           <button onClick={() => onSave(a)} className="px-6 py-2.5 rounded-lg bg-primary-blue hover:bg-primary-container text-white text-sm font-bold">Salvar</button>
         </div>
       </div>
-    </div>
+    </ModalShell>
   );
 }
-function account_has(a: CustomerAddress) { return !!a.street; }
 
 /* ---------- Favorites ---------- */
 function FavoritesTab({ account, onSave, onSelectProduct }: { account: CustomerAccount; onSave: (a: CustomerAccount) => void; onSelectProduct: (p: Product) => void }) {
-  const favs = PRODUCTS.filter((p) => account.favorites.includes(p.id));
-  const removeFav = (id: string) => onSave({ ...account, favorites: account.favorites.filter((f) => f !== id) });
+  const { products } = useCatalog();
+  const favs = products.filter((p) => account.favorites.includes(p.id));
+  const removeFav = async (id: string) => {
+    const next = account.favorites.filter((f) => f !== id);
+    onSave(await saveFavorites(next));
+  };
 
   if (favs.length === 0) {
     return <EmptyState icon={Heart} title="Nenhum favorito ainda" text="Toque no coração de um produto para salvá-lo aqui." />;
@@ -313,8 +363,8 @@ function FavoritesTab({ account, onSave, onSelectProduct }: { account: CustomerA
             <h4 className="text-sm font-bold text-gray-800 truncate">{p.name}</h4>
             <p className="text-primary-blue font-extrabold">{brl(p.price)}</p>
           </div>
-          <button onClick={() => onSelectProduct(p)} className="p-2 text-gray-400 hover:text-primary-blue" title="Ver produto"><ChevronRight size={18} /></button>
-          <button onClick={() => removeFav(p.id)} className="p-2 text-gray-400 hover:text-brand-red" title="Remover"><Trash2 size={16} /></button>
+          <button onClick={() => onSelectProduct(p)} className="p-2 text-gray-400 hover:text-primary-blue" aria-label={`Ver ${p.name}`}><ChevronRight size={18} aria-hidden="true" /></button>
+          <button onClick={() => removeFav(p.id)} className="p-2 text-gray-400 hover:text-brand-red" aria-label={`Remover ${p.name} dos favoritos`}><Trash2 size={16} aria-hidden="true" /></button>
         </div>
       ))}
     </div>

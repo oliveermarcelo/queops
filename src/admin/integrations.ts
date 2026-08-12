@@ -2,16 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Integration adapter layer.
+ * Catálogo de provedores de integração — APENAS metadados.
  *
- * Each provider declares the credential fields it needs and a `testConnection`
- * routine. Calls are real HTTP requests where the public API is well known
- * (Z-API, Evolution, Chatwoot, Chatvolt). The ERP adapter is generic (base URL
- * + token) since each ERP differs — wire the concrete endpoints when chosen.
- *
- * NOTE: calling these from the browser is fine for setup/testing, but in
- * production the secrets and webhooks should live behind a backend. This file
- * is intentionally the single place to swap browser fetch → server proxy.
+ * Aqui ficam nome, descrição e quais campos cada provedor pede. O teste de
+ * conexão e o envio de mensagens moveram-se para o servidor
+ * (`api/lib/providers.php`): antes o navegador chamava Z-API, Stripe e ERP
+ * diretamente, o que exigia ter o token no JavaScript e ainda esbarrava em
+ * CORS. Agora o painel só pede "teste a Z-API" e o PHP usa a credencial
+ * cifrada guardada no banco.
  */
 
 import { IntegrationId } from './types';
@@ -190,125 +188,20 @@ export const PROVIDERS: ProviderMeta[] = [
 ];
 
 export function getProvider(id: IntegrationId): ProviderMeta {
-  return PROVIDERS.find((p) => p.id === id)!;
+  const found = PROVIDERS.find((p) => p.id === id);
+  if (!found) {
+    throw new Error(`Provedor desconhecido: ${id}`);
+  }
+  return found;
 }
+
+/** Campos tratados como segredo: nunca voltam preenchidos do servidor. */
+export const SECRET_FIELD_KEYS = new Set([
+  'accessToken', 'secretKey', 'apiKey', 'apiToken', 'token', 'clientToken',
+  'password', 'encryptionKey',
+]);
 
 export interface TestResult {
   ok: boolean;
   message: string;
-}
-
-/**
- * Attempt a lightweight connectivity check per provider.
- * Falls back to a clear message when required fields are missing.
- */
-export async function testConnection(
-  id: IntegrationId,
-  fields: Record<string, string>
-): Promise<TestResult> {
-  const required = getProvider(id).fields.map((f) => f.key);
-  const missing = required.filter((k) => !fields[k]?.trim());
-  if (missing.length) {
-    return { ok: false, message: `Preencha: ${missing.join(', ')}` };
-  }
-
-  try {
-    switch (id) {
-      case 'zapi': {
-        const url = `https://api.z-api.io/instances/${fields.instanceId}/token/${fields.token}/status`;
-        const res = await fetch(url, {
-          headers: fields.clientToken ? { 'Client-Token': fields.clientToken } : {},
-        });
-        return { ok: res.ok, message: res.ok ? 'Conexão Z-API OK.' : `Falha (HTTP ${res.status}).` };
-      }
-      case 'evolution': {
-        const url = `${trimSlash(fields.baseUrl)}/instance/connectionState/${encodeURIComponent(fields.instance)}`;
-        const res = await fetch(url, { headers: { apikey: fields.apiKey } });
-        return { ok: res.ok, message: res.ok ? 'Conexão Evolution OK.' : `Falha (HTTP ${res.status}).` };
-      }
-      case 'chatwoot': {
-        const url = `${trimSlash(fields.baseUrl)}/api/v1/accounts/${fields.accountId}/conversations`;
-        const res = await fetch(url, { headers: { api_access_token: fields.apiToken } });
-        return { ok: res.ok, message: res.ok ? 'Conexão Chatwoot OK.' : `Falha (HTTP ${res.status}).` };
-      }
-      case 'chatvolt': {
-        const res = await fetch('https://api.chatvolt.ai/agents', {
-          headers: { Authorization: `Bearer ${fields.apiKey}` },
-        });
-        return { ok: res.ok, message: res.ok ? 'Conexão Chatvolt OK.' : `Falha (HTTP ${res.status}).` };
-      }
-      case 'uno': {
-        // Native UNO ERP endpoint (placeholder host — wire the real one in prod).
-        const res = await fetch('https://api.unoerp.com/v1/ping', {
-          headers: { Authorization: `Bearer ${fields.token}` },
-        });
-        return { ok: res.ok, message: res.ok ? 'UNO ERP conectado.' : `Falha (HTTP ${res.status}).` };
-      }
-      case 'erp': {
-        const res = await fetch(`${trimSlash(fields.baseUrl)}/health`, {
-          headers: { Authorization: `Bearer ${fields.token}` },
-        });
-        return { ok: res.ok, message: res.ok ? 'ERP respondeu OK.' : `Falha (HTTP ${res.status}).` };
-      }
-      // Payment gateways & logistics: validating from the browser is blocked by
-      // CORS. We accept the saved credentials and confirm the real handshake
-      // happens server-side (where the secret keys must live anyway).
-      case 'mercadopago':
-      case 'pagseguro':
-      case 'stripe':
-      case 'pagarme':
-        return { ok: true, message: 'Credenciais salvas. A validação ocorre no servidor ao processar um pagamento.' };
-      case 'correios':
-      case 'melhorenvio':
-      case 'frenet':
-        return { ok: true, message: 'Credenciais salvas. A cotação de frete é validada no servidor.' };
-      default:
-        return { ok: false, message: 'Provedor desconhecido.' };
-    }
-  } catch (e) {
-    // CORS or network errors are expected when testing 3rd-party APIs from the
-    // browser without a proxy — report honestly instead of pretending success.
-    return {
-      ok: false,
-      message:
-        'Não foi possível validar pelo navegador (provável CORS/rede). As credenciais foram salvas; valide pelo backend/proxy em produção.',
-    };
-  }
-}
-
-/** Send a WhatsApp text message through the configured provider. */
-export async function sendWhatsApp(
-  id: 'zapi' | 'evolution',
-  fields: Record<string, string>,
-  phone: string,
-  message: string
-): Promise<TestResult> {
-  try {
-    if (id === 'zapi') {
-      const url = `https://api.z-api.io/instances/${fields.instanceId}/token/${fields.token}/send-text`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(fields.clientToken ? { 'Client-Token': fields.clientToken } : {}),
-        },
-        body: JSON.stringify({ phone, message }),
-      });
-      return { ok: res.ok, message: res.ok ? 'Mensagem enviada.' : `Falha (HTTP ${res.status}).` };
-    }
-    // evolution
-    const url = `${trimSlash(fields.baseUrl)}/message/sendText/${encodeURIComponent(fields.instance)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: fields.apiKey },
-      body: JSON.stringify({ number: phone, text: message }),
-    });
-    return { ok: res.ok, message: res.ok ? 'Mensagem enviada.' : `Falha (HTTP ${res.status}).` };
-  } catch {
-    return { ok: false, message: 'Falha de rede/CORS ao enviar pelo navegador.' };
-  }
-}
-
-function trimSlash(s: string) {
-  return s.replace(/\/+$/, '');
 }

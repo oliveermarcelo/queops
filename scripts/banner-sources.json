@@ -1,0 +1,15 @@
+{
+  "_comentario": "Origem das imagens editoriais. O script scripts/download-images.mjs baixa cada URL para public/banners/<arquivo>. Troque a URL aqui quando quiser outra arte — ou simplesmente substitua o arquivo em public/banners/.",
+  "arquivos": {
+    "hero-piramides.jpg": "https://images.unsplash.com/photo-1503177119275-0aa32b3a9368?q=80&w=1600&auto=format&fit=crop",
+    "hero-cristais.jpg": "https://queopspiramides.com.br/wp-content/uploads/2026/03/IMG-20260311-WA0088.png",
+    "hero-incensos.jpg": "https://images.unsplash.com/photo-1602928321679-560bb453f190?q=80&w=1600&auto=format&fit=crop",
+    "promo.jpg": "https://queopspiramides.com.br/wp-content/uploads/2026/03/1774634707_ca5c48f281523a5ce87eb68e8b7b548b.png",
+    "categoria-piramides.jpg": "https://queopspiramides.com.br/wp-content/uploads/2025/09/1758721809_22221a183cf9ca0bf61bda8d798c97b0.png",
+    "categoria-cristais.jpg": "https://queopspiramides.com.br/wp-content/uploads/2026/03/1774655704_ebc7b372efd257d5191b0d2af5446f04.png",
+    "categoria-incensos.jpg": "https://queopspiramides.com.br/wp-content/uploads/2026/05/1000631104.png",
+    "categoria-acessorios.jpg": "https://queopspiramides.com.br/wp-content/uploads/2026/03/1771962305_8002c2dda5a1b133a27566679045dd0f.png",
+    "categoria-religiosos.jpg": "https://queopspiramides.com.br/wp-content/uploads/2026/05/1000632566.png",
+    "categoria-decoracao.jpg": "https://queopspiramides.com.br/wp-content/uploads/2026/05/1000630391.png"
+  }
+}

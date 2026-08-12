@@ -6,7 +6,8 @@
 import React from 'react';
 import { X, Award, Users, ShieldAlert, History } from 'lucide-react';
 import { motion } from 'motion/react';
-import { COMPANY_HISTORY } from '../data';
+import { COMPANY_HISTORY } from '../content';
+import ModalShell from './ModalShell';
 
 interface StoryModalProps {
   onClose: () => void;
@@ -16,7 +17,12 @@ export default function StoryModal({ onClose }: StoryModalProps) {
   const iconsList = [History, Users, Award, ShieldAlert];
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <ModalShell
+      onClose={onClose}
+      labelledBy="story-modal-title"
+      overlayClassName="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto"
+      className="max-w-2xl w-full"
+    >
       <motion.div
         id="story-modal-container"
         initial={{ opacity: 0, scale: 0.95 }}
@@ -28,13 +34,14 @@ export default function StoryModal({ onClose }: StoryModalProps) {
         <div className="bg-primary-blue text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <Award className="w-5.5 h-5.5 text-yellow-400" />
-            <h3 className="text-base font-bold font-sans">Nossa História & Propósito</h3>
+            <h2 id="story-modal-title" className="text-base font-bold font-sans">Nossa História &amp; Propósito</h2>
           </div>
           <button
             onClick={onClose}
+            aria-label="Fechar"
             className="text-white/80 hover:text-white hover:bg-white/10 p-1.5 rounded-lg transition"
           >
-            <X size={18} />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
@@ -83,6 +90,6 @@ export default function StoryModal({ onClose }: StoryModalProps) {
           </button>
         </div>
       </motion.div>
-    </div>
+    </ModalShell>
   );
 }

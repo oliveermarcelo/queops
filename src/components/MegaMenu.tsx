@@ -9,7 +9,7 @@ import {
   Star, Triangle, Gem, Flame, Sparkles, Compass, Cross, Frame, BookOpen,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MENU_CATEGORIES } from '../data';
+import { useCatalog } from '../catalog/CatalogContext';
 import { MenuCategory } from '../types';
 
 const ICONS: Record<string, React.ComponentType<{ className?: string; size?: number }>> = {
@@ -27,11 +27,12 @@ interface MegaMenuProps {
  * Mobile: accordion list rendered separately by the Header drawer.
  */
 export default function MegaMenu({ onSelect }: MegaMenuProps) {
+  const { menu } = useCatalog();
   const [open, setOpen] = useState(false);
-  const [activeId, setActiveId] = useState<string>(MENU_CATEGORIES[0]?.id ?? '');
+  const [activeId, setActiveId] = useState<string>('');
 
   const activeCategory: MenuCategory | undefined =
-    MENU_CATEGORIES.find((c) => c.id === activeId) ?? MENU_CATEGORIES[0];
+    menu.find((c) => c.id === activeId) ?? menu[0];
 
   const handleSelect = (categoryId: string, subId?: string) => {
     setOpen(false);
@@ -71,10 +72,10 @@ export default function MegaMenu({ onSelect }: MegaMenuProps) {
             transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             className="absolute left-0 top-full pt-3 z-50"
           >
-            <div className="bg-white rounded-2xl shadow-[0_24px_60px_rgba(21,20,125,0.18)] border border-gray-100 overflow-hidden flex w-[840px] max-w-[92vw]">
+            <div className="bg-white rounded-2xl shadow-[0_24px_60px_rgba(43,49,37,0.18)] border border-gray-100 overflow-hidden flex w-[840px] max-w-[92vw]">
               {/* Parent categories */}
               <div className="w-[280px] bg-gradient-to-b from-gray-50 to-white border-r border-gray-100 py-3 max-h-[460px] overflow-y-auto">
-                {MENU_CATEGORIES.map((cat) => {
+                {menu.map((cat) => {
                   const C = Icon(cat.icon);
                   const isActive = cat.id === activeId;
                   return (
@@ -143,7 +144,7 @@ export default function MegaMenu({ onSelect }: MegaMenuProps) {
               </div>
 
               {/* Promo column */}
-              <div className="hidden lg:flex w-[220px] flex-shrink-0 bg-gradient-to-br from-[#2a1206] via-primary-blue to-primary-container text-white p-6 flex-col justify-between relative overflow-hidden">
+              <div className="hidden lg:flex w-[220px] flex-shrink-0 bg-gradient-to-br from-[#232819] via-primary-blue to-primary-container text-white p-6 flex-col justify-between relative overflow-hidden">
                 <Sparkles size={90} className="absolute -right-3 -bottom-3 text-white/10" />
                 <div className="relative">
                   <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-brand-gold">Destaques</span>
@@ -171,11 +172,12 @@ export function MegaMenuMobile({
 }: {
   onSelect: (categoryId: string, subcategoryId?: string) => void;
 }) {
+  const { menu } = useCatalog();
   const [expanded, setExpanded] = useState<string | null>(null);
 
   return (
     <div className="space-y-1">
-      {MENU_CATEGORIES.map((cat) => {
+      {menu.map((cat) => {
         const C = ICONS[cat.icon] ?? LayoutGrid;
         const hasSubs = cat.subcategories.length > 0;
         const isExpanded = expanded === cat.id;

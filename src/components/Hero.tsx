@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight, Truck, Tag } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { BANNERS } from '../media';
 
 interface HeroProps {
   onOpenProducts: () => void;
@@ -35,8 +36,8 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
       subtitle: 'Pirâmides de cobre e cristal lapidadas com técnica própria, na geometria exata da Grande Pirâmide.',
       cta: 'Ver pirâmides',
       action: () => onSelectCategory('piramides'),
-      image: 'https://images.unsplash.com/photo-1503177119275-0aa32b3a9368?q=80&w=1200&auto=format&fit=crop',
-      tint: 'from-[#2a1206]/95 via-[#42210b]/80 to-[#42210b]/20',
+      image: BANNERS.heroPiramides,
+      tint: 'from-[#232819]/95 via-[#414a36]/80 to-[#414a36]/20',
     },
     {
       id: 'cristais',
@@ -46,8 +47,8 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
       subtitle: 'Ametistas, quartzos e minerais escolhidos individualmente por procedência e beleza natural.',
       cta: 'Ver cristais',
       action: () => onSelectCategory('cristais'),
-      image: 'https://queopspiramides.com.br/wp-content/uploads/2026/03/IMG-20260311-WA0088.png',
-      tint: 'from-[#2a1206]/95 via-[#42210b]/75 to-transparent',
+      image: BANNERS.heroCristais,
+      tint: 'from-[#232819]/95 via-[#414a36]/75 to-transparent',
     },
     {
       id: 'incensos',
@@ -57,8 +58,8 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
       subtitle: 'Uma seleção completa de incensos, incensários e difusores para criar momentos de paz.',
       cta: 'Ver incensos',
       action: () => onSelectCategory('incensos'),
-      image: 'https://images.unsplash.com/photo-1602928321679-560bb453f190?q=80&w=1200&auto=format&fit=crop',
-      tint: 'from-[#2a1206]/95 via-[#42210b]/80 to-[#42210b]/20',
+      image: BANNERS.heroIncensos,
+      tint: 'from-[#232819]/95 via-[#414a36]/80 to-[#414a36]/20',
     },
   ];
 
@@ -97,7 +98,8 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
                   alt=""
                   aria-hidden="true"
                   className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                  loading="eager"
+                  decoding="async"
                 />
                 <div className={`absolute inset-0 bg-gradient-to-r ${slide.tint}`} />
 
@@ -161,7 +163,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
             {/* Free shipping */}
             <button
               onClick={onOpenProducts}
-              className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#2a1206] via-primary-blue to-primary-container text-white p-5 sm:p-6 text-left flex flex-col justify-between h-[120px] sm:h-[170px] lg:h-[200px] hover:shadow-xl transition-shadow group cursor-pointer"
+              className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#232819] via-primary-blue to-primary-container text-white p-5 sm:p-6 text-left flex flex-col justify-between h-[120px] sm:h-[170px] lg:h-[200px] hover:shadow-xl transition-shadow group cursor-pointer"
             >
               <Truck size={120} className="absolute -right-5 -bottom-6 text-white/10 group-hover:scale-110 transition-transform duration-500" />
               <div className="absolute -top-8 -left-8 w-32 h-32 rounded-full bg-brand-gold/10 blur-2xl pointer-events-none" />
@@ -177,7 +179,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
             {/* Destaques */}
             <button
               onClick={() => onSelectCategory('destaques')}
-              className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#7a3d1e] via-brand-red to-[#c9772e] text-white p-5 sm:p-6 text-left flex flex-col justify-between h-[120px] sm:h-[170px] lg:h-[200px] hover:shadow-xl transition-shadow group cursor-pointer"
+              className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#6e4a2a] via-brand-red to-[#b87a4e] text-white p-5 sm:p-6 text-left flex flex-col justify-between h-[120px] sm:h-[170px] lg:h-[200px] hover:shadow-xl transition-shadow group cursor-pointer"
             >
               <Tag size={120} className="absolute -right-5 -bottom-6 text-white/10 group-hover:scale-110 transition-transform duration-500" />
               <div className="absolute -top-8 -left-8 w-32 h-32 rounded-full bg-white/10 blur-2xl pointer-events-none" />

@@ -2,39 +2,35 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Mock auth for the admin area. Credentials are checked client-side only —
- * replace with a real backend session before production.
+ * Autenticação do painel.
+ *
+ * A checagem acontece no servidor: a senha é comparada com um hash bcrypt e a
+ * sessão vive num cookie httpOnly. A versão anterior comparava e-mail e senha
+ * dentro do próprio JavaScript — a senha ia no bundle e qualquer pessoa que
+ * abrisse /admin entrava.
  */
 
-const SESSION_KEY = 'km_admin_session';
+import { api, getSession } from '../api/client';
 
-// Demo credentials (clearly not for production).
-const DEMO_USER = 'admin@queopspiramides.com.br';
-const DEMO_PASS = 'admin123';
-
-export function login(email: string, password: string): boolean {
-  if (email.trim().toLowerCase() === DEMO_USER && password === DEMO_PASS) {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ email, at: Date.now() }));
-    return true;
-  }
-  return false;
+export interface AdminUser {
+  name: string;
+  email: string;
 }
 
-export function logout(): void {
-  sessionStorage.removeItem(SESSION_KEY);
+/** Quem está logado no painel, ou null. Consulta o servidor. */
+export async function currentUser(): Promise<AdminUser | null> {
+  const res = await api.get<{ admin: AdminUser | null }>('/admin/me');
+  return res.admin;
 }
 
-export function isAuthenticated(): boolean {
-  return !!sessionStorage.getItem(SESSION_KEY);
+export async function login(email: string, password: string): Promise<AdminUser> {
+  const res = await api.post<{ admin: AdminUser }>('/admin/login', { email, password });
+  // A sessão mudou: renova o token CSRF associado a ela.
+  await getSession(true);
+  return res.admin;
 }
 
-export function currentUser(): string | null {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw).email as string) : null;
-  } catch {
-    return null;
-  }
+export async function logout(): Promise<void> {
+  await api.post('/admin/logout');
+  await getSession(true);
 }
-
-export const DEMO_CREDENTIALS = { user: DEMO_USER, pass: DEMO_PASS };

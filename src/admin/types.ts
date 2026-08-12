@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Product } from '../types';
+import { MenuCategory, Product } from '../types';
 
 export type OrderStatus =
   | 'pending'
@@ -26,7 +26,11 @@ export interface Order {
   customerEmail: string;
   customerPhone: string;
   items: OrderItem[];
+  subtotal: number;
+  shipping: number;
+  discount: number;
   total: number;
+  couponCode: string | null;
   status: OrderStatus;
   payment: 'card' | 'pix' | 'boleto';
   channel: 'site' | 'whatsapp' | 'erp';
@@ -46,10 +50,12 @@ export interface Coupon {
   id: string;
   code: string;
   type: 'percent' | 'fixed';
-  value: number; // % or R$
+  value: number; // % ou R$
   active: boolean;
-  minOrder?: number;
-  expiresAt?: string;
+  minOrder?: number | null;
+  expiresAt?: string | null;
+  /** Quantas vezes o cupom já foi usado (somente leitura). */
+  uses?: number;
 }
 
 export interface StoreSettings {
@@ -57,8 +63,6 @@ export interface StoreSettings {
   email: string;
   phone: string;
   whatsapp: string;
-  freeShippingThreshold: number;
-  flatShipping: number;
   pixDiscountPct: number;
   payments: { card: boolean; pix: boolean; boleto: boolean };
 }
@@ -127,19 +131,27 @@ export type IntegrationId =
 export interface IntegrationConfig {
   id: IntegrationId;
   enabled: boolean;
-  // free-form credential bag (apiKey, instanceId, baseUrl, token, etc.)
+  /**
+   * Campos de configuração. Os que são segredo (token, apiKey, secretKey…)
+   * voltam SEMPRE vazios do servidor: a credencial fica cifrada no banco e
+   * nunca trafega para o navegador. Enviar '' num campo secreto significa
+   * "manter o valor atual".
+   */
   fields: Record<string, string>;
+  /** Nomes dos campos já preenchidos no servidor — inclusive os secretos. */
+  configured?: string[];
   lastStatus?: 'unknown' | 'connected' | 'error';
-  lastCheckedAt?: string;
+  lastCheckedAt?: string | null;
 }
 
 // ---- Public API (for external tools to consume this store) ----
 export interface ApiKey {
   id: string;
   name: string;
+  /** Apenas o prefixo mascarado; o token completo só aparece na criação. */
   token: string;
   createdAt: string;
-  lastUsedAt?: string;
+  lastUsedAt?: string | null;
   revoked?: boolean;
 }
 
@@ -151,6 +163,8 @@ export interface Webhook {
 }
 
 export interface AdminState {
+  /** Taxonomia de categorias, para os seletores do painel. */
+  menu: MenuCategory[];
   products: Product[];
   orders: Order[];
   customers: Customer[];

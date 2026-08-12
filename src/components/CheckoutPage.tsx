@@ -1,36 +1,57 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Checkout em três etapas.
+ *
+ * Todo valor exibido aqui vem de `POST /api/checkout/quote`: frete por UF e
+ * faixa de CEP, cupom e desconto Pix saem das regras cadastradas no painel, e
+ * não de números fixos no código. O mesmo cálculo roda de novo ao gravar o
+ * pedido, então o que aparece na tela é exatamente o que é cobrado.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, Check, ShieldCheck, CreditCard, User, MapPin,
-  AlertCircle, Truck, QrCode, Barcode, Lock,
+  AlertCircle, Truck, QrCode, Barcode, Lock, Tag, Loader2, X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CartItem } from '../types';
-import { CustomerAccount } from '../account/session';
+import { CustomerAccount, fetchAccount } from '../account/session';
+import { api, ApiError } from '../api/client';
 import { safeImageSrc } from '../utils/safeUrl';
 import { brlNumber } from '../utils/currency';
+import { INSTALLMENTS } from '../config';
+import { useCatalog } from '../catalog/CatalogContext';
 
 interface CheckoutPageProps {
   cartItems: CartItem[];
   account?: CustomerAccount | null;
   onBack: () => void;
   onClearCart: () => void;
-  onSaveProfile?: (data: {
-    name: string; cpf: string; phone: string; email: string;
-    address: { cep: string; street: string; number: string; complement?: string; neighborhood: string; city: string; state: string };
-  }) => void;
+  onProfileSaved?: (account: CustomerAccount) => void;
+}
+
+interface Quote {
+  subtotal: number;
+  shipping: number;
+  shippingLabel: string;
+  couponCode: string | null;
+  couponDiscount: number;
+  couponError: string | null;
+  pixDiscount: number;
+  pixDiscountPct: number;
+  discount: number;
+  total: number;
+  issues: string[];
 }
 
 interface ConfirmedOrder {
   id: string;
   customerName: string;
-  paymentLabel: string;
   total: number;
-  deliveryDate: string;
+  payment: 'card' | 'pix' | 'boleto';
+  deliveryEta: string;
 }
 
 const labelCls = 'block text-[13px] font-semibold text-gray-700 mb-2';
@@ -43,11 +64,17 @@ const STEPS = [
   { id: 3, label: 'Pagamento', icon: CreditCard },
 ];
 
-// Validates a Brazilian CPF using the check-digit algorithm.
+const PAYMENT_LABELS: Record<ConfirmedOrder['payment'], string> = {
+  card: 'Cartão de Crédito',
+  pix: 'Pix',
+  boleto: 'Boleto Bancário',
+};
+
+/** Valida um CPF brasileiro pelos dois dígitos verificadores. */
 function isValidCPF(value: string): boolean {
   const cpf = value.replace(/\D/g, '');
   if (cpf.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(cpf)) return false; // rejects 000.000.000-00 etc.
+  if (/^(\d)\1{10}$/.test(cpf)) return false;
   const digits = cpf.split('').map(Number);
   for (let t = 9; t < 11; t++) {
     let sum = 0;
@@ -59,13 +86,17 @@ function isValidCPF(value: string): boolean {
   return true;
 }
 
-export default function CheckoutPage({ cartItems, account, onBack, onClearCart, onSaveProfile }: CheckoutPageProps) {
+export default function CheckoutPage({
+  cartItems,
+  account,
+  onBack,
+  onClearCart,
+  onProfileSaved,
+}: CheckoutPageProps) {
   const [stage, setStage] = useState<'checkout' | 'success'>('checkout');
 
-  // Pre-fill from the logged-in customer's saved profile + default address.
   const addr = account?.addresses?.find((a) => a.isDefault) ?? account?.addresses?.[0];
 
-  // If the logged-in customer already has complete identification, skip step 1.
   const profileComplete = !!(
     account &&
     account.name?.trim() &&
@@ -89,11 +120,71 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
   const [city, setCity] = useState(addr?.city ?? '');
   const [stateCode, setStateCode] = useState(addr?.state ?? 'SP');
 
-  const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix' | 'boleto'>('card');
+  const { settings } = useCatalog();
 
+  // Formas de pagamento habilitadas no painel. Se o lojista desligar o boleto,
+  // ele some daqui — e o servidor recusa o pedido que insista nele.
+  const enabledPayments = useMemo(() => {
+    const p = settings?.payments;
+    const lista = (['pix', 'card', 'boleto'] as const).filter((m) => p?.[m] !== false);
+    return lista.length ? lista : (['pix'] as const);
+  }, [settings]);
+
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix' | 'boleto'>('pix');
+
+  // Se o método escolhido deixar de estar disponível, cai no primeiro válido.
+  useEffect(() => {
+    if (!enabledPayments.includes(paymentMethod)) {
+      setPaymentMethod(enabledPayments[0]);
+    }
+  }, [enabledPayments, paymentMethod]);
+
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState('');
+
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [quoting, setQuoting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [order, setOrder] = useState<ConfirmedOrder | null>(null);
+
+  const items = useMemo(
+    () => cartItems.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+    [cartItems],
+  );
+
+  // ---- Cotação no servidor, com debounce para não disparar a cada tecla ----
+  const requestId = useRef(0);
+  const refreshQuote = useCallback(async () => {
+    if (items.length === 0) {
+      setQuote(null);
+      return;
+    }
+    const id = ++requestId.current;
+    setQuoting(true);
+    try {
+      const result = await api.post<Quote>('/checkout/quote', {
+        items,
+        state: stateCode,
+        cep,
+        coupon: appliedCoupon,
+        payment: paymentMethod,
+      });
+      // Ignora respostas de requisições antigas que chegaram fora de ordem.
+      if (id === requestId.current) setQuote(result);
+    } catch (err) {
+      if (id === requestId.current) {
+        setErrorMsg(err instanceof Error ? err.message : 'Falha ao calcular os valores.');
+      }
+    } finally {
+      if (id === requestId.current) setQuoting(false);
+    }
+  }, [items, stateCode, cep, appliedCoupon, paymentMethod]);
+
+  useEffect(() => {
+    const t = setTimeout(refreshQuote, 300);
+    return () => clearTimeout(t);
+  }, [refreshQuote]);
 
   const handleCpfChange = (v: string) => {
     const raw = v.replace(/\D/g, '').substring(0, 11);
@@ -115,28 +206,23 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
     setCep(raw.length > 5 ? `${raw.substring(0, 5)}-${raw.substring(5)}` : raw);
   };
 
-  const subtotal = useMemo(
-    () => cartItems.reduce((acc, item) => acc + item.product.price * item.quantity, 0),
-    [cartItems]
-  );
-  const shippingCost = subtotal >= 199 || subtotal === 0 ? 0 : 19.9;
-  const isPixSelected = paymentMethod === 'pix';
-  const pixDiscount = isPixSelected ? subtotal * 0.05 : 0;
-  const grandTotal = subtotal + shippingCost - pixDiscount;
+  /*
+   * Só há valores confiáveis quando a cotação do servidor chega. Antes disso —
+   * e se ela falhar — o resumo mostra "calculando…" em vez de "Frete: Grátis"
+   * e um total igual ao subtotal, que era menor do que o cobrado de fato.
+   */
+  const temCotacao = quote !== null;
+  const subtotal = quote?.subtotal ?? cartItems.reduce((a, i) => a + i.product.price * i.quantity, 0);
+  const shippingCost = quote?.shipping ?? 0;
+  const grandTotal = quote?.total ?? subtotal;
 
-  const paymentLabels = {
-    card: 'Cartão de Crédito',
-    pix: 'Pix (5% de desconto)',
-    boleto: 'Boleto Bancário',
-  };
-
-  const PAYMENTS = [
-    { id: 'card' as const, icon: CreditCard, title: 'Cartão de Crédito', desc: 'Em até 6x sem juros', tag: '' },
-    { id: 'pix' as const, icon: QrCode, title: 'Pix', desc: 'Aprovação na hora', tag: '5% OFF' },
+  const ALL_PAYMENTS = [
+    { id: 'pix' as const, icon: QrCode, title: 'Pix', desc: 'Aprovação na hora', tag: quote?.pixDiscountPct ? `${brlNumber(quote.pixDiscountPct).replace(',00', '')}% OFF` : '' },
+    { id: 'card' as const, icon: CreditCard, title: 'Cartão de Crédito', desc: `Em até ${INSTALLMENTS}x sem juros`, tag: '' },
     { id: 'boleto' as const, icon: Barcode, title: 'Boleto', desc: 'Compensa em 2 dias úteis', tag: '' },
   ];
+  const PAYMENTS = ALL_PAYMENTS.filter((pm) => enabledPayments.includes(pm.id));
 
-  // Per-step validation
   const validateStep = (s: number): string => {
     if (s === 1) {
       if (!fullName.trim()) return 'Informe o seu nome completo.';
@@ -146,8 +232,9 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
       if (!email.trim() || !email.includes('@')) return 'Informe um e-mail válido.';
     }
     if (s === 2) {
-      if (!cep.trim() || !street.trim() || !number.trim() || !city.trim())
-        return 'Preencha CEP, Rua, Número e Cidade.';
+      if (cep.replace(/\D/g, '').length !== 8) return 'Informe um CEP válido com 8 dígitos.';
+      if (!street.trim() || !number.trim() || !city.trim())
+        return 'Preencha Rua, Número e Cidade.';
     }
     return '';
   };
@@ -156,8 +243,17 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
 
   const next = () => {
     const err = validateStep(step);
-    if (err) { setErrorMsg(err); return; }
+    if (err) {
+      setErrorMsg(err);
+      return;
+    }
     setErrorMsg('');
+    // Ao sair da identificação, registra a sacola para recuperação futura.
+    if (step === 1 && email.includes('@')) {
+      api
+        .post('/carts/abandoned', { name: fullName, email, phone, items })
+        .catch(() => undefined);
+    }
     setStep((s) => Math.min(3, s + 1));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -165,69 +261,98 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
     setErrorMsg('');
     setStep((s) => Math.max(firstStep, s - 1));
   };
-  // On the first visible step, "back" leaves the checkout.
   const onFirst = step <= firstStep;
   const handleBack = () => (onFirst ? onBack() : prev());
 
-  const handlePlaceOrder = () => {
-    if (cartItems.length === 0) { setErrorMsg('A sua sacola está vazia.'); return; }
-    setErrorMsg('');
-    // Persist the data/address back to the customer's account for next time.
-    onSaveProfile?.({
-      name: fullName, cpf, phone, email,
-      address: { cep, street, number, complement, neighborhood, city, state: stateCode },
-    });
-    setIsSubmitting(true);
-    setTimeout(() => {
-      const deliveryDays = stateCode === 'SP' ? 3 : 5;
-      const estDeliveryDate = new Date();
-      estDeliveryDate.setDate(estDeliveryDate.getDate() + deliveryDays);
-      setOrder({
-        id: `KM-${Math.floor(100000 + Math.random() * 900000)}`,
-        customerName: fullName,
-        paymentLabel: paymentLabels[paymentMethod],
-        total: grandTotal,
-        deliveryDate: estDeliveryDate.toLocaleDateString('pt-BR'),
-      });
-      setStage('success');
-      setIsSubmitting(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 1200);
+  const applyCoupon = () => {
+    setAppliedCoupon(couponInput.trim().toUpperCase());
   };
 
-  // ---- Success screen ----
-  if (stage === 'success') {
+  const handlePlaceOrder = async () => {
+    if (cartItems.length === 0) {
+      setErrorMsg('A sua sacola está vazia.');
+      return;
+    }
+    setErrorMsg('');
+    setIsSubmitting(true);
+    try {
+      const res = await api.post<{ order: ConfirmedOrder }>('/orders', {
+        items,
+        name: fullName,
+        email,
+        phone,
+        cpf,
+        payment: paymentMethod,
+        coupon: appliedCoupon,
+        address: { cep, street, number, complement, neighborhood, city, state: stateCode },
+      });
+      setOrder(res.order);
+      setStage('success');
+      // Limpa aqui, e não só no botão "Voltar à loja": quem fechava a aba na
+      // tela de confirmação reencontrava a sacola cheia e repetia o pedido.
+      onClearCart();
+      // O servidor já gravou cliente e endereço: recarrega o perfil.
+      fetchAccount()
+        .then((acc) => acc && onProfileSaved?.(acc))
+        .catch(() => undefined);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.message : 'Não foi possível concluir o pedido.';
+      setErrorMsg(msg);
+      refreshQuote();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // ---- Tela de sucesso ----
+  if (stage === 'success' && order) {
     return (
-      <div className="pt-40 lg:pt-44 pb-24 bg-[#fcf9f8] min-h-screen">
+      <div className="pt-40 lg:pt-44 pb-24 bg-brand-cream min-h-screen">
         <div className="max-w-xl mx-auto px-4">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-3xl border border-gray-100 p-8 sm:p-12 text-center shadow-[0_20px_60px_rgba(21,20,125,0.12)]"
+            className="bg-white rounded-3xl border border-gray-100 p-8 sm:p-12 text-center shadow-[0_20px_60px_rgba(43,49,37,0.12)]"
           >
             <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-600 mb-6 ring-8 ring-emerald-50/50">
-              <Check size={40} strokeWidth={3} />
+              <Check size={40} strokeWidth={3} aria-hidden="true" />
             </div>
             <span className="text-[11px] bg-emerald-100 text-emerald-700 uppercase px-3 py-1 rounded-full font-bold tracking-widest">
               Pedido confirmado
             </span>
             <h2 className="text-3xl font-extrabold text-gray-900 mt-5">
-              Obrigado, {order?.customerName?.split(' ')[0]}!
+              Obrigado, {order.customerName.split(' ')[0]}!
             </h2>
             <p className="text-gray-500 max-w-md mx-auto leading-relaxed mt-3">
-              Recebemos o seu pedido <strong className="text-gray-700">{order?.id}</strong>. A confirmação foi enviada para o seu e-mail.
+              Recebemos o seu pedido <strong className="text-gray-700">{order.id}</strong>. A
+              confirmação foi enviada para o seu e-mail.
             </p>
             <div className="bg-gray-50/70 rounded-2xl p-6 border border-gray-100 text-left text-sm space-y-3.5 mt-8">
-              <div className="flex justify-between"><span className="text-gray-400">Nº do pedido</span><span className="font-bold text-gray-800 font-mono">{order?.id}</span></div>
-              <div className="flex justify-between"><span className="text-gray-400">Pagamento</span><span className="font-semibold text-gray-800">{order?.paymentLabel}</span></div>
-              <div className="flex justify-between items-center"><span className="text-gray-400 flex items-center gap-1.5"><Truck className="w-4 h-4" /> Entrega prevista</span><span className="font-semibold text-gray-800">{order?.deliveryDate}</span></div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Nº do pedido</span>
+                <span className="font-bold text-gray-800 font-mono">{order.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Pagamento</span>
+                <span className="font-semibold text-gray-800">{PAYMENT_LABELS[order.payment]}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 flex items-center gap-1.5">
+                  <Truck className="w-4 h-4" aria-hidden="true" /> Entrega prevista
+                </span>
+                <span className="font-semibold text-gray-800">{order.deliveryEta}</span>
+              </div>
               <div className="border-t border-dashed border-gray-200 pt-3.5 flex justify-between items-baseline">
                 <span className="font-bold text-gray-900">Total pago</span>
-                <span className="text-2xl font-extrabold text-primary-blue">R$ {order ? brlNumber(order.total) : ''}</span>
+                <span className="text-2xl font-extrabold text-primary-blue">
+                  R$ {brlNumber(order.total)}
+                </span>
               </div>
             </div>
             <button
-              onClick={() => { onClearCart(); onBack(); }}
+              onClick={onBack}
               className="mt-8 px-8 py-4 bg-primary-blue hover:bg-primary-container text-white rounded-full text-sm font-bold uppercase tracking-wider transition cursor-pointer"
             >
               Voltar à loja
@@ -238,62 +363,69 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
     );
   }
 
-  // ---- Checkout wizard ----
+  // ---- Wizard ----
   return (
-    <div className="pt-40 lg:pt-44 pb-24 bg-[#fcf9f8] text-left scroll-mt-20">
+    <div className="pt-40 lg:pt-44 pb-24 bg-brand-cream text-left scroll-mt-20">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-
-        {/* Top bar */}
         <div className="mb-7 flex items-center justify-between">
-          <button onClick={handleBack} className="inline-flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-primary-blue transition-colors group">
-            <ArrowLeft className="w-4 h-4 transform group-hover:-translate-x-1 transition-transform" />
+          <button
+            onClick={handleBack}
+            className="inline-flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-primary-blue transition-colors group"
+          >
+            <ArrowLeft className="w-4 h-4 transform group-hover:-translate-x-1 transition-transform" aria-hidden="true" />
             {onFirst ? 'Continuar comprando' : 'Voltar'}
           </button>
-          <span className="inline-flex items-center gap-1.5 text-xs text-gray-400"><Lock size={13} /> Pagamento seguro</span>
+          <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+            <Lock size={13} aria-hidden="true" /> Pagamento seguro
+          </span>
         </div>
 
         <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 mb-8">Finalizar compra</h1>
 
         {/* Stepper */}
-        <div className="mb-10">
-          <div className="flex items-center">
+        <nav aria-label="Etapas do checkout" className="mb-10">
+          <ol className="flex items-center list-none p-0 m-0">
             {STEPS.map((s, i) => {
               const Icon = s.icon;
               const done = step > s.id;
               const active = step === s.id;
               return (
                 <React.Fragment key={s.id}>
-                  <div className="flex items-center gap-3">
-                    <div className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 ${
-                      done ? 'bg-emerald-500 text-white'
-                        : active ? 'bg-primary-blue text-white ring-4 ring-primary-blue/15'
-                        : 'bg-white border-2 border-gray-200 text-gray-400'
-                    }`}>
-                      {done ? <Check size={20} strokeWidth={3} /> : <Icon size={19} />}
+                  <li className="flex items-center gap-3" aria-current={active ? 'step' : undefined}>
+                    <div
+                      className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 ${
+                        done
+                          ? 'bg-emerald-500 text-white'
+                          : active
+                            ? 'bg-primary-blue text-white ring-4 ring-primary-blue/15'
+                            : 'bg-white border-2 border-gray-200 text-gray-400'
+                      }`}
+                    >
+                      {done ? <Check size={20} strokeWidth={3} aria-hidden="true" /> : <Icon size={19} aria-hidden="true" />}
                     </div>
                     <div className="hidden sm:block">
                       <p className={`text-[11px] font-bold uppercase tracking-wider ${active || done ? 'text-primary-blue' : 'text-gray-400'}`}>
                         Etapa {s.id}
                       </p>
-                      <p className={`text-sm font-bold ${active || done ? 'text-gray-900' : 'text-gray-400'}`}>{s.label}</p>
+                      <p className={`text-sm font-bold ${active || done ? 'text-gray-900' : 'text-gray-400'}`}>
+                        {s.label}
+                      </p>
                     </div>
-                  </div>
+                  </li>
                   {i < STEPS.length - 1 && (
-                    <div className="flex-1 h-0.5 mx-3 sm:mx-5 rounded-full bg-gray-200 overflow-hidden">
+                    <li aria-hidden="true" className="flex-1 h-0.5 mx-3 sm:mx-5 rounded-full bg-gray-200 overflow-hidden">
                       <div className={`h-full bg-emerald-500 transition-all duration-500 ${step > s.id ? 'w-full' : 'w-0'}`} />
-                    </div>
+                    </li>
                   )}
                 </React.Fragment>
               );
             })}
-          </div>
-        </div>
+          </ol>
+        </nav>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-
-          {/* Left: step content */}
           <div className="lg:col-span-7 xl:col-span-8">
-            <div className="bg-white rounded-3xl border border-gray-100 shadow-[0_8px_30px_rgba(21,20,125,0.06)] p-6 sm:p-9 min-h-[420px] flex flex-col">
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-[0_8px_30px_rgba(43,49,37,0.06)] p-6 sm:p-9 min-h-[420px] flex flex-col">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={step}
@@ -309,20 +441,20 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
                       <p className="text-sm text-gray-400 mb-7">Para acompanharmos o seu pedido.</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                         <div className="sm:col-span-2">
-                          <label className={labelCls}>Nome completo *</label>
-                          <input type="text" placeholder="Maria Oliveira" value={fullName} onChange={(e) => setFullName(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-name">Nome completo *</label>
+                          <input id="ck-name" type="text" autoComplete="name" placeholder="Maria Oliveira" value={fullName} onChange={(e) => setFullName(e.target.value)} className={inputCls} />
                         </div>
                         <div>
-                          <label className={labelCls}>CPF *</label>
-                          <input type="text" inputMode="numeric" placeholder="000.000.000-00" value={cpf} onChange={(e) => handleCpfChange(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-cpf">CPF *</label>
+                          <input id="ck-cpf" type="text" inputMode="numeric" placeholder="000.000.000-00" value={cpf} onChange={(e) => handleCpfChange(e.target.value)} className={inputCls} />
                         </div>
                         <div>
-                          <label className={labelCls}>Celular / WhatsApp *</label>
-                          <input type="tel" placeholder="(11) 99999-9999" value={phone} onChange={(e) => handlePhoneChange(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-phone">Celular / WhatsApp *</label>
+                          <input id="ck-phone" type="tel" autoComplete="tel" placeholder="(11) 99999-9999" value={phone} onChange={(e) => handlePhoneChange(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-2">
-                          <label className={labelCls}>E-mail *</label>
-                          <input type="email" placeholder="voce@email.com" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-email">E-mail *</label>
+                          <input id="ck-email" type="email" autoComplete="email" placeholder="voce@email.com" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
                         </div>
                       </div>
                     </div>
@@ -336,62 +468,54 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
                           <p className="text-sm text-gray-400 mb-5">Onde você quer receber os seus produtos.</p>
                         </div>
                         {profileComplete && (
-                          <button
-                            onClick={() => setStep(1)}
-                            className="text-xs font-bold text-primary-blue hover:underline whitespace-nowrap mt-1"
-                          >
+                          <button onClick={() => setStep(1)} className="text-xs font-bold text-primary-blue hover:underline whitespace-nowrap mt-1">
                             Alterar meus dados
                           </button>
                         )}
                       </div>
                       {profileComplete && (
                         <div className="mb-5 flex items-center gap-2 text-xs font-medium text-gray-500 bg-gray-50 border border-gray-100 rounded-xl px-4 py-2.5">
-                          <User size={15} className="text-primary-blue" />
+                          <User size={15} className="text-primary-blue" aria-hidden="true" />
                           Comprando como <strong className="text-gray-700">{fullName}</strong> · {email}
                         </div>
                       )}
                       {addr && (
                         <div className="mb-5 flex items-center gap-2 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-2.5">
-                          <Check size={15} />
+                          <Check size={15} aria-hidden="true" />
                           Preenchemos com o endereço salvo na sua conta — confira e ajuste se precisar.
                         </div>
                       )}
                       <div className="grid grid-cols-1 sm:grid-cols-12 gap-5">
                         <div className="sm:col-span-4">
-                          <label className={labelCls}>CEP *</label>
-                          <input type="text" placeholder="01001-000" value={cep} onChange={(e) => handleCepChange(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-cep">CEP *</label>
+                          <input id="ck-cep" type="text" inputMode="numeric" autoComplete="postal-code" placeholder="01001-000" value={cep} onChange={(e) => handleCepChange(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-8">
-                          <label className={labelCls}>Rua / Avenida *</label>
-                          <input type="text" placeholder="Rua das Flores" value={street} onChange={(e) => setStreet(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-street">Rua / Avenida *</label>
+                          <input id="ck-street" type="text" autoComplete="address-line1" placeholder="Rua das Flores" value={street} onChange={(e) => setStreet(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-3">
-                          <label className={labelCls}>Número *</label>
-                          <input type="text" placeholder="250" value={number} onChange={(e) => setNumber(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-number">Número *</label>
+                          <input id="ck-number" type="text" placeholder="250" value={number} onChange={(e) => setNumber(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-5">
-                          <label className={labelCls}>Complemento</label>
-                          <input type="text" placeholder="Apto 42" value={complement} onChange={(e) => setComplement(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-comp">Complemento</label>
+                          <input id="ck-comp" type="text" placeholder="Apto 42" value={complement} onChange={(e) => setComplement(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-4">
-                          <label className={labelCls}>Bairro *</label>
-                          <input type="text" placeholder="Centro" value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-hood">Bairro *</label>
+                          <input id="ck-hood" type="text" placeholder="Centro" value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-8">
-                          <label className={labelCls}>Cidade *</label>
-                          <input type="text" placeholder="São Paulo" value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
+                          <label className={labelCls} htmlFor="ck-city">Cidade *</label>
+                          <input id="ck-city" type="text" autoComplete="address-level2" placeholder="São Paulo" value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-4">
-                          <label className={labelCls}>UF *</label>
-                          <select value={stateCode} onChange={(e) => setStateCode(e.target.value)} className={inputCls}>
-                            <option value="SP">São Paulo (SP)</option>
-                            <option value="RJ">Rio de Janeiro (RJ)</option>
-                            <option value="MG">Minas Gerais (MG)</option>
-                            <option value="ES">Espírito Santo (ES)</option>
-                            <option value="PR">Paraná (PR)</option>
-                            <option value="SC">Santa Catarina (SC)</option>
-                            <option value="RS">Rio Grande do Sul (RS)</option>
-                            <option value="DF">Distrito Federal (DF)</option>
+                          <label className={labelCls} htmlFor="ck-uf">UF *</label>
+                          <select id="ck-uf" value={stateCode} onChange={(e) => setStateCode(e.target.value)} className={inputCls}>
+                            {['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'].map((uf) => (
+                              <option key={uf} value={uf}>{uf}</option>
+                            ))}
                           </select>
                         </div>
                       </div>
@@ -402,7 +526,8 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
                     <div>
                       <h2 className="text-xl font-extrabold text-gray-900">Forma de pagamento</h2>
                       <p className="text-sm text-gray-400 mb-7">Escolha como prefere pagar.</p>
-                      <div className="space-y-3">
+                      <fieldset className="space-y-3 border-0 p-0 m-0">
+                        <legend className="sr-only">Forma de pagamento</legend>
                         {PAYMENTS.map((pm) => {
                           const Icon = pm.icon;
                           const active = paymentMethod === pm.id;
@@ -410,18 +535,21 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
                             <button
                               type="button"
                               key={pm.id}
+                              aria-pressed={active}
                               onClick={() => setPaymentMethod(pm.id)}
                               className={`w-full flex items-center gap-4 text-left p-4 rounded-2xl border-2 transition-all ${
-                                active ? 'border-primary-blue bg-primary-blue/[0.03] shadow-sm' : 'border-gray-150 hover:border-gray-300'
+                                active ? 'border-primary-blue bg-primary-blue/[0.03] shadow-sm' : 'border-gray-200 hover:border-gray-300'
                               }`}
                             >
                               <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${active ? 'bg-primary-blue text-white' : 'bg-gray-100 text-gray-500'}`}>
-                                <Icon size={22} />
+                                <Icon size={22} aria-hidden="true" />
                               </div>
                               <div className="flex-1">
                                 <div className="flex items-center gap-2">
                                   <p className="font-bold text-gray-900">{pm.title}</p>
-                                  {pm.tag && <span className="text-[10px] font-extrabold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">{pm.tag}</span>}
+                                  {pm.tag && (
+                                    <span className="text-[10px] font-extrabold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">{pm.tag}</span>
+                                  )}
                                 </div>
                                 <p className="text-xs text-gray-400 mt-0.5">{pm.desc}</p>
                               </div>
@@ -431,25 +559,31 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
                             </button>
                           );
                         })}
-                      </div>
+                      </fieldset>
                     </div>
                   )}
                 </motion.div>
               </AnimatePresence>
 
-              {errorMsg && (
-                <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                  <span>{errorMsg}</span>
+              {(errorMsg || quote?.issues?.length) && (
+                <div role="alert" className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium space-y-1">
+                  {errorMsg && (
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" aria-hidden="true" />
+                      <span>{errorMsg}</span>
+                    </div>
+                  )}
+                  {quote?.issues?.map((issue) => (
+                    <div key={issue} className="flex items-center gap-2">
+                      <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" aria-hidden="true" />
+                      <span>{issue}</span>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              {/* Nav buttons */}
               <div className="flex items-center justify-between gap-3 mt-8 pt-6 border-t border-gray-100">
-                <button
-                  onClick={handleBack}
-                  className="px-5 py-3 rounded-full text-sm font-bold text-gray-600 hover:bg-gray-100 transition-colors"
-                >
+                <button onClick={handleBack} className="px-5 py-3 rounded-full text-sm font-bold text-gray-600 hover:bg-gray-100 transition-colors">
                   {onFirst ? 'Cancelar' : 'Voltar'}
                 </button>
                 {step < 3 ? (
@@ -457,71 +591,140 @@ export default function CheckoutPage({ cartItems, account, onBack, onClearCart, 
                     onClick={next}
                     className="inline-flex items-center gap-2 px-8 py-3.5 bg-primary-blue hover:bg-primary-container text-white rounded-full text-sm font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98]"
                   >
-                    Continuar <ArrowRight size={16} />
+                    Continuar <ArrowRight size={16} aria-hidden="true" />
                   </button>
                 ) : (
                   <button
                     onClick={handlePlaceOrder}
-                    disabled={isSubmitting}
-                    className="inline-flex items-center gap-2 px-8 py-3.5 bg-brand-red hover:bg-[#a10100] text-white rounded-full text-sm font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98] disabled:opacity-60"
+                    disabled={isSubmitting || quoting || !temCotacao}
+                    className="inline-flex items-center gap-2 px-8 py-3.5 bg-brand-red hover:bg-[#82502d] text-white rounded-full text-sm font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98] disabled:opacity-60"
                   >
-                    {isSubmitting ? 'Processando...' : (<><Lock size={16} /> Concluir pedido</>)}
+                    {isSubmitting ? (
+                      <><Loader2 size={16} className="animate-spin" aria-hidden="true" /> Processando…</>
+                    ) : (
+                      <><Lock size={16} aria-hidden="true" /> Concluir pedido</>
+                    )}
                   </button>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Right: order summary (always visible) */}
+          {/* Resumo */}
           <div className="lg:col-span-5 xl:col-span-4">
-            <div className="bg-white rounded-3xl border border-gray-100 shadow-[0_8px_30px_rgba(21,20,125,0.06)] sticky top-44 overflow-hidden">
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-[0_8px_30px_rgba(43,49,37,0.06)] sticky top-44 overflow-hidden">
               <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
-                <h3 className="font-extrabold text-gray-900">Resumo do pedido</h3>
+                <h2 className="font-extrabold text-gray-900">Resumo do pedido</h2>
                 <span className="text-xs bg-primary-blue/10 text-primary-blue px-2.5 py-1 rounded-full font-bold">
                   {cartItems.length} {cartItems.length === 1 ? 'item' : 'itens'}
                 </span>
               </div>
 
-              <div className="px-6 py-4 space-y-3.5 max-h-[280px] overflow-y-auto">
+              <ul className="px-6 py-4 space-y-3.5 max-h-[280px] overflow-y-auto list-none m-0">
                 {cartItems.map((item) => (
-                  <div key={item.product.id} className="flex gap-3 items-center">
+                  <li key={item.product.id} className="flex gap-3 items-center">
                     <div className="relative w-14 h-14 bg-gray-50 rounded-xl border border-gray-100 flex-shrink-0 flex items-center justify-center overflow-hidden">
-                      <img src={safeImageSrc(item.product.image)} alt={item.product.name} className="max-h-full max-w-full object-contain p-1" referrerPolicy="no-referrer" />
-                      <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-primary-blue text-white text-[10px] font-bold rounded-full flex items-center justify-center">{item.quantity}</span>
+                      <img src={safeImageSrc(item.product.image)} alt="" className="max-h-full max-w-full object-contain p-1" loading="lazy" />
+                      <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-primary-blue text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                        {item.quantity}
+                      </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-semibold text-gray-800 truncate">{item.product.name}</h4>
+                      <h3 className="text-sm font-semibold text-gray-800 truncate">{item.product.name}</h3>
                       <p className="text-[11px] text-gray-400">R$ {brlNumber(item.product.price)} / un</p>
                     </div>
-                    <span className="text-sm font-bold text-gray-900">R$ {brlNumber(item.product.price * item.quantity)}</span>
-                  </div>
+                    <span className="text-sm font-bold text-gray-900">
+                      R$ {brlNumber(item.product.price * item.quantity)}
+                    </span>
+                  </li>
                 ))}
+              </ul>
+
+              {/* Cupom */}
+              <div className="px-6 pb-1">
+                <label htmlFor="ck-coupon" className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                  Cupom de desconto
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" aria-hidden="true" />
+                    <input
+                      id="ck-coupon"
+                      type="text"
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                      onKeyDown={(e) => e.key === 'Enter' && applyCoupon()}
+                      placeholder="BEMVINDO10"
+                      className="w-full text-sm border border-gray-200 rounded-xl py-2.5 pl-9 pr-3 uppercase focus:outline-none focus:ring-2 focus:ring-primary-blue/20 focus:border-primary-blue"
+                    />
+                  </div>
+                  <button
+                    onClick={applyCoupon}
+                    className="px-4 rounded-xl bg-gray-100 hover:bg-gray-200 text-xs font-bold uppercase tracking-wider text-gray-700 transition-colors"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+                {quote?.couponError && (
+                  <p role="alert" className="text-[11px] text-brand-red font-medium mt-1.5">{quote.couponError}</p>
+                )}
+                {quote?.couponCode && (
+                  <p className="text-[11px] text-emerald-600 font-medium mt-1.5 flex items-center gap-1">
+                    <Check size={12} aria-hidden="true" /> Cupom {quote.couponCode} aplicado
+                    <button
+                      onClick={() => { setAppliedCoupon(''); setCouponInput(''); }}
+                      className="ml-1 text-gray-400 hover:text-brand-red"
+                      aria-label="Remover cupom"
+                    >
+                      <X size={12} aria-hidden="true" />
+                    </button>
+                  </p>
+                )}
               </div>
 
-              <div className="px-6 py-5 border-t border-gray-100 space-y-2.5 text-sm">
-                <div className="flex justify-between text-gray-500"><span>Subtotal</span><span>R$ {brlNumber(subtotal)}</span></div>
-                {isPixSelected && (
-                  <div className="flex justify-between text-emerald-600 font-medium"><span>Desconto Pix (5%)</span><span>- R$ {brlNumber(pixDiscount)}</span></div>
+              <div className="px-6 py-5 space-y-2.5 text-sm" aria-busy={quoting}>
+                <div className="flex justify-between text-gray-500">
+                  <span>Subtotal</span>
+                  <span>R$ {brlNumber(subtotal)}</span>
+                </div>
+                {!!quote?.couponDiscount && (
+                  <div className="flex justify-between text-emerald-600 font-medium">
+                    <span>Cupom {quote.couponCode}</span>
+                    <span>- R$ {brlNumber(quote.couponDiscount)}</span>
+                  </div>
+                )}
+                {!!quote?.pixDiscount && (
+                  <div className="flex justify-between text-emerald-600 font-medium">
+                    <span>Desconto Pix</span>
+                    <span>- R$ {brlNumber(quote.pixDiscount)}</span>
+                  </div>
                 )}
                 <div className="flex justify-between text-gray-500">
-                  <span>Frete</span>
-                  <span className={shippingCost === 0 ? 'text-emerald-600 font-semibold' : ''}>{shippingCost === 0 ? 'Grátis' : `R$ ${brlNumber(shippingCost)}`}</span>
+                  <span>Frete{temCotacao && quote.shippingLabel ? ` · ${quote.shippingLabel}` : ''}</span>
+                  <span className={temCotacao && shippingCost === 0 ? 'text-emerald-600 font-semibold' : ''}>
+                    {!temCotacao || quoting
+                      ? 'calculando…'
+                      : shippingCost === 0
+                        ? 'Grátis'
+                        : `R$ ${brlNumber(shippingCost)}`}
+                  </span>
                 </div>
                 <div className="flex justify-between items-baseline pt-3.5 border-t border-dashed border-gray-200">
                   <span className="font-bold text-gray-900">Total</span>
-                  <span className="text-2xl font-extrabold text-primary-blue">R$ {brlNumber(grandTotal)}</span>
+                  <span className="text-2xl font-extrabold text-primary-blue">
+                    {temCotacao ? `R$ ${brlNumber(grandTotal)}` : '—'}
+                  </span>
                 </div>
               </div>
 
               <div className="px-6 pb-6">
-                <div className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 bg-gray-50/70 rounded-xl py-3">
-                  <ShieldCheck size={14} className="text-emerald-500" />
-                  Compra 100% segura · dados protegidos
-                </div>
+                <p className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 bg-gray-50/70 rounded-xl py-3 m-0">
+                  <ShieldCheck size={14} className="text-emerald-500" aria-hidden="true" />
+                  Valores conferidos no servidor a cada etapa
+                </p>
               </div>
             </div>
           </div>
-
         </div>
       </div>
     </div>

@@ -5,10 +5,9 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { Plus, Search, Pencil, Trash2, X, ImagePlus, Upload } from 'lucide-react';
-import { Product } from '../../types';
-import { MENU_CATEGORIES } from '../../data';
+import { MenuCategory, Product } from '../../types';
 import { useAdmin } from '../AdminContext';
-import { brl, Card, Btn, Field, inputCls } from '../ui';
+import { brl, Card, Btn, ConfirmDialog, Field, inputCls } from '../ui';
 import { safeImageSrc } from '../../utils/safeUrl';
 
 const blank = (): Product => ({
@@ -26,6 +25,7 @@ const blank = (): Product => ({
 
 export default function ProductsAdmin() {
   const { state, upsertProduct, deleteProduct } = useAdmin();
+  const [confirming, setConfirming] = useState<Product | null>(null);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Product | null>(null);
 
@@ -105,7 +105,7 @@ export default function ProductsAdmin() {
                         <Pencil size={15} />
                       </button>
                       <button
-                        onClick={() => { if (confirm(`Excluir "${p.name}"?`)) deleteProduct(p.id); }}
+                        onClick={() => setConfirming(p)}
                         className="p-2 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100" title="Excluir"
                       >
                         <Trash2 size={15} />
@@ -125,16 +125,30 @@ export default function ProductsAdmin() {
       {editing && (
         <ProductEditor
           initial={editing}
+          menu={state.menu}
           onCancel={() => setEditing(null)}
           onSave={save}
+        />
+      )}
+
+      {confirming && (
+        <ConfirmDialog
+          title="Excluir produto"
+          message={`“${confirming.name}” sai da vitrine. Os pedidos já feitos continuam mostrando o item normalmente.`}
+          confirmLabel="Excluir"
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            void deleteProduct(confirming.id);
+            setConfirming(null);
+          }}
         />
       )}
     </div>
   );
 }
 
-function ProductEditor({ initial, onCancel, onSave }: {
-  initial: Product; onCancel: () => void; onSave: (p: Product) => void;
+function ProductEditor({ initial, menu, onCancel, onSave }: {
+  initial: Product; menu: MenuCategory[]; onCancel: () => void; onSave: (p: Product) => void;
 }) {
   const [p, setP] = useState<Product>(initial);
   const set = (patch: Partial<Product>) => setP((cur) => ({ ...cur, ...patch }));
@@ -160,13 +174,13 @@ function ProductEditor({ initial, onCancel, onSave }: {
               <select
                 value={p.category}
                 onChange={(e) => {
-                  const cat = MENU_CATEGORIES.find((c) => c.id === e.target.value);
+                  const cat = menu.find((c) => c.id === e.target.value);
                   set({ category: e.target.value, categoryLabel: cat?.name ?? e.target.value });
                 }}
                 className={inputCls}
               >
                 {/* 'Destaques' é uma vitrine, não uma categoria de catálogo: fica de fora. */}
-                {MENU_CATEGORIES.filter((c) => c.subcategories.length > 0).map((c) => (
+                {menu.filter((c) => c.subcategories.length > 0).map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>

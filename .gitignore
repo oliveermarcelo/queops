@@ -1,11 +1,17 @@
 node_modules/
 build/
 dist/
+deploy/
 coverage/
 .DS_Store
 *.log
-.env*
-!.env.example
+*.zip
+
+# Configuração da API com a senha do banco e a chave de cifra.
+api/config.php
+
+# Artefatos de trabalho
 dist-subtest/
 queops-demo-hostinger/
-*.zip
+_to_delete/
+_transfer/

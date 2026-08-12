@@ -6,6 +6,7 @@
 import React from 'react';
 import { X, ShieldCheck, Heart, Leaf, CloudSnow } from 'lucide-react';
 import { motion } from 'motion/react';
+import ModalShell from './ModalShell';
 
 interface CertificationsModalProps {
   onClose: () => void;
@@ -40,25 +41,31 @@ export default function CertificationsModal({ onClose }: CertificationsModalProp
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <ModalShell
+      onClose={onClose}
+      labelledBy="certs-modal-title"
+      overlayClassName="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto"
+      className="max-w-xl w-full"
+    >
       <motion.div
         id="certs-modal-container"
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white rounded-xl shadow-2xl max-w-xl w-full overflow-hidden animate-fade-in border border-gray-100 flex flex-col"
+        className="bg-white rounded-xl shadow-2xl w-full overflow-hidden animate-fade-in border border-gray-100 flex flex-col"
       >
         {/* Header */}
         <div className="bg-primary-blue text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <ShieldCheck className="w-5.5 h-5.5 text-yellow-400" />
-            <h3 className="text-base font-bold font-sans">Selo de Autenticidade Artesanal</h3>
+            <h2 id="certs-modal-title" className="text-base font-bold font-sans">Selo de Autenticidade Artesanal</h2>
           </div>
           <button
             onClick={onClose}
+            aria-label="Fechar"
             className="text-white/80 hover:text-white hover:bg-white/10 p-1.5 rounded-lg transition"
           >
-            <X size={18} />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
@@ -100,6 +107,6 @@ O cuidado artesanal é o que define cada peça da Quéops Pirâmides. Fabricamos
           </button>
         </div>
       </motion.div>
-    </div>
+    </ModalShell>
   );
 }

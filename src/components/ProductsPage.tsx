@@ -6,7 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { Search, SlidersHorizontal, X, ChevronDown } from 'lucide-react';
 import { Product } from '../types';
-import { PRODUCTS, MENU_CATEGORIES } from '../data';
+import { useCatalog } from '../catalog/CatalogContext';
 import ProductCard from './ProductCard';
 import { brlNumber } from '../utils/currency';
 
@@ -26,10 +26,6 @@ type SortOption = 'relevance' | 'price-asc' | 'price-desc' | 'name-asc';
 const isPromo = (p: Product) => !!p.tag && p.tag !== 'NOVIDADE';
 const isNew = (p: Product) => p.tag === 'NOVIDADE';
 
-// Price range slider bounds derived from the catalog
-const MAX_PRICE = Math.ceil(Math.max(...PRODUCTS.map((p) => p.price)));
-const MIN_PRICE = Math.floor(Math.min(...PRODUCTS.map((p) => p.price)));
-
 function matchesCategory(p: Product, categoryId: string): boolean {
   if (categoryId === 'all') return true;
   if (categoryId === 'destaques' || categoryId === 'promocoes') return isPromo(p);
@@ -46,11 +42,25 @@ export default function ProductsPage({
   onSelectProduct,
   onAddToCart,
 }: ProductsPageProps) {
-  const [maxPrice, setMaxPrice] = useState(MAX_PRICE);
+  const { products, menu } = useCatalog();
+
+  // Os limites do filtro de preço saem do catálogo carregado, não de um
+  // cálculo em tempo de módulo (que rodava antes de existirem produtos).
+  const { minPrice, maxPriceBound } = useMemo(() => {
+    if (products.length === 0) return { minPrice: 0, maxPriceBound: 1000 };
+    const prices = products.map((p) => p.price);
+    return {
+      minPrice: Math.floor(Math.min(...prices)),
+      maxPriceBound: Math.ceil(Math.max(...prices)),
+    };
+  }, [products]);
+
+  const [maxPrice, setMaxPrice] = useState<number | null>(null);
   const [sort, setSort] = useState<SortOption>('relevance');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
-  const menuCategory = MENU_CATEGORIES.find((c) => c.id === activeCategory);
+  const priceCeiling = maxPrice ?? maxPriceBound;
+  const menuCategory = menu.find((c) => c.id === activeCategory);
   const activeCategoryName =
     activeCategory === 'all'
       ? 'Todos os Produtos'
@@ -59,7 +69,7 @@ export default function ProductsPage({
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    const list = PRODUCTS.filter((product) => {
+    const list = products.filter((product) => {
       const matchCat = matchesCategory(product, activeCategory);
       const matchSub = !activeSubcategory || product.subcategory === activeSubcategory;
       const matchSearch =
@@ -67,7 +77,7 @@ export default function ProductsPage({
         product.name.toLowerCase().includes(q) ||
         product.description.toLowerCase().includes(q) ||
         product.categoryLabel.toLowerCase().includes(q);
-      const matchPrice = product.price <= maxPrice;
+      const matchPrice = product.price <= priceCeiling;
       return matchCat && matchSub && matchSearch && matchPrice;
     });
 
@@ -86,17 +96,17 @@ export default function ProductsPage({
         break;
     }
     return sorted;
-  }, [activeCategory, activeSubcategory, searchQuery, maxPrice, sort]);
+  }, [products, activeCategory, activeSubcategory, searchQuery, priceCeiling, sort]);
 
   const handleResetFilters = () => {
     onSelectCategory('all');
     setSearchQuery('');
-    setMaxPrice(MAX_PRICE);
+    setMaxPrice(null);
     setSort('relevance');
   };
 
   const countFor = (categoryId: string) =>
-    PRODUCTS.filter((p) => matchesCategory(p, categoryId)).length;
+    products.filter((p) => matchesCategory(p, categoryId)).length;
 
   // Filters panel (shared between sidebar and mobile drawer)
   const FiltersContent = () => (
@@ -118,11 +128,11 @@ export default function ProductsPage({
               }`}
             >
               <span>Todos os Produtos</span>
-              <span className="text-[11px] text-gray-400 font-mono">{PRODUCTS.length}</span>
+              <span className="text-[11px] text-gray-400 font-mono">{products.length}</span>
             </button>
           </li>
 
-          {MENU_CATEGORIES.map((cat) => {
+          {menu.map((cat) => {
             const isActiveCat = activeCategory === cat.id;
             const count = countFor(cat.id);
             return (
@@ -180,15 +190,16 @@ export default function ProductsPage({
         <h3 className="text-[11px] font-extrabold uppercase tracking-widest text-gray-800">Faixa de Preço</h3>
         <input
           type="range"
-          min={MIN_PRICE}
-          max={MAX_PRICE}
-          value={maxPrice}
+          aria-label="Preço máximo"
+          min={minPrice}
+          max={maxPriceBound}
+          value={priceCeiling}
           onChange={(e) => setMaxPrice(Number(e.target.value))}
           className="w-full accent-primary-blue cursor-pointer"
         />
         <div className="flex items-center justify-between text-xs text-gray-500 font-mono">
-          <span>R$ {brlNumber(MIN_PRICE)}</span>
-          <span className="font-bold text-primary-blue">até R$ {brlNumber(maxPrice)}</span>
+          <span>R$ {brlNumber(minPrice)}</span>
+          <span className="font-bold text-primary-blue">até R$ {brlNumber(priceCeiling)}</span>
         </div>
       </div>
 
@@ -202,7 +213,7 @@ export default function ProductsPage({
   );
 
   return (
-    <div id="products-page" className="pt-40 lg:pt-44 pb-20 bg-[#fcf9f8] text-left scroll-mt-20 min-h-[70vh]">
+    <div id="products-page" className="pt-40 lg:pt-44 pb-20 bg-brand-cream text-left scroll-mt-20 min-h-[70vh]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
         {/* Page header */}

@@ -7,12 +7,13 @@ import React, { useState } from 'react';
 import { Plus, Trash2, X, Ticket } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
 import { Coupon } from '../types';
-import { brl, Card, Btn, Field, inputCls } from '../ui';
+import { brl, Card, Btn, ConfirmDialog, Field, inputCls } from '../ui';
 
 const blank = (): Coupon => ({ id: '', code: '', type: 'percent', value: 10, active: true });
 
 export default function CouponsAdmin() {
   const { state, upsertCoupon, deleteCoupon } = useAdmin();
+  const [confirming, setConfirming] = useState<Coupon | null>(null);
   const [editing, setEditing] = useState<Coupon | null>(null);
 
   const save = (c: Coupon) => {
@@ -49,7 +50,7 @@ export default function CouponsAdmin() {
             <div className="flex gap-2 mt-4 pt-3 border-t border-gray-100">
               <Btn variant="ghost" className="flex-1" onClick={() => setEditing(c)}>Editar</Btn>
               <button
-                onClick={() => { if (confirm(`Excluir cupom ${c.code}?`)) deleteCoupon(c.id); }}
+                onClick={() => setConfirming(c)}
                 className="px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-brand-red hover:border-brand-red transition-colors"
               >
                 <Trash2 size={15} />
@@ -63,6 +64,19 @@ export default function CouponsAdmin() {
       </div>
 
       {editing && <CouponEditor initial={editing} onCancel={() => setEditing(null)} onSave={save} />}
+
+      {confirming && (
+        <ConfirmDialog
+          title="Excluir cupom"
+          message={`O cupom ${confirming.code} deixa de valer imediatamente no checkout.`}
+          confirmLabel="Excluir"
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            void deleteCoupon(confirming.id);
+            setConfirming(null);
+          }}
+        />
+      )}
     </div>
   );
 }

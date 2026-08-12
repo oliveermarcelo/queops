@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, Ticket,
   Plug, Settings, LogOut, Menu, X, Store, ShoppingBag, Truck,
 } from 'lucide-react';
 import { AdminProvider } from './AdminContext';
-import { isAuthenticated, logout, currentUser } from './auth';
+import { AdminUser, currentUser, logout } from './auth';
 import LoginScreen from './LoginScreen';
 import logoWhite from '../assets/logo-white.svg';
 import Dashboard from './modules/Dashboard';
@@ -39,12 +39,33 @@ const NAV: { id: ModuleId; label: string; icon: React.ComponentType<{ size?: num
 ];
 
 export default function AdminApp() {
-  const [authed, setAuthed] = useState(isAuthenticated());
+  // A sessão vive num cookie httpOnly: só o servidor sabe se ela é válida.
+  const [user, setUser] = useState<AdminUser | null>(null);
+  const [checking, setChecking] = useState(true);
   const [active, setActive] = useState<ModuleId>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  if (!authed) {
-    return <LoginScreen onSuccess={() => setAuthed(true)} />;
+  useEffect(() => {
+    let alive = true;
+    currentUser()
+      .then((u) => alive && setUser(u))
+      .catch(() => alive && setUser(null))
+      .finally(() => alive && setChecking(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-primary-blue flex items-center justify-center">
+        <p className="text-white/70 text-sm tracking-wide">Verificando a sua sessão…</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen onSuccess={setUser} />;
   }
 
   const renderModule = () => {
@@ -97,7 +118,7 @@ export default function AdminApp() {
           <Store size={18} /> Ver a loja
         </a>
         <button
-          onClick={() => { logout(); setAuthed(false); }}
+          onClick={() => { void logout().finally(() => setUser(null)); }}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-white/70 hover:bg-brand-red/80 hover:text-white transition-colors"
         >
           <LogOut size={18} /> Sair
@@ -138,10 +159,10 @@ export default function AdminApp() {
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block leading-tight">
                 <p className="text-xs text-gray-400">Conectado como</p>
-                <p className="text-xs font-bold text-gray-700">{currentUser()}</p>
+                <p className="text-xs font-bold text-gray-700">{user.email}</p>
               </div>
               <div className="w-9 h-9 rounded-full bg-primary-blue text-white flex items-center justify-center font-bold text-sm">
-                A
+                {user.name.charAt(0).toUpperCase()}
               </div>
             </div>
           </header>

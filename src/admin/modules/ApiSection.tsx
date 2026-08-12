@@ -6,18 +6,20 @@
 import React, { useState } from 'react';
 import {
   KeyRound, Plus, Copy, Check, Trash2, Webhook as WebhookIcon, Code2,
-  Eye, EyeOff, Zap, X,
+  Zap, X,
 } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
-import { fmtDate, Card, Btn, inputCls } from '../ui';
+import { fmtDate, Card, Btn, ConfirmDialog, inputCls } from '../ui';
 
-const API_BASE = 'https://api.queopspiramides.com.br/v1';
+// A API pública mora no mesmo domínio da loja.
+const API_BASE = `${typeof window === 'undefined' ? '' : window.location.origin}/api/v1`;
 
 const ENDPOINTS = [
   { method: 'GET', path: '/products', desc: 'Lista produtos do catálogo' },
   { method: 'GET', path: '/products/:id', desc: 'Detalhe de um produto' },
-  { method: 'GET', path: '/orders', desc: 'Lista pedidos' },
-  { method: 'POST', path: '/orders', desc: 'Cria um pedido' },
+  { method: 'PATCH', path: '/products/:id/stock', desc: 'Atualiza o estoque (ERP)' },
+  { method: 'GET', path: '/orders', desc: 'Lista pedidos (?status= &since=)' },
+  { method: 'GET', path: '/orders/:id', desc: 'Detalhe de um pedido' },
   { method: 'PATCH', path: '/orders/:id', desc: 'Atualiza status do pedido' },
   { method: 'GET', path: '/customers', desc: 'Lista clientes' },
 ];
@@ -54,22 +56,25 @@ export default function ApiSection() {
   const { state, createApiKey, revokeApiKey, deleteApiKey, addWebhook, removeWebhook } = useAdmin();
   const [newKeyName, setNewKeyName] = useState('');
   const [creating, setCreating] = useState(false);
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [freshToken, setFreshToken] = useState<string | null>(null);
 
   const [whUrl, setWhUrl] = useState('');
   const [whEvent, setWhEvent] = useState(EVENTS[0]);
+  const [confirming, setConfirming] = useState<
+    { kind: 'revoke' | 'delete'; id: string; name: string } | null
+  >(null);
 
-  const handleCreate = () => {
-    const token = createApiKey(newKeyName.trim());
-    setFreshToken(token);
+  const handleCreate = async () => {
+    // O token completo só existe neste instante: o servidor guarda apenas o
+    // hash, então não há como exibi-lo de novo depois.
+    setFreshToken(await createApiKey(newKeyName.trim()));
     setNewKeyName('');
     setCreating(false);
   };
 
-  const handleAddWebhook = () => {
+  const handleAddWebhook = async () => {
     if (!whUrl.trim()) return;
-    addWebhook({ url: whUrl.trim(), event: whEvent, active: true });
+    await addWebhook({ url: whUrl.trim(), event: whEvent, active: true });
     setWhUrl('');
   };
 
@@ -111,7 +116,10 @@ export default function ApiSection() {
         {/* Fresh token alert */}
         {freshToken && (
           <div className="mb-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200">
-            <p className="text-xs font-bold text-emerald-800 mb-2">Chave criada! Copie agora — ela não será exibida novamente.</p>
+            <p className="text-xs font-bold text-emerald-800 mb-2">
+            Chave criada! Copie agora — o servidor guarda só o hash, então ela não pode ser exibida
+            de novo.
+          </p>
             <div className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-emerald-200">
               <code className="text-sm font-mono text-gray-800 truncate">{freshToken}</code>
               <Copyable value={freshToken} />
@@ -137,8 +145,6 @@ export default function ApiSection() {
 
         <div className="space-y-2">
           {state.apiKeys.map((k) => {
-            const masked = k.token.slice(0, 10) + '•'.repeat(16);
-            const show = revealed[k.id];
             return (
               <div key={k.id} className={`flex items-center gap-3 p-3 rounded-lg border ${k.revoked ? 'border-gray-150 bg-gray-50/50' : 'border-gray-150'}`}>
                 <div className={`flex-1 min-w-0 ${k.revoked ? 'opacity-60' : ''}`}>
@@ -147,21 +153,13 @@ export default function ApiSection() {
                     {k.revoked && <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">Revogada</span>}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <code className="text-xs font-mono text-gray-500">{show ? k.token : masked}</code>
-                    {!k.revoked && (
-                      <>
-                        <button onClick={() => setRevealed((r) => ({ ...r, [k.id]: !r[k.id] }))} className="text-gray-400 hover:text-gray-700">
-                          {show ? <EyeOff size={13} /> : <Eye size={13} />}
-                        </button>
-                        <Copyable value={k.token} />
-                      </>
-                    )}
+                    <code className="text-xs font-mono text-gray-500">{k.token}</code>
                   </div>
                   <p className="text-[11px] text-gray-400 mt-0.5">Criada em {fmtDate(k.createdAt)}</p>
                 </div>
                 {k.revoked ? (
                   <button
-                    onClick={() => { if (confirm(`Excluir definitivamente a chave "${k.name}"?`)) deleteApiKey(k.id); }}
+                    onClick={() => setConfirming({ kind: 'delete', id: k.id, name: k.name })}
                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-brand-red border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
                     title="Excluir"
                   >
@@ -169,7 +167,7 @@ export default function ApiSection() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => { if (confirm(`Revogar a chave "${k.name}"? Integrações que a usam pararão de funcionar.`)) revokeApiKey(k.id); }}
+                    onClick={() => setConfirming({ kind: 'revoke', id: k.id, name: k.name })}
                     className="p-2 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100"
                     title="Revogar"
                   >
@@ -181,6 +179,24 @@ export default function ApiSection() {
           })}
         </div>
       </Card>
+
+      {confirming && (
+        <ConfirmDialog
+          title={confirming.kind === 'revoke' ? 'Revogar chave' : 'Excluir chave'}
+          message={
+            confirming.kind === 'revoke'
+              ? `Integrações que usam "${confirming.name}" param de funcionar imediatamente.`
+              : `A chave "${confirming.name}" será apagada em definitivo.`
+          }
+          confirmLabel={confirming.kind === 'revoke' ? 'Revogar' : 'Excluir'}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            if (confirming.kind === 'revoke') void revokeApiKey(confirming.id);
+            else void deleteApiKey(confirming.id);
+            setConfirming(null);
+          }}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Endpoints */}

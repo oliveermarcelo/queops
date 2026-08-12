@@ -39,7 +39,8 @@ function statusBadge(status: AbandonedStatus) {
 }
 
 export default function AbandonedCartsAdmin() {
-  const { state, setCartStatus, markReminderSent, updateRecovery } = useAdmin();
+  const { state, setCartStatus, sendCartReminder, updateRecovery, refresh } = useAdmin();
+  const [sendFeedback, setSendFeedback] = useState('');
   const { abandonedCarts: carts, recovery } = state;
 
   const [filter, setFilter] = useState<AbandonedStatus | 'all'>('all');
@@ -66,11 +67,27 @@ export default function AbandonedCartsAdmin() {
       .replace('{valor}', brl(cart.total))
       .replace('{cupom}', recovery.couponCode);
 
-  const handleWhatsApp = (cart: AbandonedCart) => {
+  /**
+   * Envia pelo provedor de WhatsApp configurado (Z-API ou Evolution), pelo
+   * servidor. Sem provedor ativo, cai no wa.me — que só abre a conversa com o
+   * texto pronto, exigindo um clique humano para enviar.
+   */
+  const handleWhatsApp = async (cart: AbandonedCart) => {
+    setSendFeedback('');
+    try {
+      const res = await sendCartReminder(cart.id);
+      if (res.ok) {
+        setSendFeedback(`Mensagem enviada para ${cart.customerName}.`);
+        return;
+      }
+      setSendFeedback(res.message);
+    } catch (err) {
+      setSendFeedback(err instanceof Error ? err.message : 'Falha ao enviar.');
+    }
+    // Plano B manual.
     const text = encodeURIComponent(buildMessage(cart));
     const phone = cart.customerPhone.replace(/\D/g, '');
     openExternal(`https://wa.me/${phone}?text=${text}`);
-    markReminderSent(cart.id);
   };
 
   // Opens the in-admin email composer (no external mail app).
@@ -210,7 +227,7 @@ export default function AbandonedCartsAdmin() {
           subject="Você esqueceu itens na sua sacola — Quéops Pirâmides"
           body={buildMessage(emailCart)}
           onClose={() => setEmailCart(null)}
-          onSent={() => { markReminderSent(emailCart.id); setEmailCart(null); }}
+          onSent={() => { void refresh(); setEmailCart(null); }}
         />
       )}
 
@@ -224,9 +241,14 @@ export default function AbandonedCartsAdmin() {
         />
       )}
 
+      {sendFeedback && (
+        <p role="status" className="text-xs font-medium text-primary-blue">{sendFeedback}</p>
+      )}
+
       <p className="text-[11px] text-gray-400">
-        Demonstração com dados de exemplo. O envio automático no tempo configurado exige um backend
-        com agendador — aqui o envio é manual (abre o WhatsApp com a mensagem já pronta).
+        O envio manual usa o provedor de WhatsApp configurado em Integrações (a credencial fica no
+        servidor). O disparo automático depois de {recovery.delayMinutes} min precisa de uma tarefa
+        agendada — veja “Cron” no guia de deploy.
       </p>
     </div>
   );

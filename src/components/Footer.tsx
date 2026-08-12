@@ -31,7 +31,7 @@ export default function Footer({ onOpenStory, onOpenCertifications }: FooterProp
   };
 
   return (
-    <footer id="main-footer" className="relative bg-[#2a1206] text-white overflow-hidden">
+    <footer id="main-footer" className="relative bg-[#232819] text-white overflow-hidden">
       <div className="absolute -top-24 right-1/4 w-96 h-96 rounded-full bg-brand-gold/5 blur-3xl pointer-events-none" />
 
       {/* Newsletter band */}

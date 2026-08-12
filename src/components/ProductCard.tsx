@@ -9,6 +9,7 @@ import { motion } from 'motion/react';
 import { Product } from '../types';
 import { safeImageSrc } from '../utils/safeUrl';
 import { brlNumber } from '../utils/currency';
+import { INSTALLMENTS } from '../config';
 
 interface ProductCardProps {
   product: Product;
@@ -24,7 +25,9 @@ export default function ProductCard({ product, onSelect, onAddToCart }: ProductC
   const discountPct = hasDiscount
     ? Math.round((1 - product.price / (product.oldPrice as number)) * 100)
     : 0;
-  const installment = brlNumber(product.price / 3);
+  // Mesma constante do checkout e da página do produto — antes cada arquivo
+  // anunciava um número de parcelas diferente.
+  const installment = brlNumber(product.price / INSTALLMENTS);
 
   return (
     <motion.div
@@ -32,7 +35,7 @@ export default function ProductCard({ product, onSelect, onAddToCart }: ProductC
       whileHover={{ y: -6 }}
       transition={{ duration: 0.2 }}
       onClick={() => onSelect(product)}
-      className="group relative bg-white rounded-2xl shadow-[0_2px_12px_rgba(21,20,125,0.06)] hover:shadow-[0_16px_40px_rgba(21,20,125,0.16)] transition-shadow duration-300 flex flex-col h-full cursor-pointer overflow-hidden"
+      className="group relative bg-white rounded-2xl shadow-[0_2px_12px_rgba(43,49,37,0.06)] hover:shadow-[0_16px_40px_rgba(43,49,37,0.16)] transition-shadow duration-300 flex flex-col h-full cursor-pointer overflow-hidden"
     >
       {/* Image stage */}
       <div className="relative aspect-square w-full bg-gradient-to-b from-gray-50/80 to-white flex items-center justify-center overflow-hidden p-5">
@@ -85,12 +88,12 @@ export default function ProductCard({ product, onSelect, onAddToCart }: ProductC
             </span>
           )}
           <div className="flex items-baseline gap-1.5">
-            <span className={`text-xl font-extrabold ${hasDiscount ? 'text-brand-red' : 'text-gray-900'}`}>
+            <span className={`text-xl font-extrabold ${hasDiscount ? 'text-brand-copper' : 'text-brand-ink'}`}>
               R$ {brlNumber(product.price)}
             </span>
           </div>
           <span className="text-[11px] text-emerald-600 font-semibold">
-            3x de R$ {installment} sem juros
+            {INSTALLMENTS}x de R$ {installment} sem juros
           </span>
         </div>
 
