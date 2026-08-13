@@ -94,6 +94,7 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 | `npm run sync:midia` | Baixa imagens de produtos e banners para `public/` |
 | `npm run gerar:sitemap` | Gera `public/sitemap.xml` a partir do catálogo |
 | `npm run empacotar` | Monta a pasta `deploy/` pronta para subir |
+| `npm run diagnostico` | Confere ambiente, banco, tabelas e catálogo |
 | `npm run teste` | Testes do motor de preços (`node --test`, sem banco) |
 | `npm run teste:e2e` | Testes de ponta a ponta no navegador (Playwright) |
 
@@ -143,6 +144,7 @@ server/
     providers.ts     handshake com gateways/WhatsApp/ERP + proteção contra SSRF
     routes/          público, conta do cliente, painel, API v1
     migrate.ts       instalador do banco (linha de comando)
+    diagnostico.ts   checagem da instalação, para rodar no servidor
   db/
     schema.sql       esquema do MySQL
     catalog.json     catálogo para a carga inicial

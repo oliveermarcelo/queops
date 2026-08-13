@@ -50,6 +50,7 @@ Sai uma pasta `deploy/` com esta cara:
 deploy/
   app.js            o servidor inteiro (entrada da aplicação)
   migrate.js        instalador do banco, rodado uma vez
+  diagnostico.js    checagem da instalação, para quando algo não sobe
   package.json      só as 4 dependências de runtime
   public/           a vitrine compilada
   db/               schema.sql e catalog.json
@@ -195,6 +196,36 @@ ele aparece em **Pedidos** no painel e que o estoque caiu.
 
 ---
 
+## Quando algo não funciona: rode o diagnóstico
+
+Pelo SSH, na pasta da aplicação:
+
+```bash
+node diagnostico.js
+```
+
+Ele confere, em ordem, tudo que precisa estar de pé — versão do Node, cada
+variável de ambiente, a APP_KEY, os arquivos do pacote, o `npm install`, a
+conexão com o MySQL (mostrando o **erro real** do banco e o que fazer com ele),
+as 19 tabelas, os produtos, o administrador e as configurações. Termina com a
+contagem de erros e avisos.
+
+Ele funciona mesmo antes do `npm install` — nesse caso avisa que é isso que
+falta, em vez de morrer. E não mostra segredo: da senha do banco, informa só o
+tamanho.
+
+```
+  OK   Conexão com o MySQL          conectou
+  OK   Tabelas                      19 presentes
+  OK   Produtos                     72 cadastrados (72 ativos)
+ ERRO  Conexão com o MySQL          ER_ACCESS_DENIED_ERROR Access denied for user…
+AVISO  O que fazer                  Usuário ou senha errados — ou o usuário não está
+                                    associado a este banco. Na Hostinger, nome e
+                                    usuário levam o prefixo da conta.
+```
+
+---
+
 ## Problemas comuns
 
 | Sintoma | Causa provável |
@@ -209,6 +240,9 @@ ele aparece em **Pedidos** no painel e que o estoque caiu.
 | **Erro 419 ao salvar** | sessão expirada; recarregue a página |
 | **Login do painel não entra** | 8 senhas erradas bloqueiam o e-mail por 15 minutos |
 | **"too many connections"** | baixe `DB_POOL` para 5 nas variáveis de ambiente |
+
+Em qualquer um destes casos, comece por `node diagnostico.js` — ele costuma
+apontar o item exato.
 
 Para inspecionar o banco sem SSH: hPanel → Bancos de Dados → phpMyAdmin.
 `SELECT COUNT(*) FROM products;` deve devolver 72 depois da migração.

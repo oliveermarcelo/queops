@@ -7,6 +7,7 @@
  * Resultado:
  *   deploy/app.js          → o servidor inteiro num arquivo (entrada da aplicação)
  *   deploy/migrate.js      → instalador do banco, rodado uma vez pelo SSH
+ *   deploy/diagnostico.js  → checagem da instalação, para quando algo não sobe
  *   deploy/package.json    → só as 4 dependências de runtime, para o npm install
  *   deploy/public/         → a vitrine compilada (index.html, assets, imagens)
  *   deploy/db/             → schema.sql e catalog.json, usados pelo migrate
@@ -40,7 +41,8 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 // ---- servidor ----
-for (const f of ['app.js', 'app.js.map', 'migrate.js', 'migrate.js.map']) {
+for (const f of ['app.js', 'migrate.js', 'diagnostico.js',
+  'app.js.map', 'migrate.js.map', 'diagnostico.js.map']) {
   const src = resolve(build, f);
   if (existsSync(src)) cpSync(src, resolve(out, f));
 }
@@ -86,6 +88,7 @@ writeFileSync(
       scripts: {
         start: 'node app.js',
         migrar: 'node migrate.js',
+        diagnostico: 'node diagnostico.js',
       },
       dependencies,
     },

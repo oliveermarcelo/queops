@@ -75,7 +75,7 @@ function rethrow(e: unknown): never {
   ];
   if (err.code && conexao.includes(err.code)) {
     console.error('[queops] falha ao conectar no MySQL:', err.code, err.message);
-    fail('Não foi possível conectar ao banco de dados.', 503, 'db_unavailable');
+    fail('Não foi possível conectar ao banco de dados.', 503, 'db_unavailable', e);
   }
   throw e;
 }

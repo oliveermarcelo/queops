@@ -12,6 +12,7 @@
     "preview": "npm run build && npm run build:server && npm start",
     "lint": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json",
     "migrar": "node --env-file-if-exists=.env server/src/migrate.ts",
+    "diagnostico": "node --env-file-if-exists=.env server/src/diagnostico.ts",
     "seed:catalogo": "node scripts/export-catalog.mjs",
     "sync:midia": "node scripts/download-images.mjs",
     "gerar:sitemap": "node scripts/gerar-sitemap.mjs",
