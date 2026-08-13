@@ -8,8 +8,10 @@ coverage/
 *.zip
 
 # Variáveis de ambiente: senha do banco e chave de cifra das integrações.
-.env
-.env.local
+# O padrão pega qualquer variação (.env.hostinger, .env.producao, .env.bak…);
+# só o modelo sem segredo é versionado.
+.env*
+!.env.example
 
 # Servidor compilado pelo esbuild.
 .build/
@@ -18,6 +20,7 @@ coverage/
 tests/e2e/.saida/
 
 # Artefatos de trabalho
+enviar-para-github.ps1
 dist-subtest/
 queops-demo-hostinger/
 _to_delete/
