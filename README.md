@@ -10,41 +10,50 @@ painel administrativo próprio.
 | Camada | Tecnologia |
 |---|---|
 | Front-end | React 19 · TypeScript · Vite 6 · Tailwind 4 |
-| Back-end | PHP 8 (sem framework, sem Composer) |
+| Back-end | Node.js 20+ · Express · TypeScript |
 | Banco | MySQL 5.7+ / MariaDB 10.3+ |
-| Hospedagem | Qualquer plano com PHP + MySQL (testado para Hostinger compartilhada) |
+| Hospedagem | Hostinger Business/Cloud/VPS (gerenciador de Node.js do hPanel) |
 
-O back-end é PHP puro de propósito: roda em qualquer plano da Hostinger,
-inclusive o mais barato, e o deploy continua sendo upload de arquivos.
+Um único processo Node serve a vitrine compilada **e** a API: não há proxy, nem
+Apache, nem `.htaccess`. Os cabeçalhos de segurança, o fallback de rota da SPA,
+o cache dos assets e o gzip estão em `server/src/app.ts`, cada bloco com o
+comentário do que ele reproduz.
 
 ---
 
 ## Rodando localmente
 
-**Pré-requisitos:** Node.js 20+, PHP 8.1+ com `pdo_mysql` e `openssl`, MySQL/MariaDB.
+**Pré-requisitos:** Node.js 20+ (22 recomendado) e MySQL/MariaDB.
 
 ```bash
-# 1. Dependências do front
+# 1. Dependências
 npm install
 
 # 2. Banco de dados
 mysql -u root -e "CREATE DATABASE queops CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 
-# 3. Configuração da API
-cp api/config.example.php api/config.php
-php -r "echo 'APP_KEY: ', base64_encode(random_bytes(32)), PHP_EOL;"
-#   → edite api/config.php com os dados do banco e a APP_KEY gerada
+# 3. Variáveis de ambiente
+cp .env.example .env
+node -e "console.log('APP_KEY=' + require('crypto').randomBytes(32).toString('base64'))"
+#   → cole no .env, junto com os dados do banco.
+#     Em desenvolvimento: APP_ENV=development, SECURE_COOKIES=false, PUBLIC_DIR=dist
 
 # 4. Catálogo inicial + tabelas + primeiro administrador
 npm run seed:catalogo
-php api/migrate.php --admin-email=voce@exemplo.com --admin-pass='UmaSenhaBemForte' --demo
+npm run migrar -- --admin-email=voce@exemplo.com --admin-pass='UmaSenhaBemForte' --demo
 
 # 5. Suba os dois servidores (em terminais separados)
-npm run dev:api     # PHP em http://127.0.0.1:8000
+npm run dev:api     # API Node em http://127.0.0.1:8080, com recarga automática
 npm run dev         # Vite em http://localhost:3000 (faz proxy de /api)
 ```
 
 Loja em <http://localhost:3000> · painel em <http://localhost:3000/admin>.
+
+Para ver como fica em produção — um processo só, servindo tudo:
+
+```bash
+npm run preview     # build do front + build do servidor + sobe em :8080
+```
 
 > A flag `--demo` cria 140 pedidos fictícios para o dashboard ter histórico.
 > **Não use em produção.**
@@ -61,8 +70,11 @@ npm run sync:midia
 ```
 
 O script salva cada imagem, reescreve os caminhos em `src/data.ts` e em
-`api/seed/catalog.json`, e ignora o que já existe — pode rodar quantas vezes
+`server/db/catalog.json`, e ignora o que já existe — pode rodar quantas vezes
 quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
+
+> Rode isto **enquanto o site antigo ainda estiver no ar**: é de lá que as
+> imagens vêm.
 
 ---
 
@@ -71,15 +83,18 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 | Comando | O que faz |
 |---|---|
 | `npm run dev` | Servidor de desenvolvimento do front (porta 3000) |
-| `npm run dev:api` | API PHP local (porta 8000) |
-| `npm run build` | Build de produção em `dist/` |
-| `npm run lint` | Checagem de tipos (`tsc --noEmit`) |
+| `npm run dev:api` | API Node local com recarga automática (porta 8080) |
+| `npm run build` | Build do front em `dist/` |
+| `npm run build:server` | Compila o servidor em `.build/app.js` (+ `migrate.js`) |
+| `npm start` | Sobe o servidor já compilado |
+| `npm run preview` | Build completo + servidor, como em produção |
+| `npm run lint` | Checagem de tipos do front e do servidor |
 | `npm run migrar` | Cria/atualiza as tabelas e carrega o catálogo |
-| `npm run seed:catalogo` | Gera `api/seed/catalog.json` a partir de `src/data.ts` |
+| `npm run seed:catalogo` | Gera `server/db/catalog.json` a partir de `src/data.ts` |
 | `npm run sync:midia` | Baixa imagens de produtos e banners para `public/` |
 | `npm run gerar:sitemap` | Gera `public/sitemap.xml` a partir do catálogo |
 | `npm run empacotar` | Monta a pasta `deploy/` pronta para subir |
-| `npm run teste` | Testes do motor de preços (PHP, sem dependências) |
+| `npm run teste` | Testes do motor de preços (`node --test`, sem banco) |
 | `npm run teste:e2e` | Testes de ponta a ponta no navegador (Playwright) |
 
 ---
@@ -113,40 +128,54 @@ mesma tela.
 ## Estrutura
 
 ```
-api/                 API PHP
-  index.php          front controller (roteador)
-  config.php         credenciais — NÃO versionado
-  lib/               db, auth, cripto, preços, provedores
-  routes/            público, conta do cliente, painel
-  schema.sql         esquema do MySQL
-  migrate.php        instalador (apague do servidor após usar)
+server/
+  src/
+    index.ts         entrada: valida o ambiente, testa o banco e sobe o servidor
+    app.ts           Express: rotas, headers de segurança, estáticos, SPA, erros
+    config.ts        variáveis de ambiente (e a validação delas)
+    env.ts           carrega o .env quando o hPanel inicia sem --env-file
+    db.ts            pool do MySQL + helpers all/one/run/transaction
+    session.ts       sessão em cookie httpOnly, com estado no MySQL
+    auth.ts          CSRF, bcrypt, limite de tentativas, chaves de API
+    pricing.ts       frete, cupom e desconto Pix — as regras de dinheiro
+    store.ts         configurações da loja e conversão banco → front
+    crypto.ts        AES-256-GCM das credenciais de integração
+    providers.ts     handshake com gateways/WhatsApp/ERP + proteção contra SSRF
+    routes/          público, conta do cliente, painel, API v1
+    migrate.ts       instalador do banco (linha de comando)
+  db/
+    schema.sql       esquema do MySQL
+    catalog.json     catálogo para a carga inicial
+  tests/             testes do motor de preços
 src/
   api/client.ts      cliente HTTP (CSRF + sessão)
   catalog/           catálogo da vitrine, vindo da API
   admin/             painel administrativo
   components/        telas da loja
   data.ts            SEMENTE do catálogo (só para a carga inicial)
-scripts/             utilitários de build e migração
-public/              estáticos servidos como estão (.htaccess, imagens, robots)
+scripts/             build do servidor, empacotamento, catálogo, imagens
+public/              estáticos servidos como estão (imagens, robots, sitemap)
 ```
 
 **Onde ficam as regras de negócio:** frete, cupom e desconto do Pix vivem em
-`api/lib/pricing.php`. O navegador nunca informa preço — manda apenas
+`server/src/pricing.ts`. O navegador nunca informa preço — manda apenas
 `{productId, quantity}`, e o servidor calcula tudo a partir do banco. A mesma
-função alimenta a prévia do checkout e a gravação do pedido.
+função alimenta a prévia do checkout e a gravação do pedido, esta última dentro
+da transação que baixa o estoque.
 
 ---
 
 ## Segurança
 
-- Senhas com `password_hash` (bcrypt); sessão em cookie `httpOnly` + `SameSite=Lax`.
+- Senhas em bcrypt (custo 12); sessão em cookie `httpOnly` + `SameSite=Lax`,
+  com o estado no MySQL e o identificador trocado a cada login.
 - Token CSRF exigido em toda requisição que altera dados.
 - Bloqueio após 8 tentativas de login erradas em 15 minutos (por e-mail e por IP).
 - Credenciais de integrações (Stripe, Mercado Pago, Z-API, ERP…) cifradas com
   AES-256-GCM no banco e **nunca** enviadas ao navegador — o handshake com cada
   provedor acontece no servidor.
-- Todas as consultas usam prepared statements.
-- CSP restritiva no build de produção; `frame-ancestors` e HSTS no `.htaccess`.
+- Todas as consultas usam prepared statements com parâmetros.
+- CSP restritiva; `frame-ancestors` e HSTS enviados como header pelo Express.
 - URLs de ERP e webhook são recusadas quando apontam para endereços internos
   (loopback, redes privadas, metadados de nuvem) — evita usar o painel para
   varrer a rede do servidor.
@@ -156,6 +185,19 @@ senha" nem confirmação de cadastro. Por isso, um e-mail que já comprou como
 visitante não pode criar senha sozinho (seria uma forma de assumir a conta
 alheia) — o acesso precisa ser liberado manualmente. Ligar um serviço de e-mail
 transacional é o próximo passo natural.
+
+---
+
+## Histórico: de PHP para Node
+
+A primeira versão do back-end era PHP 8 puro, escolhido para rodar em qualquer
+plano compartilhado. Com o plano Business (que tem o gerenciador de Node.js), o
+back-end foi reescrito em Node/Express mantendo **o mesmo contrato de API e o
+mesmo esquema de banco** — o front-end não mudou uma linha.
+
+A equivalência foi verificada com `tests/paridade-php-node.mjs`, que aponta as
+duas implementações para o mesmo banco e compara as respostas campo por campo,
+e rodando as três suítes de ponta a ponta sem alteração contra o servidor Node.
 
 ---
 

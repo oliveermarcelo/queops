@@ -17,11 +17,10 @@ const onlyDigits = (s: string) => s.replace(/\D/g, '');
 /**
  * Simulador de frete do painel.
  *
- * ATENÇÃO: esta função precisa espelhar exatamente `calculate_shipping()` em
- * `api/lib/pricing.php` — quem cobra de verdade é o servidor. As duas já
+ * ATENÇÃO: esta função precisa espelhar exatamente `calculateShipping()` em
+ * `server/src/pricing.ts` — quem cobra de verdade é o servidor. As duas já
  * divergiram na ordem das regras, e o painel prometia R$ 9,90 num carrinho que
- * saía com frete grátis. Alterou uma? Altere a outra e rode
- * `php tests/pricing_test.php`.
+ * saía com frete grátis. Alterou uma? Altere a outra e rode `npm run teste`.
  *
  * Ordem: UF sempre grátis → faixa de CEP grátis → faixa de CEP com preço
  * (zerada pelo mínimo) → grátis por valor mínimo → preço por UF → padrão.

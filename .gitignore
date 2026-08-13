@@ -7,8 +7,15 @@ coverage/
 *.log
 *.zip
 
-# Configuração da API com a senha do banco e a chave de cifra.
-api/config.php
+# Variáveis de ambiente: senha do banco e chave de cifra das integrações.
+.env
+.env.local
+
+# Servidor compilado pelo esbuild.
+.build/
+
+# Capturas geradas pelos testes de ponta a ponta.
+tests/e2e/.saida/
 
 # Artefatos de trabalho
 dist-subtest/

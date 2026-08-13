@@ -1,6 +1,6 @@
 /**
  * Baixa as imagens do catálogo para `public/produtos/` e reescreve as URLs em
- * `src/data.ts` e `api/seed/catalog.json` para caminhos locais.
+ * `src/data.ts` e `server/db/catalog.json` para caminhos locais.
  *
  * Motivo: apontar para o site do cliente deixa a loja refém dele — se aquele
  * WordPress cair, a vitrine fica sem foto. Servindo do próprio domínio a
@@ -33,7 +33,7 @@ function fileNameFor(product, url) {
   return `${slug}-${short}${ext}`;
 }
 
-const catalogPath = resolve(root, 'api/seed/catalog.json');
+const catalogPath = resolve(root, 'server/db/catalog.json');
 const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
 
 const mapping = new Map(); // url original -> caminho local

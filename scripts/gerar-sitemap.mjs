@@ -14,7 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 
 const SITE = (process.env.SITE_URL ?? 'https://queopspiramides.com.br').replace(/\/+$/, '');
-const API = (process.env.API_URL ?? 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
+const API = (process.env.API_URL ?? 'http://127.0.0.1:8080/api').replace(/\/+$/, '');
 
 const escape = (s) =>
   String(s).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]);
@@ -26,7 +26,7 @@ try {
   catalog = await res.json();
 } catch (err) {
   console.error(`Não foi possível ler ${API}/catalog: ${err.message}`);
-  console.error('Suba a API (php -S 127.0.0.1:8000 scripts/dev-server.php) ou informe API_URL.');
+  console.error('Suba a API (npm run dev:api) ou informe API_URL.');
   process.exit(1);
 }
 

@@ -5,28 +5,36 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "dev:api": "php -S 127.0.0.1:8000 scripts/dev-server.php",
+    "dev:api": "node --env-file-if-exists=.env --watch server/src/index.ts",
     "build": "vite build",
-    "preview": "vite preview",
-    "lint": "tsc --noEmit",
-    "migrar": "php api/migrate.php",
+    "build:server": "node scripts/build-server.mjs",
+    "start": "node --env-file-if-exists=.env .build/app.js",
+    "preview": "npm run build && npm run build:server && npm start",
+    "lint": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json",
+    "migrar": "node --env-file-if-exists=.env server/src/migrate.ts",
     "seed:catalogo": "node scripts/export-catalog.mjs",
     "sync:midia": "node scripts/download-images.mjs",
     "gerar:sitemap": "node scripts/gerar-sitemap.mjs",
     "empacotar": "node scripts/empacotar.mjs",
-    "teste": "php tests/pricing_test.php",
+    "teste": "node --test \"server/tests/**/*.test.ts\"",
     "teste:e2e": "node tests/e2e/loja-e-painel.mjs && node tests/e2e/compra-completa.mjs && node tests/e2e/sincronia-painel-vitrine.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "bcryptjs": "^3.0.2",
+    "compression": "^1.8.1",
+    "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "mysql2": "^3.15.3",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
+    "@types/express": "^4.17.23",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
@@ -34,5 +42,5 @@
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2"
   },
-  "description": "Loja virtual e painel administrativo da Quéops Pirâmides (React + PHP/MySQL)."
+  "description": "Loja virtual e painel administrativo da Quéops Pirâmides (React + Node/Express + MySQL)."
 }

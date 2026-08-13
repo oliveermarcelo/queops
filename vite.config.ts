@@ -14,11 +14,11 @@ import { defineConfig, Plugin } from 'vite';
  *    o painel permite colar a URL de uma imagem externa ao cadastrar um produto;
  *    `safeImageSrc` já barra esquemas perigosos (javascript:, data:text/html, SVG)
  *  - connect-src 'self'  → o front só fala com a nossa API; as chamadas a
- *    gateways e ERPs saem do PHP, não do navegador
+ *    gateways e ERPs saem do servidor Node, não do navegador
  *  - object-src 'none', base-uri 'self', form-action 'self'
  *
  * Uma CSP em <meta> não consegue impor frame-ancestors nem enviar relatórios —
- * essa diretiva vai como header HTTP real no public/.htaccess (junto do HSTS).
+ * essa diretiva vai como header HTTP real, enviado pelo Express (server/src/app.ts).
  * Em produção, sirva a política inteira também como header no servidor/CDN.
  */
 const CSP = [
@@ -31,7 +31,7 @@ const CSP = [
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
-  // frame-ancestors é ignorado em <meta>: fica no .htaccess.
+  // frame-ancestors é ignorado em <meta>: vai como header, no Express.
   'upgrade-insecure-requests',
 ].join('; ');
 
@@ -79,13 +79,14 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       /**
-       * Em desenvolvimento, /api vai para o servidor PHP embutido:
-       *   php -S 127.0.0.1:8000 scripts/dev-server.php
-       * Em produção quem faz esse papel é o api/.htaccess.
+       * Em desenvolvimento, /api vai para o servidor Node:
+       *   npm run dev:api
+       * Em produção não existe proxy: o próprio Express serve o dist/ e a API
+       * no mesmo processo (ver server/src/app.ts).
        */
       proxy: {
         '/api': {
-          target: process.env.API_PROXY ?? 'http://127.0.0.1:8000',
+          target: process.env.API_PROXY ?? 'http://127.0.0.1:8080',
           changeOrigin: false,
         },
       },

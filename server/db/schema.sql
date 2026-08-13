@@ -2,7 +2,7 @@
 --  Quéops Pirâmides — esquema do banco (MySQL 5.7+ / MariaDB 10.3+)
 --  Compatível com a Hostinger (utf8mb4, InnoDB, sem recursos exóticos).
 --
---  Importe pelo phpMyAdmin ou rode:  php api/migrate.php
+--  Importe pelo phpMyAdmin ou rode:  npm run migrar
 -- =====================================================================
 
 SET NAMES utf8mb4;
@@ -22,6 +22,23 @@ CREATE TABLE IF NOT EXISTS admin_users (
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_admin_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- Sessões (cookie httpOnly `qp_session` → estado guardado aqui)
+--
+-- Fica no banco, e não em memória, porque a aplicação Node é reiniciada a cada
+-- deploy e pode rodar em mais de um processo: sessão em memória deslogaria
+-- todo mundo no reinício e "sumiria" a cada requisição que caísse no outro
+-- processo.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sessions (
+  id         CHAR(64)   NOT NULL,
+  payload    MEDIUMTEXT NOT NULL,
+  created_at DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_session_updated (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Tentativas de login (rate limiting) — vale para admin e cliente.

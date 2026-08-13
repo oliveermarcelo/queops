@@ -6,7 +6,7 @@
  *
  * A vitrine e o painel consomem o banco (`GET /api/catalog`). Este arquivo
  * alimenta a carga inicial: `node scripts/export-catalog.mjs` transforma estes
- * arrays em `api/seed/catalog.json`, que o `php api/migrate.php` importa.
+ * arrays em `server/db/catalog.json`, que o `npm run migrar` importa.
  *
  * Dados coletados do site oficial (queopspiramides.com.br) via API pública do
  * WooCommerce. Depois da carga, edite os produtos pelo painel, não aqui.

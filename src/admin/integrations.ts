@@ -6,9 +6,9 @@
  *
  * Aqui ficam nome, descrição e quais campos cada provedor pede. O teste de
  * conexão e o envio de mensagens moveram-se para o servidor
- * (`api/lib/providers.php`): antes o navegador chamava Z-API, Stripe e ERP
+ * (`server/src/providers.ts`): antes o navegador chamava Z-API, Stripe e ERP
  * diretamente, o que exigia ter o token no JavaScript e ainda esbarrava em
- * CORS. Agora o painel só pede "teste a Z-API" e o PHP usa a credencial
+ * CORS. Agora o painel só pede "teste a Z-API" e o servidor usa a credencial
  * cifrada guardada no banco.
  */
 

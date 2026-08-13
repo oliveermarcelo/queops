@@ -1,5 +1,5 @@
 /**
- * Gera `api/seed/catalog.json` a partir de `src/data.ts`.
+ * Gera `server/db/catalog.json` a partir de `src/data.ts`.
  *
  * O catálogo nasceu como um array TypeScript; o banco passa a ser a fonte da
  * verdade. Este script existe para a carga inicial (e para recarregar o
@@ -39,7 +39,7 @@ const out = {
   menu: MENU_CATEGORIES,
 };
 
-const target = resolve(root, 'api/seed/catalog.json');
+const target = resolve(root, 'server/db/catalog.json');
 mkdirSync(dirname(target), { recursive: true });
 writeFileSync(target, JSON.stringify(out, null, 2), 'utf8');
 

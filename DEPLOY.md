@@ -1,173 +1,197 @@
 # Deploy na Hostinger — Quéops Pirâmides
 
-Loja em React + API em PHP 8 + MySQL. Roda em plano compartilhado; não precisa
-de VPS, Node no servidor nem Composer.
+Loja em React + API em Node/Express + MySQL, num processo só. Precisa de um
+plano com o **gerenciador de Node.js** do hPanel: Business, Cloud ou VPS. Nos
+planos Premium e inferiores só existe PHP, e esta versão não roda lá.
 
 ---
 
-## 1. Banco de dados
+## Antes de tudo: as imagens
 
-hPanel → **Bancos de Dados → Gerenciamento de bancos MySQL**
+O catálogo aponta para `public/produtos/…`, mas os arquivos originais vêm do
+site atual do cliente. Se o site novo substituir o WordPress **antes** de as
+imagens virem para cá, a vitrine fica sem foto.
 
-1. Crie um banco (ex.: `u123456789_queops`) e um usuário com senha forte.
-2. Anote **host, nome do banco, usuário e senha** — a Hostinger costuma usar
-   `localhost` como host.
+```bash
+npm run sync:midia      # rode ENQUANTO o site atual ainda está no ar
+```
 
 ---
 
-## 2. Gerar os arquivos
+## 1. Criar o banco
 
-Na sua máquina:
+**hPanel → Bancos de Dados → Gerenciamento de bancos MySQL**
+
+Crie um banco e um usuário com senha forte. Anote os quatro valores:
+
+| Variável | Onde encontrar |
+|---|---|
+| `DB_HOST` | quase sempre `localhost` |
+| `DB_NAME` | o nome mostrado na lista — leva o prefixo da conta (`u123456789_queops`) |
+| `DB_USER` | idem, com prefixo |
+| `DB_PASS` | a senha que você definiu |
+
+---
+
+## 2. Gerar o pacote na sua máquina
 
 ```bash
 npm install
-npm run sync:midia      # baixa imagens de produtos e banners (uma vez)
-npm run seed:catalogo   # gera api/seed/catalog.json
-npm run build
-npm run empacotar       # cria a pasta deploy/
+npm run sync:midia        # imagens (só funciona com o site antigo no ar)
+npm run seed:catalogo     # catálogo a partir de src/data.ts
+npm run build             # front em dist/
+npm run build:server      # servidor em .build/app.js
+npm run empacotar         # monta deploy/
 ```
 
-A pasta `deploy/` sai com o site e a API já organizados. O `config.php` fica de
-fora de propósito: ele guarda a senha do banco e é criado direto no servidor.
-
----
-
-## 3. Subir os arquivos
-
-hPanel → **Gerenciador de Arquivos** → pasta `public_html`
-
-1. Envie **todo o conteúdo** de `deploy/` para dentro de `public_html`
-   (o `index.html` precisa ficar na raiz, não dentro de uma subpasta).
-2. Ative **"Mostrar arquivos ocultos"** e confirme que os dois `.htaccess`
-   subiram: `public_html/.htaccess` e `public_html/api/.htaccess`.
-   Sem eles, `/admin` dá 404 e a API não responde.
-
-Estrutura final esperada:
+Sai uma pasta `deploy/` com esta cara:
 
 ```
-public_html/
-├── .htaccess
-├── index.html
-├── assets/
-├── produtos/
-├── banners/
-├── robots.txt
-├── sitemap.xml
-└── api/
-    ├── .htaccess
-    ├── index.php
-    ├── config.php      ← criado no passo 4
-    ├── lib/  routes/  seed/
-    └── schema.sql
+deploy/
+  app.js            o servidor inteiro (entrada da aplicação)
+  migrate.js        instalador do banco, rodado uma vez
+  package.json      só as 4 dependências de runtime
+  public/           a vitrine compilada
+  db/               schema.sql e catalog.json
+  .env.example      modelo das variáveis de ambiente
 ```
 
 ---
 
-## 4. Configurar a API
+## 3. Criar a aplicação Node
 
-No Gerenciador de Arquivos, copie `api/config.example.php` para
-`api/config.php` e edite:
+**hPanel → Avançado → Node.js → Create application**
 
-```php
-'db' => [
-    'host'     => 'localhost',
-    'port'     => 3306,
-    'name'     => 'u123456789_queops',
-    'user'     => 'u123456789_queops',
-    'password' => 'a-senha-do-banco',
-    'charset'  => 'utf8mb4',
-],
-
-// Gere com:  php -r "echo base64_encode(random_bytes(32));"
-// Se não tiver PHP à mão, use qualquer gerador de 32 bytes em base64.
-'app_key' => 'COLE_AQUI_A_CHAVE_DE_32_BYTES',
-
-'app_url'        => 'https://queopspiramides.com.br',
-'secure_cookies' => true,
-'env'            => 'production',
-
-// Só para a instalação pelo navegador (passo 5). Apague depois.
-'setup_key' => 'uma-frase-longa-e-aleatoria',
-```
-
-> **A `app_key` cifra as credenciais das integrações.** Trocá-la depois torna
-> ilegíveis os tokens já salvos — guarde-a junto das senhas do projeto.
-
----
-
-## 5. Criar as tabelas e o administrador
-
-**Com SSH** (planos Business e superiores):
-
-```bash
-cd ~/public_html
-php api/migrate.php --admin-email=voce@queopspiramides.com.br --admin-pass='SenhaForteAqui'
-```
-
-**Sem SSH**, pelo navegador:
-
-```
-https://queopspiramides.com.br/api/migrate.php?key=uma-frase-longa-e-aleatoria&admin-email=voce@queopspiramides.com.br&admin-pass=SenhaForteAqui
-```
-
-O instalador só roda pela web enquanto não existir nenhum administrador.
-
-**Depois de instalar, apague `api/migrate.php` do servidor** e remova a linha
-`setup_key` do `config.php`.
-
-> Para uma apresentação com histórico fictício no dashboard, acrescente `--demo`
-> (ou `&demo=1`). Numa loja de verdade, não use.
-
----
-
-## 6. Conferir
-
-| Item | Onde |
+| Campo | Valor |
 |---|---|
-| Loja | `https://queopspiramides.com.br/` |
-| Painel | `https://queopspiramides.com.br/admin` |
-| API viva | `https://queopspiramides.com.br/api/catalog` (deve devolver JSON) |
+| Node.js version | 20 ou superior (22 se estiver disponível) |
+| Application mode | Production |
+| Application root | `queops` (a pasta onde você vai subir os arquivos) |
+| Application URL | o domínio da loja, na raiz `/` |
+| Application startup file | `app.js` |
 
-Teste o caminho completo: adicione ao carrinho → finalize um pedido → confirme
-que ele aparece em **Pedidos** no painel e que o estoque do produto caiu.
-
----
-
-## 7. Depois de no ar
-
-**Segurança**
-
-- Confirme que o HTTPS está ativo (hPanel → SSL) antes de descomentar a linha
-  do HSTS em `public_html/.htaccess`.
-- `api/config.php` e `api/schema.sql` já são bloqueados pelo `api/.htaccess`.
-  Vale conferir abrindo `https://seudominio.com.br/api/config.php` — deve dar 403.
-
-**Integrações** — cadastre as credenciais em **Painel → Integrações**. Elas
-ficam cifradas no banco; o botão "Testar conexão" faz o handshake pelo servidor.
-
-**Recuperação de carrinho automática** (opcional) — hPanel → **Cron Jobs**:
-
-```
-0 * * * *  php /home/uXXXXXXX/public_html/api/cron-recuperacao.php
-```
-
-*(o gatilho automático ainda não está implementado; hoje o envio é manual pelo
-painel, com um clique por carrinho.)*
-
-**Backup** — hPanel → Backups. O que importa preservar: o banco MySQL e o
-`api/config.php` (por causa da `app_key`).
+O hPanel cria a pasta e um `app.js` de exemplo — ele será sobrescrito no passo
+seguinte.
 
 ---
 
-## Atualizações futuras
+## 4. Enviar os arquivos
+
+**hPanel → Gerenciador de Arquivos** → entre na pasta `queops` e envie **todo o
+conteúdo** de `deploy/` (não a pasta `deploy` em si).
+
+O `app.js` precisa ficar na raiz da aplicação, ao lado de `package.json`,
+`public/` e `db/`.
+
+> Não suba `node_modules/`. O passo 6 instala as dependências no servidor, na
+> versão certa para o Node de lá.
+
+---
+
+## 5. Configurar as variáveis de ambiente
+
+Na tela da aplicação Node, seção **Environment variables**, adicione:
+
+| Nome | Valor |
+|---|---|
+| `DB_HOST` | `localhost` |
+| `DB_NAME` | o nome com prefixo |
+| `DB_USER` | o usuário com prefixo |
+| `DB_PASS` | a senha do banco |
+| `APP_KEY` | gere com o comando abaixo |
+| `APP_URL` | `https://queopspiramides.com.br` |
+| `APP_ENV` | `production` |
+| `SECURE_COOKIES` | `true` |
+| `PUBLIC_DIR` | `public` |
 
 ```bash
-npm run build && npm run empacotar
+# gera a APP_KEY (32 bytes em base64)
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-Suba o conteúdo de `deploy/` por cima, **exceto** `api/config.php` (que não é
-gerado). Se o `schema.sql` tiver mudado, rode `php api/migrate.php` de novo —
-ele é idempotente e não apaga dados.
+> **Guarde a `APP_KEY` junto das senhas do projeto.** É ela que cifra as
+> credenciais das integrações. Trocá-la depois torna ilegíveis os tokens já
+> salvos — o painel mostra os campos como vazios e é preciso cadastrar tudo de
+> novo.
+
+Alternativa: em vez da interface, suba um arquivo `.env` na raiz da aplicação
+(copiado do `.env.example`). O servidor lê os dois; o que está na interface tem
+precedência.
+
+---
+
+## 6. Instalar as dependências
+
+Na mesma tela, clique em **Run NPM Install** e espere terminar. Depois,
+**Restart**.
+
+A loja já responde neste ponto — mas ainda sem tabelas, então mostra erro de
+banco. É o passo seguinte que resolve.
+
+---
+
+## 7. Criar as tabelas e o administrador
+
+Pelo **SSH** (hPanel → Avançado → Acesso SSH), uma vez só:
+
+```bash
+cd ~/queops                 # a pasta da aplicação
+node migrate.js --admin-email=voce@queopspiramides.com.br --admin-pass='SenhaForte123'
+```
+
+Se o `node` do sistema for antigo, use o binário da própria aplicação — o
+caminho aparece no topo da tela do Node no hPanel, algo como:
+
+```bash
+~/nodevenv/queops/22/bin/node migrate.js --admin-email=... --admin-pass='...'
+```
+
+O que ele faz: cria as 20 tabelas, importa as 10 categorias e os produtos de
+`db/catalog.json`, grava as configurações padrão, cria os cupons
+`BEMVINDO10`/`VOLTA10` e cadastra o primeiro administrador.
+
+Rodar de novo é seguro: ele não duplica nada.
+
+> **Não use `--demo` em produção**: cria 140 pedidos fictícios.
+
+**Sem SSH?** Importe `db/schema.sql` pelo phpMyAdmin (hPanel → Bancos de Dados →
+phpMyAdmin → aba Importar) e peça a carga do catálogo e do administrador — mas o
+caminho com SSH é o normal em plano Business, e resolve tudo num comando.
+
+---
+
+## 8. Conferir
+
+| O quê | Onde |
+|---|---|
+| Loja | `/` |
+| Painel | `/admin` |
+| API viva | `/api/catalog` — deve devolver JSON com 72 produtos |
+
+Teste o caminho inteiro: adicione ao carrinho, finalize um pedido e confirme que
+ele aparece em **Pedidos** no painel e que o estoque caiu.
+
+---
+
+## Depois de no ar
+
+- **HTTPS:** confirme o SSL no hPanel. Só então adicione a variável `HSTS=true`
+  e reinicie — uma vez enviado, o navegador se recusa a acessar o site por HTTP
+  durante um ano.
+- **Integrações:** cadastre as credenciais em Painel → Integrações. Ficam
+  cifradas; o botão "Testar conexão" faz o handshake pelo servidor.
+- **Backup:** hPanel → Backups. O que importa preservar é o banco MySQL e a
+  `APP_KEY`.
+- **Atualizar depois:**
+
+  ```bash
+  npm run build && npm run build:server && npm run empacotar
+  ```
+
+  Suba o conteúdo de `deploy/` por cima (o `.env` do servidor não é
+  sobrescrito, porque não vai no pacote) e clique em **Restart**. Rode o
+  `migrate.js` de novo se o esquema mudou — ele adiciona as colunas que
+  faltarem, sem apagar dados.
 
 ---
 
@@ -175,9 +199,16 @@ ele é idempotente e não apaga dados.
 
 | Sintoma | Causa provável |
 |---|---|
-| Página em branco | Build feito para a raiz mas publicado em subpasta — use `npx vite build --base=/subpasta/` |
-| `/admin` dá 404 | `public_html/.htaccess` não subiu (arquivo oculto) |
-| "Não foi possível conectar ao banco" | Dados errados em `api/config.php` |
-| "APP_KEY não configurada" | Falta a `app_key` no `config.php` |
-| Erro 419 ao salvar | Sessão expirada — recarregue a página |
-| Login do painel não entra | 8 erros de senha bloqueiam o e-mail por 15 minutos |
+| **"We're sorry, but something went wrong"** | erro na inicialização. Veja `~/queops/stderr.log` (ou o botão de log na tela do Node) |
+| **"Configuração incompleta"** no log | falta alguma variável de ambiente; o log lista quais |
+| **"Não foi possível conectar ao MySQL"** | `DB_NAME`/`DB_USER` sem o prefixo da conta, ou senha errada |
+| **`APP_KEY` inválida** | precisa ser exatamente 32 bytes em base64 — gere com o comando do passo 5 |
+| **Página em branco** | o `public/` não subiu, ou `PUBLIC_DIR` aponta para outro nome |
+| **/admin dá 404** | o `app.js` não é o startup file, ou a aplicação não reiniciou |
+| **Loja diz "A loja não respondeu"** | o `migrate.js` ainda não rodou: não há tabelas |
+| **Erro 419 ao salvar** | sessão expirada; recarregue a página |
+| **Login do painel não entra** | 8 senhas erradas bloqueiam o e-mail por 15 minutos |
+| **"too many connections"** | baixe `DB_POOL` para 5 nas variáveis de ambiente |
+
+Para inspecionar o banco sem SSH: hPanel → Bancos de Dados → phpMyAdmin.
+`SELECT COUNT(*) FROM products;` deve devolver 72 depois da migração.
