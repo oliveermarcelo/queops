@@ -35,6 +35,23 @@ async function main(): Promise<void> {
   const app = createApp();
   const server = app.listen(config.port, config.host, () => {
     console.log(`[queops] no ar em http://${config.host}:${config.port} (${config.env})`);
+
+    /*
+     * Plataformas com proxy na frente (a hospedagem nova da Hostinger, entre
+     * outras) injetam PORT no ambiente e encaminham só para ela. Sem PORT,
+     * caímos na 3000 e o proxy bate numa porta onde não há ninguém: a
+     * aplicação aparece "Em execução" no painel e o site devolve 503, sem
+     * nada no log explicando.
+     *
+     * Este aviso existe para esse caso não passar despercebido de novo.
+     */
+    if (!process.env.PORT) {
+      console.warn(
+        `[queops] PORT não veio do ambiente; escutando na ${config.port} por padrão. ` +
+          'Se o site responder 503 com a aplicação "em execução", é quase certo que ' +
+          'o proxy espera outra porta — defina PORT nas variáveis de ambiente.',
+      );
+    }
   });
 
   // Encerramento limpo: o Passenger manda SIGTERM a cada deploy, e sem isto as

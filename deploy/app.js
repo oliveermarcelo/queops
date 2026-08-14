@@ -2509,6 +2509,11 @@ async function main() {
   const app = createApp();
   const server = app.listen(config.port, config.host, () => {
     console.log(`[queops] no ar em http://${config.host}:${config.port} (${config.env})`);
+    if (!process.env.PORT) {
+      console.warn(
+        `[queops] PORT n\xE3o veio do ambiente; escutando na ${config.port} por padr\xE3o. Se o site responder 503 com a aplica\xE7\xE3o "em execu\xE7\xE3o", \xE9 quase certo que o proxy espera outra porta \u2014 defina PORT nas vari\xE1veis de ambiente.`
+      );
+    }
   });
   const shutdown = /* @__PURE__ */ __name((sinal) => {
     console.log(`[queops] recebi ${sinal}, encerrando\u2026`);
