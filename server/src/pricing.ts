@@ -271,7 +271,11 @@ async function cotarNosCorreios(
     return null;
   };
 
-  // Regra do painel já deu grátis: não sobrescreve uma promoção.
+  /*
+   * Frete grátis por regra do painel não vira cotação: cotar aqui só trocaria
+   * uma promoção configurada por preço cheio. Não registramos no log porque é
+   * o comportamento pedido, não uma falha.
+   */
   if (ship.reason.startsWith('free_')) return null;
   if (normalizeCep(cep) === '') return pulou('CEP de destino inválido');
 
