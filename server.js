@@ -29,6 +29,27 @@ import { fileURLToPath } from 'node:url';
 const aqui = dirname(fileURLToPath(import.meta.url));
 const alvo = resolve(aqui, 'deploy', 'app.js');
 
+/*
+ * Carrega o .env que estiver AO LADO deste arquivo.
+ *
+ * O app.js procura o .env a partir do diretório de trabalho do processo. Quem
+ * define esse diretório é o Passenger, e nem sempre ele é a raiz da aplicação —
+ * quando não é, o .env passa despercebido, a configuração fica incompleta e o
+ * servidor encerra na inicialização. Do lado de fora isso aparece como 503.
+ *
+ * Resolvendo pelo caminho deste módulo, o cwd deixa de importar. Quem cadastrou
+ * as variáveis no painel do hPanel não é afetado: loadEnvFile não sobrescreve o
+ * que já está no ambiente.
+ */
+const env = resolve(aqui, '.env');
+if (existsSync(env)) {
+  try {
+    process.loadEnvFile(env);
+  } catch (e) {
+    console.error(`[queops] não consegui ler ${env}:`, e instanceof Error ? e.message : e);
+  }
+}
+
 if (!existsSync(alvo)) {
   console.error(
     [
