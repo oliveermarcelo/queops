@@ -92,10 +92,11 @@ export const PROVIDERS: ProviderMeta[] = [
       { key: 'user', label: 'Usuário (Meu Correios)' },
       {
         key: 'accessCode',
-        label: 'Código de acesso à API',
+        // Não é a senha do portal: gera-se em Meu Correios → Gerenciar acesso
+        // à API. Confundir as duas é o erro mais comum ao configurar isto.
+        label: 'Código de acesso à API (não é a senha do site)',
         type: 'password',
-        // Não é a senha do portal: gera-se em Meu Correios → Gerenciar acesso à API.
-        placeholder: 'Meu Correios → Gerenciar acesso à API',
+        placeholder: 'Gere em Meu Correios → Gerenciar acesso à API',
       },
       { key: 'postingCard', label: 'Cartão de postagem', placeholder: 'Somente números' },
       { key: 'contract', label: 'Código do contrato', placeholder: 'Opcional' },

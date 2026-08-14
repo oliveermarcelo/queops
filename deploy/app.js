@@ -1035,7 +1035,10 @@ async function providerTest(id, f) {
   const meta = PROVIDERS_META[id];
   if (!meta) return { ok: false, message: "Provedor desconhecido." };
   const missing = meta.fields.filter((k) => str(f, k).trim() === "");
-  if (missing.length) return { ok: false, message: "Preencha: " + missing.join(", ") };
+  if (missing.length) {
+    const nomes = missing.map((k) => FIELD_LABELS[k] ?? k).join(", ");
+    return { ok: false, message: `Salve antes de testar. Falta preencher: ${nomes}.` };
+  }
   const enc = encodeURIComponent;
   let r;
   switch (id) {
@@ -1154,7 +1157,7 @@ function fireWebhooks(event, payload) {
     }
   })();
 }
-var import_node_net2, import_node_dns, str, PROVIDERS_META;
+var import_node_net2, import_node_dns, str, FIELD_LABELS, PROVIDERS_META;
 var init_providers = __esm({
   "server/src/providers.ts"() {
     "use strict";
@@ -1166,6 +1169,26 @@ var init_providers = __esm({
       const v = f[k];
       return v === null || v === void 0 || typeof v === "object" ? "" : String(v);
     }, "str");
+    FIELD_LABELS = {
+      accessCode: "C\xF3digo de acesso \xE0 API",
+      accessToken: "Access Token",
+      accountId: "Account ID",
+      agentId: "Agent ID",
+      apiKey: "API Key",
+      apiToken: "API Token",
+      baseUrl: "URL base",
+      company: "Empresa",
+      email: "E-mail",
+      encryptionKey: "Encryption Key",
+      instance: "Inst\xE2ncia",
+      instanceId: "Instance ID",
+      postingCard: "Cart\xE3o de postagem",
+      publicKey: "Public Key",
+      publishableKey: "Publishable Key",
+      secretKey: "Secret Key",
+      token: "Token",
+      user: "Usu\xE1rio"
+    };
     PROVIDERS_META = {
       mercadopago: { fields: ["publicKey", "accessToken"] },
       pagseguro: { fields: ["email", "token"] },
