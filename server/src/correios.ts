@@ -128,14 +128,41 @@ export function esquecerToken(c: CorreiosCreds): void {
  * confundir código de acesso com a senha do portal. Dizer isso no painel evita
  * o suporte.
  */
-function explicar(r: HttpCallResult): string {
+function explicar(r: HttpCallResult, onde: 'auth' | 'cotacao' | 'rastreio' = 'auth'): string {
   if (r.status === 401 || r.status === 403) {
     return 'Usuário ou código de acesso recusado. Lembre: o código de acesso à API '
       + 'não é a senha do site — gere em Meu Correios → Gerenciar acesso à API.';
   }
-  if (r.status === 400) return 'Requisição recusada. Confira o número do cartão de postagem.';
+  if (r.status === 400) {
+    /*
+     * 400 quer dizer coisas diferentes conforme o endpoint, e o motivo real
+     * costuma vir no corpo. Repassá-lo evita mandar quem configura conferir o
+     * cartão de postagem quando o problema é outro — o serviço não pertencer
+     * ao contrato, por exemplo.
+     */
+    const detalhe = detalheDoErro(r.body);
+    if (detalhe !== '') return detalhe;
+    if (onde === 'cotacao') {
+      return 'Cotação recusada. Confira se os códigos em "Serviços a cotar" pertencem '
+        + 'ao seu contrato e se o cartão de postagem está correto.';
+    }
+    return 'Requisição recusada. Confira o número do cartão de postagem.';
+  }
   if (r.status === 0) return `Não foi possível falar com os Correios: ${r.error}`;
   return `Correios responderam HTTP ${r.status}.`;
+}
+
+/** Extrai a mensagem que a CWS manda no corpo do erro, quando manda. */
+function detalheDoErro(body: string): string {
+  try {
+    const d = JSON.parse(body) as Record<string, unknown>;
+    const msg = d.msgs ?? d.msg ?? d.message ?? d.txErro ?? d.error;
+    if (Array.isArray(msg)) return msg.map(String).join(' · ').slice(0, 300);
+    if (typeof msg === 'string' && msg.trim() !== '') return msg.slice(0, 300);
+  } catch {
+    // Corpo não-JSON: nada a aproveitar.
+  }
+  return '';
 }
 
 // ----------------------------------------------------------------- preço -----
@@ -204,7 +231,7 @@ export async function cotar(
     esquecerToken(c);
     return { ...vazio, erro: 'Token expirado; tente de novo.' };
   }
-  if (!preco.ok) return { ...vazio, erro: explicar(preco) };
+  if (!preco.ok) return { ...vazio, erro: explicar(preco, 'cotacao') };
 
   try {
     const p = JSON.parse(preco.body) as Array<Record<string, unknown>>;
@@ -273,7 +300,7 @@ export async function rastrear(
     esquecerToken(c);
     return { eventos: [], erro: 'Token expirado; tente de novo.' };
   }
-  if (!r.ok) return { eventos: [], erro: explicar(r) };
+  if (!r.ok) return { eventos: [], erro: explicar(r, 'rastreio') };
 
   try {
     const dados = JSON.parse(r.body) as { objetos?: Array<Record<string, unknown>> };

@@ -807,13 +807,30 @@ async function autenticar(c) {
 function esquecerToken(c) {
   cache.delete(`${c.user}:${c.postingCard}`);
 }
-function explicar(r) {
+function explicar(r, onde = "auth") {
   if (r.status === 401 || r.status === 403) {
     return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
   }
-  if (r.status === 400) return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
+  if (r.status === 400) {
+    const detalhe = detalheDoErro(r.body);
+    if (detalhe !== "") return detalhe;
+    if (onde === "cotacao") {
+      return 'Cota\xE7\xE3o recusada. Confira se os c\xF3digos em "Servi\xE7os a cotar" pertencem ao seu contrato e se o cart\xE3o de postagem est\xE1 correto.';
+    }
+    return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
+  }
   if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
   return `Correios responderam HTTP ${r.status}.`;
+}
+function detalheDoErro(body2) {
+  try {
+    const d = JSON.parse(body2);
+    const msg = d.msgs ?? d.msg ?? d.message ?? d.txErro ?? d.error;
+    if (Array.isArray(msg)) return msg.map(String).join(" \xB7 ").slice(0, 300);
+    if (typeof msg === "string" && msg.trim() !== "") return msg.slice(0, 300);
+  } catch {
+  }
+  return "";
 }
 function moeda(v) {
   const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
@@ -852,7 +869,7 @@ async function cotar(c, servico, cepDestino, pesoGramas, dim = {}) {
     esquecerToken(c);
     return { ...vazio, erro: "Token expirado; tente de novo." };
   }
-  if (!preco.ok) return { ...vazio, erro: explicar(preco) };
+  if (!preco.ok) return { ...vazio, erro: explicar(preco, "cotacao") };
   try {
     const p = JSON.parse(preco.body);
     const item = Array.isArray(p) ? p[0] : null;
@@ -896,7 +913,7 @@ async function rastrear(c, codigo) {
     esquecerToken(c);
     return { eventos: [], erro: "Token expirado; tente de novo." };
   }
-  if (!r.ok) return { eventos: [], erro: explicar(r) };
+  if (!r.ok) return { eventos: [], erro: explicar(r, "rastreio") };
   try {
     const dados = JSON.parse(r.body);
     const obj = dados.objetos?.[0];
@@ -942,6 +959,7 @@ var init_correios = __esm({
     __name(autenticar, "autenticar");
     __name(esquecerToken, "esquecerToken");
     __name(explicar, "explicar");
+    __name(detalheDoErro, "detalheDoErro");
     __name(moeda, "moeda");
     __name(cotar, "cotar");
     __name(cotarTodos, "cotarTodos");
@@ -2959,11 +2977,6 @@ async function main() {
   const app = createApp();
   const server = app.listen(config.port, config.host, () => {
     console.log(`[queops] no ar em http://${config.host}:${config.port} (${config.env})`);
-    if (!process.env.PORT) {
-      console.warn(
-        `[queops] PORT n\xE3o veio do ambiente; escutando na ${config.port} por padr\xE3o. Se o site responder 503 com a aplica\xE7\xE3o "em execu\xE7\xE3o", \xE9 quase certo que o proxy espera outra porta \u2014 defina PORT nas vari\xE1veis de ambiente.`
-      );
-    }
   });
   const shutdown = /* @__PURE__ */ __name((sinal) => {
     console.log(`[queops] recebi ${sinal}, encerrando\u2026`);

@@ -325,6 +325,12 @@ async function main() {
   }
   const campo = /* @__PURE__ */ __name((rotulo, valor) => valor === "" ? erro(rotulo, "vazio") : ok(rotulo, valor), "campo");
   campo("DB_HOST", config.db.host);
+  if (config.db.host.toLowerCase() === "localhost") {
+    aviso(
+      "DB_HOST",
+      'Prefira 127.0.0.1: "localhost" pode chegar ao MySQL como ::1 (IPv6) e ser recusado com senha correta.'
+    );
+  }
   campo("DB_NAME", config.db.database);
   campo("DB_USER", config.db.user);
   campo("DB_PASS", config.db.password === "" ? "" : `preenchida (${config.db.password.length} caracteres)`);
@@ -379,9 +385,9 @@ async function main() {
       ER_ACCESS_DENIED_ERROR: "Usu\xE1rio ou senha errados \u2014 ou o usu\xE1rio n\xE3o est\xE1 associado a este banco. Na Hostinger, nome e usu\xE1rio levam o prefixo da conta (u123456789_queops).",
       ER_BAD_DB_ERROR: "O banco com esse nome n\xE3o existe. Crie em hPanel \u2192 Bancos de Dados \u2192 MySQL e copie o nome exatamente como aparece l\xE1, com o prefixo.",
       ER_DBACCESS_DENIED_ERROR: "O usu\xE1rio existe, mas n\xE3o tem permiss\xE3o neste banco \u2014 ou o nome do banco est\xE1 errado. Em hPanel \u2192 Bancos de Dados, confirme que este usu\xE1rio aparece associado a este banco, e copie os dois nomes exatamente como est\xE3o l\xE1.",
-      ECONNREFUSED: "Nada escutando nesse host/porta. Na Hostinger, DB_HOST \xE9 localhost.",
-      ENOTFOUND: "O host n\xE3o existe. Na Hostinger, DB_HOST \xE9 localhost.",
-      ETIMEDOUT: "O host n\xE3o respondeu. Se colocou um IP, troque por localhost."
+      ECONNREFUSED: "Nada escutando nesse host/porta. Na Hostinger, use DB_HOST=127.0.0.1.",
+      ENOTFOUND: "O host n\xE3o existe. Na Hostinger, use DB_HOST=127.0.0.1.",
+      ETIMEDOUT: "O host n\xE3o respondeu. Na Hostinger, use DB_HOST=127.0.0.1."
     };
     aviso("O que fazer", dicas[err.code ?? ""] ?? "Confira DB_HOST, DB_NAME, DB_USER e DB_PASS.");
   }

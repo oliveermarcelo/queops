@@ -26,10 +26,17 @@ Crie um banco e um usuário com senha forte. Anote os quatro valores:
 
 | Variável | Onde encontrar |
 |---|---|
-| `DB_HOST` | quase sempre `localhost` |
+| `DB_HOST` | **`127.0.0.1`** — veja o aviso abaixo |
 | `DB_NAME` | o nome mostrado na lista — leva o prefixo da conta (`u123456789_queops`) |
 | `DB_USER` | idem, com prefixo |
 | `DB_PASS` | a senha que você definiu |
+
+> **Use `127.0.0.1`, não `localhost`.** O driver resolve `localhost` por DNS e
+> chega ao MySQL como `::1` (IPv6), host para o qual o usuário do banco não tem
+> permissão na Hostinger. O erro é `ER_ACCESS_DENIED_ERROR` mesmo com a senha
+> correta — e, como o servidor encerra quando o banco não responde, a loja
+> responde 503. Pelo SSH o cliente `mysql` conecta por socket e funciona com
+> `localhost`, o que torna o diagnóstico confuso.
 
 ---
 

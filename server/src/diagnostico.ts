@@ -64,6 +64,19 @@ async function main(): Promise<void> {
   const campo = (rotulo: string, valor: string) =>
     valor === '' ? erro(rotulo, 'vazio') : ok(rotulo, valor);
   campo('DB_HOST', config.db.host);
+  /*
+   * "localhost" é resolvido por DNS e chega ao MySQL como ::1 (IPv6), host que
+   * o usuário do banco não tem permissão de usar na Hostinger. A conexão é
+   * recusada mesmo com a senha certa, e o servidor encerra: loja em 503.
+   * Confunde porque o cliente `mysql` do SSH conecta por socket e funciona.
+   */
+  if (config.db.host.toLowerCase() === 'localhost') {
+    aviso(
+      'DB_HOST',
+      'Prefira 127.0.0.1: "localhost" pode chegar ao MySQL como ::1 (IPv6) e ser '
+        + 'recusado com senha correta.',
+    );
+  }
   campo('DB_NAME', config.db.database);
   campo('DB_USER', config.db.user);
   campo('DB_PASS', config.db.password === ''
@@ -141,9 +154,9 @@ async function main(): Promise<void> {
       ER_DBACCESS_DENIED_ERROR: 'O usuário existe, mas não tem permissão neste banco — ou o nome do '
         + 'banco está errado. Em hPanel → Bancos de Dados, confirme que este usuário aparece '
         + 'associado a este banco, e copie os dois nomes exatamente como estão lá.',
-      ECONNREFUSED: 'Nada escutando nesse host/porta. Na Hostinger, DB_HOST é localhost.',
-      ENOTFOUND: 'O host não existe. Na Hostinger, DB_HOST é localhost.',
-      ETIMEDOUT: 'O host não respondeu. Se colocou um IP, troque por localhost.',
+      ECONNREFUSED: 'Nada escutando nesse host/porta. Na Hostinger, use DB_HOST=127.0.0.1.',
+      ENOTFOUND: 'O host não existe. Na Hostinger, use DB_HOST=127.0.0.1.',
+      ETIMEDOUT: 'O host não respondeu. Na Hostinger, use DB_HOST=127.0.0.1.',
     };
     aviso('O que fazer', dicas[err.code ?? ''] ?? 'Confira DB_HOST, DB_NAME, DB_USER e DB_PASS.');
   }

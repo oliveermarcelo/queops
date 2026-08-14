@@ -37,21 +37,16 @@ async function main(): Promise<void> {
     console.log(`[queops] no ar em http://${config.host}:${config.port} (${config.env})`);
 
     /*
-     * Plataformas com proxy na frente (a hospedagem nova da Hostinger, entre
-     * outras) injetam PORT no ambiente e encaminham só para ela. Sem PORT,
-     * caímos na 3000 e o proxy bate numa porta onde não há ninguém: a
-     * aplicação aparece "Em execução" no painel e o site devolve 503, sem
-     * nada no log explicando.
+     * Não avisamos mais quando PORT não vem do ambiente.
      *
-     * Este aviso existe para esse caso não passar despercebido de novo.
+     * A suspeita era que a hospedagem da Hostinger injetasse a porta e que a
+     * ausência dela explicasse um 503. Não explicava: o Passenger encontra a
+     * aplicação por socket, e a loja subiu escutando na 3000 sem PORT nenhuma.
+     * O 503 daquele dia era acesso negado no MySQL — `localhost` resolvia para
+     * ::1, host que o usuário do banco não tem permissão de usar.
+     *
+     * O aviso ficava, então, repetindo a cada reinício uma informação falsa.
      */
-    if (!process.env.PORT) {
-      console.warn(
-        `[queops] PORT não veio do ambiente; escutando na ${config.port} por padrão. ` +
-          'Se o site responder 503 com a aplicação "em execução", é quase certo que ' +
-          'o proxy espera outra porta — defina PORT nas variáveis de ambiente.',
-      );
-    }
   });
 
   // Encerramento limpo: o Passenger manda SIGTERM a cada deploy, e sem isto as
