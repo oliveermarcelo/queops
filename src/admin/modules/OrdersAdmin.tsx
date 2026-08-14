@@ -4,9 +4,10 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Loader2, Package, Search } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
-import { OrderStatus } from '../types';
+import { fetchOrderTracking, setOrderTracking } from '../store';
+import { OrderStatus, TrackingEvent } from '../types';
 import { brl, fmtDate, Card, inputCls } from '../ui';
 
 const STATUSES: { id: OrderStatus | 'all'; label: string }[] = [
@@ -28,6 +29,119 @@ const STATUS_SELECT: Record<OrderStatus, string> = {
   delivered: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   canceled: 'bg-gray-100 text-gray-500 border-gray-200',
 };
+
+/**
+ * Linha de rastreio de um pedido.
+ *
+ * Some quando o pedido ainda está pendente ou foi cancelado: código de
+ * rastreio só faz sentido a partir do momento em que algo é despachado.
+ *
+ * A consulta aos Correios é sob demanda, no botão — nunca ao abrir a tela.
+ * Com muitos pedidos, buscar todos de uma vez seria uma rajada de chamadas à
+ * API a cada visita ao painel.
+ */
+function TrackingRow({
+  orderId,
+  initialCode,
+  lastStatus,
+}: {
+  orderId: string;
+  initialCode: string;
+  lastStatus: string;
+}) {
+  const [code, setCode] = useState(initialCode);
+  const [saved, setSaved] = useState(initialCode);
+  const [events, setEvents] = useState<TrackingEvent[] | null>(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState<'save' | 'track' | null>(null);
+
+  const salvar = async () => {
+    setBusy('save');
+    setMsg('');
+    try {
+      const limpo = code.trim().toUpperCase();
+      await setOrderTracking(orderId, limpo);
+      setSaved(limpo);
+      setCode(limpo);
+      setEvents(null);
+      setMsg(limpo === '' ? 'Código removido.' : 'Código salvo.');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Não foi possível salvar.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rastrear = async () => {
+    setBusy('track');
+    setMsg('');
+    try {
+      const r = await fetchOrderTracking(orderId);
+      setEvents(r.eventos);
+      if (r.erro) setMsg(r.erro);
+      else if (r.eventos.length === 0) setMsg('Sem movimentação registrada ainda.');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Não foi possível consultar os Correios.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="AA123456789BR"
+          className={`${inputCls} w-40 font-mono text-xs uppercase`}
+        />
+        <button
+          onClick={salvar}
+          disabled={busy !== null || code.trim().toUpperCase() === saved}
+          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-primary-blue text-white disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {busy === 'save' ? 'Salvando…' : 'Salvar'}
+        </button>
+        {saved !== '' && (
+          <button
+            onClick={rastrear}
+            disabled={busy !== null}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 inline-flex items-center gap-1.5"
+          >
+            {busy === 'track'
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Package className="w-3.5 h-3.5" />}
+            Rastrear
+          </button>
+        )}
+      </div>
+
+      {msg !== '' && <p className="text-[11px] text-gray-500">{msg}</p>}
+
+      {/* Último status conhecido, enquanto ninguém pediu a consulta completa. */}
+      {events === null && lastStatus !== '' && (
+        <p className="text-[11px] text-gray-500">Último status: {lastStatus}</p>
+      )}
+
+      {events !== null && events.length > 0 && (
+        <ol className="border-l-2 border-gray-100 pl-3 space-y-1.5">
+          {events.map((ev, i) => (
+            <li key={i} className="text-[11px]">
+              <span className={i === 0 ? 'font-bold text-gray-700' : 'text-gray-600'}>
+                {ev.descricao}
+              </span>
+              <span className="text-gray-400">
+                {ev.local !== '' && ` · ${ev.local}`}
+                {ev.data !== '' && ` · ${fmtDate(ev.data)}`}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
 
 export default function OrdersAdmin() {
   const { state, setOrderStatus } = useAdmin();
@@ -79,7 +193,8 @@ export default function OrdersAdmin() {
             </thead>
             <tbody>
               {orders.map((o) => (
-                <tr key={o.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                <React.Fragment key={o.id}>
+                <tr className="border-b border-gray-50 hover:bg-gray-50/50">
                   <td className="py-2.5 px-4 font-mono text-xs font-bold text-gray-700">{o.id}</td>
                   <td className="py-2.5 px-4">
                     <p className="text-gray-700">{o.customerName}</p>
@@ -103,6 +218,19 @@ export default function OrdersAdmin() {
                     </select>
                   </td>
                 </tr>
+                {/* Rastreio: só a partir do pago — antes disso não há o que despachar. */}
+                {(o.status === 'paid' || o.status === 'shipped' || o.status === 'delivered') && (
+                  <tr className="border-b border-gray-50 bg-gray-50/30">
+                    <td colSpan={6} className="py-2 px-4">
+                      <TrackingRow
+                        orderId={o.id}
+                        initialCode={o.trackingCode ?? ''}
+                        lastStatus={o.trackingStatus ?? ''}
+                      />
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               ))}
               {orders.length === 0 && (
                 <tr><td colSpan={6} className="py-10 text-center text-gray-400 text-sm">Nenhum pedido neste filtro.</td></tr>

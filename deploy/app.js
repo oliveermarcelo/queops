@@ -597,7 +597,9 @@ function orderRowToApi(r, items) {
     couponCode: r.coupon_code,
     status: r.status,
     payment: r.payment,
-    channel: r.channel
+    channel: r.channel,
+    trackingCode: String(r.tracking_code ?? ""),
+    trackingStatus: String(r.tracking_status ?? "")
   };
 }
 async function fetchOrders(limit = 500, exec = q) {

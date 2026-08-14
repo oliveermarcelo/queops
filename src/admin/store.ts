@@ -14,7 +14,7 @@ import { api } from '../api/client';
 import { Product } from '../types';
 import {
   AdminState, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
-  IntegrationId, AbandonedStatus, RecoveryConfig, ShippingConfig, Webhook,
+  IntegrationId, AbandonedStatus, RecoveryConfig, ShippingConfig, TrackingEvent, Webhook,
 } from './types';
 
 /** Estado completo do painel numa requisição só. */
@@ -36,6 +36,18 @@ export function deleteProduct(id: string): Promise<void> {
 
 export function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
   return api.patch(`/admin/orders/${encodeURIComponent(id)}`, { status });
+}
+
+/** Grava o código de rastreio. String vazia limpa o que estava lá. */
+export function setOrderTracking(id: string, trackingCode: string): Promise<void> {
+  return api.put(`/admin/orders/${encodeURIComponent(id)}/tracking`, { trackingCode });
+}
+
+/** Consulta os Correios. `erro` vem preenchido quando não deu para rastrear. */
+export function fetchOrderTracking(
+  id: string,
+): Promise<{ trackingCode: string; eventos: TrackingEvent[]; erro: string }> {
+  return api.get(`/admin/orders/${encodeURIComponent(id)}/tracking`);
 }
 
 // --------------------------------------------------------------- cupons ----
