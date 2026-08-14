@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" shape-rendering="geometricPrecision">
+  <rect width="64" height="64" rx="12" fill="#42210b"/>
+  <!-- Pirâmide dourada com faces em dois tons -->
+  <path d="M32 12 L52 50 H12 Z" fill="#c9a14a"/>
+  <path d="M32 12 L32 50 H12 Z" fill="#b8893a"/>
+  <!-- Linhas de bloco -->
+  <path d="M32 12 L52 50 H12 Z" fill="none" stroke="#42210b" stroke-width="1.2" stroke-opacity="0.35"/>
+  <path d="M22 50 L32 31 L42 50" fill="none" stroke="#42210b" stroke-width="1.2" stroke-opacity="0.3"/>
+</svg>

@@ -1,8 +1,18 @@
 node_modules/
 build/
 dist/
-deploy/
 coverage/
+
+# O pacote de produção (deploy/) É versionado de propósito: o deploy da
+# Hostinger é por Git, e o hPanel só faz `git clone` — sem build no servidor.
+# Se deploy/ voltar a ser ignorado, o servidor recebe só o TypeScript e a
+# aplicação não sobe ("app.js não encontrado").
+#
+# Regenere e commite a cada release:
+#   npm run build && npm run build:server && npm run empacotar
+#
+# Os sourcemaps ficam de fora: ~300 KB que só servem para depurar.
+deploy/**/*.map
 .DS_Store
 *.log
 *.zip
