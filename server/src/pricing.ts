@@ -259,32 +259,50 @@ async function cotarNosCorreios(
   pesoGramas: number,
   exec: Q,
 ): Promise<{ cost: number; label: string } | null> {
+  /*
+   * Cada saída registra o motivo no log.
+   *
+   * São cinco caminhos que devolvem null, e do lado de fora todos parecem
+   * iguais: o frete sai pelo valor fixo, sem pista nenhuma. Ficar em silêncio
+   * aqui transforma "por que Acre e Bahia custam o mesmo?" numa investigação.
+   */
+  const pulou = (motivo: string): null => {
+    console.warn(`[queops] frete: Correios não consultados — ${motivo}`);
+    return null;
+  };
+
   // Regra do painel já deu grátis: não sobrescreve uma promoção.
   if (ship.reason.startsWith('free_')) return null;
-  if (normalizeCep(cep) === '') return null;
+  if (normalizeCep(cep) === '') return pulou('CEP de destino inválido');
 
   try {
     const row = await exec.one(
       "SELECT enabled FROM integrations WHERE id = 'correios' AND enabled = 1",
     );
-    if (!row) return null;
+    if (!row) return pulou('integração desligada em Painel → Integrações');
 
     const { integrationSecrets } = await import('./store.ts');
     const { credsFrom, cotarTodos } = await import('./correios.ts');
     const creds = credsFrom(await integrationSecrets('correios', exec));
-    if (creds.user === '' || creds.accessCode === '' || (creds.originCep ?? '').length !== 8) {
-      return null;
+    if (creds.user === '' || creds.accessCode === '') {
+      return pulou('usuário ou código de acesso não cadastrados');
+    }
+    if ((creds.originCep ?? '').length !== 8) {
+      return pulou('CEP de origem não configurado no painel');
     }
 
     const cotacoes = await cotarTodos(creds, cep, pesoGramas);
     const melhor = cotacoes.find((c) => c.erro === '' && c.preco > 0);
-    if (!melhor) return null;
+    if (!melhor) {
+      const erros = cotacoes.map((c) => `${c.nome}: ${c.erro || 'sem preço'}`).join(' · ');
+      return pulou(`nenhum serviço cotou (${erros})`);
+    }
 
     const prazo = melhor.prazoDias > 0 ? ` — até ${melhor.prazoDias} dias úteis` : '';
     return { cost: round2(melhor.preco), label: `${melhor.nome}${prazo}` };
-  } catch {
+  } catch (e) {
     // Correios instáveis não podem derrubar o checkout.
-    return null;
+    return pulou(e instanceof Error ? e.message : String(e));
   }
 }
 

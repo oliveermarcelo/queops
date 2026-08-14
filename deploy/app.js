@@ -2175,26 +2175,36 @@ function pesoDoCarrinho(items, found) {
 }
 __name(pesoDoCarrinho, "pesoDoCarrinho");
 async function cotarNosCorreios(ship, cep, pesoGramas, exec) {
+  const pulou = /* @__PURE__ */ __name((motivo) => {
+    console.warn(`[queops] frete: Correios n\xE3o consultados \u2014 ${motivo}`);
+    return null;
+  }, "pulou");
   if (ship.reason.startsWith("free_")) return null;
-  if (normalizeCep(cep) === "") return null;
+  if (normalizeCep(cep) === "") return pulou("CEP de destino inv\xE1lido");
   try {
     const row = await exec.one(
       "SELECT enabled FROM integrations WHERE id = 'correios' AND enabled = 1"
     );
-    if (!row) return null;
+    if (!row) return pulou("integra\xE7\xE3o desligada em Painel \u2192 Integra\xE7\xF5es");
     const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
     const { credsFrom: credsFrom2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
     const creds = credsFrom2(await integrationSecrets2("correios", exec));
-    if (creds.user === "" || creds.accessCode === "" || (creds.originCep ?? "").length !== 8) {
-      return null;
+    if (creds.user === "" || creds.accessCode === "") {
+      return pulou("usu\xE1rio ou c\xF3digo de acesso n\xE3o cadastrados");
+    }
+    if ((creds.originCep ?? "").length !== 8) {
+      return pulou("CEP de origem n\xE3o configurado no painel");
     }
     const cotacoes = await cotarTodos2(creds, cep, pesoGramas);
     const melhor = cotacoes.find((c) => c.erro === "" && c.preco > 0);
-    if (!melhor) return null;
+    if (!melhor) {
+      const erros = cotacoes.map((c) => `${c.nome}: ${c.erro || "sem pre\xE7o"}`).join(" \xB7 ");
+      return pulou(`nenhum servi\xE7o cotou (${erros})`);
+    }
     const prazo = melhor.prazoDias > 0 ? ` \u2014 at\xE9 ${melhor.prazoDias} dias \xFAteis` : "";
     return { cost: round2(melhor.preco), label: `${melhor.nome}${prazo}` };
-  } catch {
-    return null;
+  } catch (e) {
+    return pulou(e instanceof Error ? e.message : String(e));
   }
 }
 __name(cotarNosCorreios, "cotarNosCorreios");
