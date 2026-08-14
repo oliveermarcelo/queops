@@ -177,6 +177,11 @@ CREATE TABLE IF NOT EXISTS orders (
   ship_city       VARCHAR(120)  NOT NULL DEFAULT '',
   ship_state      CHAR(2)       NOT NULL DEFAULT 'SP',
   delivery_eta    DATE          NULL,
+  -- Rastreio dos Correios: código do objeto (AA123456789BR) e o último status
+  -- consultado, guardado para a conta do cliente não bater na API a cada visita.
+  tracking_code   VARCHAR(40)   NOT NULL DEFAULT '',
+  tracking_status VARCHAR(190)  NOT NULL DEFAULT '',
+  tracking_at     DATETIME      NULL,
   created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),

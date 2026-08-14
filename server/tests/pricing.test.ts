@@ -15,7 +15,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { round2 } from '../src/http.ts';
-import { calculateShipping, deliveryDaysFor, normalizeCep, ufFromCep } from '../src/pricing.ts';
+import {
+  calculateShipping,
+  deliveryDaysFor,
+  normalizeCep,
+  pesoEmGramas,
+  ufFromCep,
+} from '../src/pricing.ts';
 import type { ShippingConfig } from '../src/store.ts';
 
 test('CEP → UF', () => {
@@ -132,4 +138,40 @@ test('arredondamento igual ao do PHP', () => {
   assert.equal(round2(19.899999999999999), 19.9);
   // 5% de Pix sobre 249,90
   assert.equal(round2(249.9 * 0.05), 12.5);
+});
+
+/**
+ * Peso do produto — campo de texto livre.
+ *
+ * `products.weight` é VARCHAR: quem cadastra escreve "1,2 kg", "800g" ou
+ * deixa vazio. O peso vira preço de frete nos Correios, então cada forma de
+ * escrever precisa cair no número certo.
+ *
+ * O caso que motivou o teste: "1.5 kg" era lido como 15 kg, porque o ponto
+ * decimal estava sendo removido como se fosse separador de milhar. O frete
+ * saía dez vezes maior.
+ */
+test('peso do produto em gramas', () => {
+  // Com unidade explícita
+  assert.equal(pesoEmGramas('1,2 kg'), 1200);
+  assert.equal(pesoEmGramas('1.5 kg'), 1500);
+  assert.equal(pesoEmGramas('2kg'), 2000);
+  assert.equal(pesoEmGramas('800g'), 800);
+  assert.equal(pesoEmGramas('250 gramas'), 250);
+  assert.equal(pesoEmGramas('3 quilos'), 3000);
+
+  // Ponto como separador de milhar (3 dígitos depois) vs. decimal
+  assert.equal(pesoEmGramas('1.200 g'), 1200);
+  assert.equal(pesoEmGramas('2.5kg'), 2500);
+
+  // Sem unidade: número pequeno é kg, grande é grama
+  assert.equal(pesoEmGramas('0.5'), 500);
+  assert.equal(pesoEmGramas('0,3'), 300);
+  assert.equal(pesoEmGramas('1500'), 1500);
+
+  // Sem valor utilizável, cai no padrão
+  assert.equal(pesoEmGramas(''), 500);
+  assert.equal(pesoEmGramas('abc'), 500);
+  assert.equal(pesoEmGramas('0'), 500);
+  assert.equal(pesoEmGramas('a definir', 800), 800);
 });

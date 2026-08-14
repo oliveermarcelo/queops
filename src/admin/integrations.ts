@@ -86,12 +86,25 @@ export const PROVIDERS: ProviderMeta[] = [
     id: 'correios',
     name: 'Correios',
     category: 'logistics',
-    description: 'Cálculo de frete e rastreamento PAC/Sedex.',
-    docsUrl: 'https://www.correios.com.br/atendimento/developers',
+    description: 'Cálculo de frete e rastreamento PAC/Sedex (API CWS, exige contrato).',
+    docsUrl: 'https://cws.correios.com.br/ajuda',
     fields: [
-      { key: 'user', label: 'Usuário (contrato)' },
-      { key: 'password', label: 'Senha / Token', type: 'password' },
+      { key: 'user', label: 'Usuário (Meu Correios)' },
+      {
+        key: 'accessCode',
+        label: 'Código de acesso à API',
+        type: 'password',
+        // Não é a senha do portal: gera-se em Meu Correios → Gerenciar acesso à API.
+        placeholder: 'Meu Correios → Gerenciar acesso à API',
+      },
+      { key: 'postingCard', label: 'Cartão de postagem', placeholder: 'Somente números' },
       { key: 'contract', label: 'Código do contrato', placeholder: 'Opcional' },
+      {
+        key: 'services',
+        label: 'Serviços a cotar',
+        placeholder: '03298,03220 (PAC, Sedex)',
+      },
+      { key: 'originCep', label: 'CEP de origem', placeholder: 'De onde as encomendas saem' },
     ],
   },
   {

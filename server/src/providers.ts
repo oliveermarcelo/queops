@@ -26,7 +26,7 @@ export const PROVIDERS_META: Record<string, { fields: string[] }> = {
   pagseguro: { fields: ['email', 'token'] },
   stripe: { fields: ['publishableKey', 'secretKey'] },
   pagarme: { fields: ['apiKey', 'encryptionKey'] },
-  correios: { fields: ['user', 'password'] },
+  correios: { fields: ['user', 'accessCode', 'postingCard'] },
   melhorenvio: { fields: ['token'] },
   frenet: { fields: ['token'] },
   uno: { fields: ['token', 'company'] },
@@ -265,6 +265,19 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
         Authorization: 'Bearer ' + str(f, 'token'),
       });
       return { ok: r.ok, message: r.ok ? 'ERP respondeu OK.' : `Falha (HTTP ${r.status}). ${r.error}` };
+
+    case 'correios': {
+      const { credsFrom, autenticar } = await import('./correios.ts');
+      const creds = credsFrom(f as Record<string, unknown>);
+      const { erro } = await autenticar(creds);
+      if (erro) return { ok: false, message: erro };
+      // Autenticou, mas sem CEP de origem nenhuma cotação sai — melhor avisar
+      // agora do que o cliente descobrir no checkout.
+      if ((creds.originCep ?? '').length !== 8) {
+        return { ok: true, message: 'Correios conectados. Falta o CEP de origem para cotar frete.' };
+      }
+      return { ok: true, message: 'Correios conectados (API CWS).' };
+    }
 
     default:
       // Provedores sem endpoint público de verificação barato.

@@ -6,6 +6,13 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -23,69 +30,40 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// server/src/app.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = __toESM(require("node:path"), 1);
-var import_compression = __toESM(require("compression"), 1);
-var import_express5 = __toESM(require("express"), 1);
-
-// server/src/auth.ts
-var import_node_crypto2 = require("node:crypto");
-var import_bcryptjs = __toESM(require("bcryptjs"), 1);
-
-// server/src/crypto.ts
-var import_node_crypto = require("node:crypto");
-
 // server/src/env.ts
-var import_node_fs = require("node:fs");
-var import_node_path = __toESM(require("node:path"), 1);
-var candidatos = [
-  import_node_path.default.resolve(process.cwd(), ".env"),
-  // Quando o app roda de uma subpasta (ex.: .build/app.js chamado da raiz).
-  import_node_path.default.resolve(process.cwd(), "..", ".env")
-];
-for (const arquivo of candidatos) {
-  if (!(0, import_node_fs.existsSync)(arquivo)) continue;
-  try {
-    process.loadEnvFile(arquivo);
-    break;
-  } catch (e) {
-    console.error(`[queops] n\xE3o consegui ler ${arquivo}:`, e instanceof Error ? e.message : e);
+var import_node_fs, import_node_path, candidatos;
+var init_env = __esm({
+  "server/src/env.ts"() {
+    "use strict";
+    import_node_fs = require("node:fs");
+    import_node_path = __toESM(require("node:path"), 1);
+    candidatos = [
+      import_node_path.default.resolve(process.cwd(), ".env"),
+      // Quando o app roda de uma subpasta (ex.: .build/app.js chamado da raiz).
+      import_node_path.default.resolve(process.cwd(), "..", ".env")
+    ];
+    for (const arquivo of candidatos) {
+      if (!(0, import_node_fs.existsSync)(arquivo)) continue;
+      try {
+        process.loadEnvFile(arquivo);
+        break;
+      } catch (e) {
+        console.error(`[queops] n\xE3o consegui ler ${arquivo}:`, e instanceof Error ? e.message : e);
+      }
+    }
   }
-}
+});
 
 // server/src/config.ts
 function env(name, fallback = "") {
   const v = process.env[name];
   return v === void 0 || v === "" ? fallback : v;
 }
-__name(env, "env");
 function envBool(name, fallback) {
   const v = process.env[name];
   if (v === void 0 || v === "") return fallback;
   return ["1", "true", "yes", "on"].includes(v.toLowerCase());
 }
-__name(envBool, "envBool");
-var config = {
-  env: env("APP_ENV", "production") === "development" ? "development" : "production",
-  get isProd() {
-    return this.env === "production";
-  },
-  port: Number(env("PORT", "3000")) || 3e3,
-  host: env("HOST", "0.0.0.0"),
-  db: {
-    host: env("DB_HOST", "localhost"),
-    port: Number(env("DB_PORT", "3306")) || 3306,
-    database: env("DB_NAME"),
-    user: env("DB_USER"),
-    password: env("DB_PASS")
-  },
-  appKey: env("APP_KEY"),
-  appUrl: env("APP_URL", "https://queopspiramides.com.br"),
-  secureCookies: envBool("SECURE_COOKIES", true),
-  publicDir: env("PUBLIC_DIR", "public"),
-  trustProxy: envBool("TRUST_PROXY", true)
-};
 function configProblems() {
   const p = [];
   if (!config.db.database) p.push("DB_NAME n\xE3o definido.");
@@ -99,31 +77,64 @@ function configProblems() {
   }
   return p;
 }
-__name(configProblems, "configProblems");
+var config;
+var init_config = __esm({
+  "server/src/config.ts"() {
+    "use strict";
+    init_env();
+    __name(env, "env");
+    __name(envBool, "envBool");
+    config = {
+      env: env("APP_ENV", "production") === "development" ? "development" : "production",
+      get isProd() {
+        return this.env === "production";
+      },
+      port: Number(env("PORT", "3000")) || 3e3,
+      host: env("HOST", "0.0.0.0"),
+      db: {
+        host: env("DB_HOST", "localhost"),
+        port: Number(env("DB_PORT", "3306")) || 3306,
+        database: env("DB_NAME"),
+        user: env("DB_USER"),
+        password: env("DB_PASS")
+      },
+      appKey: env("APP_KEY"),
+      appUrl: env("APP_URL", "https://queopspiramides.com.br"),
+      secureCookies: envBool("SECURE_COOKIES", true),
+      publicDir: env("PUBLIC_DIR", "public"),
+      trustProxy: envBool("TRUST_PROXY", true)
+    };
+    __name(configProblems, "configProblems");
+  }
+});
 
 // server/src/errors.ts
-var ApiError = class extends Error {
-  static {
-    __name(this, "ApiError");
-  }
-  status;
-  code;
-  constructor(message, status = 400, code = "bad_request", cause) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-    if (cause !== void 0) this.cause = cause;
-  }
-};
 function fail(message, status = 400, code = "bad_request", cause) {
   throw new ApiError(message, status, code, cause);
 }
-__name(fail, "fail");
+var ApiError;
+var init_errors = __esm({
+  "server/src/errors.ts"() {
+    "use strict";
+    ApiError = class extends Error {
+      static {
+        __name(this, "ApiError");
+      }
+      status;
+      code;
+      constructor(message, status = 400, code = "bad_request", cause) {
+        super(message);
+        this.name = "ApiError";
+        this.status = status;
+        this.code = code;
+        if (cause !== void 0) this.cause = cause;
+      }
+    };
+    __name(fail, "fail");
+  }
+});
 
 // server/src/crypto.ts
-var CIPHER = "aes-256-gcm";
-var cached = null;
 function appKey() {
   if (cached) return cached;
   if (!config.appKey) {
@@ -139,7 +150,6 @@ function appKey() {
   }
   return cached = key;
 }
-__name(appKey, "appKey");
 function encryptPayload(data) {
   const iv = (0, import_node_crypto.randomBytes)(12);
   const c = (0, import_node_crypto.createCipheriv)(CIPHER, appKey(), iv);
@@ -147,7 +157,6 @@ function encryptPayload(data) {
   const tag = c.getAuthTag();
   return `v1.${iv.toString("base64")}.${tag.toString("base64")}.${body2.toString("base64")}`;
 }
-__name(encryptPayload, "encryptPayload");
 function decryptPayload(blob) {
   if (typeof blob !== "string" || blob === "") return {};
   const parts = blob.split(".");
@@ -167,18 +176,29 @@ function decryptPayload(blob) {
     return {};
   }
 }
-__name(decryptPayload, "decryptPayload");
 function safeEqual(a, b) {
   const ba = Buffer.from(a, "utf8");
   const bb = Buffer.from(b, "utf8");
   if (ba.length !== bb.length || ba.length === 0) return false;
   return (0, import_node_crypto.timingSafeEqual)(ba, bb);
 }
-__name(safeEqual, "safeEqual");
+var import_node_crypto, CIPHER, cached;
+var init_crypto = __esm({
+  "server/src/crypto.ts"() {
+    "use strict";
+    import_node_crypto = require("node:crypto");
+    init_config();
+    init_errors();
+    CIPHER = "aes-256-gcm";
+    cached = null;
+    __name(appKey, "appKey");
+    __name(encryptPayload, "encryptPayload");
+    __name(decryptPayload, "decryptPayload");
+    __name(safeEqual, "safeEqual");
+  }
+});
 
 // server/src/db.ts
-var import_promise = __toESM(require("mysql2/promise"), 1);
-var pool = null;
 function getPool() {
   if (pool) return pool;
   pool = import_promise.default.createPool({
@@ -202,7 +222,6 @@ function getPool() {
   });
   return pool;
 }
-__name(getPool, "getPool");
 async function closePool() {
   if (pool) {
     const p = pool;
@@ -210,7 +229,6 @@ async function closePool() {
     await p.end();
   }
 }
-__name(closePool, "closePool");
 function rethrow(e) {
   const err = e;
   const conexao = [
@@ -229,7 +247,6 @@ function rethrow(e) {
   }
   throw e;
 }
-__name(rethrow, "rethrow");
 function wrap(exec, lastIdRef) {
   return {
     async all(sql, params = []) {
@@ -259,12 +276,6 @@ function wrap(exec, lastIdRef) {
     }
   };
 }
-__name(wrap, "wrap");
-var poolRef = { value: 0 };
-var q = wrap(
-  (sql, params) => getPool().execute(sql, params),
-  poolRef
-);
 async function transaction(fn) {
   let conn;
   try {
@@ -289,7 +300,6 @@ async function transaction(fn) {
     conn.release();
   }
 }
-__name(transaction, "transaction");
 async function nextCounter(exec, name) {
   await exec.run(
     `INSERT INTO counters (name, value) VALUES (?, 1)
@@ -299,19 +309,37 @@ async function nextCounter(exec, name) {
   const row = await exec.one("SELECT value FROM counters WHERE name = ?", [name]);
   return Number(row?.value ?? 1);
 }
-__name(nextCounter, "nextCounter");
 function placeholders(n) {
   return new Array(n).fill("?").join(",");
 }
-__name(placeholders, "placeholders");
+var import_promise, pool, poolRef, q;
+var init_db = __esm({
+  "server/src/db.ts"() {
+    "use strict";
+    import_promise = __toESM(require("mysql2/promise"), 1);
+    init_config();
+    init_errors();
+    pool = null;
+    __name(getPool, "getPool");
+    __name(closePool, "closePool");
+    __name(rethrow, "rethrow");
+    __name(wrap, "wrap");
+    poolRef = { value: 0 };
+    q = wrap(
+      (sql, params) => getPool().execute(sql, params),
+      poolRef
+    );
+    __name(transaction, "transaction");
+    __name(nextCounter, "nextCounter");
+    __name(placeholders, "placeholders");
+  }
+});
 
 // server/src/http.ts
-var import_node_net = require("node:net");
 function body(req) {
   const b = req.body;
   return b !== null && typeof b === "object" && !Array.isArray(b) ? b : {};
 }
-__name(body, "body");
 function jsonOk(res, data, status = 200) {
   res.status(status);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -319,26 +347,22 @@ function jsonOk(res, data, status = 200) {
   res.setHeader("Cache-Control", "no-store");
   res.send(JSON.stringify(data));
 }
-__name(jsonOk, "jsonOk");
 function bodyStr(b, key, def = "", max = 500) {
   const v = b?.[key];
   if (v === void 0 || v === null) return def;
   if (typeof v === "object") return def;
   return String(v).trim().slice(0, max);
 }
-__name(bodyStr, "bodyStr");
 function bodyFloat(b, key, def = 0) {
   const v = b?.[key];
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
   return def;
 }
-__name(bodyFloat, "bodyFloat");
 function bodyInt(b, key, def = 0) {
   const v = bodyFloat(b, key, Number.NaN);
   return Number.isFinite(v) ? Math.trunc(v) : def;
 }
-__name(bodyInt, "bodyInt");
 function bodyBool(b, key, def = false) {
   if (!b || !Object.prototype.hasOwnProperty.call(b, key)) return def;
   const v = b[key];
@@ -351,17 +375,14 @@ function bodyBool(b, key, def = false) {
   }
   return def;
 }
-__name(bodyBool, "bodyBool");
 function queryStr(req, key, def = "", max = 200) {
   const v = req.query?.[key];
   if (typeof v !== "string") return def;
   return v.trim().slice(0, max);
 }
-__name(queryStr, "queryStr");
 function round2(value) {
   return roundTo(value, 2);
 }
-__name(round2, "round2");
 function roundTo(value, places) {
   if (!Number.isFinite(value)) return 0;
   const f = 10 ** places;
@@ -369,12 +390,10 @@ function roundTo(value, places) {
   const rounded = Math.sign(scaled) * Math.round(Math.abs(scaled));
   return rounded / f;
 }
-__name(roundTo, "roundTo");
 function brl(value) {
   const [inteiro, centavos] = round2(value).toFixed(2).split(".");
   return `${inteiro.replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${centavos}`;
 }
-__name(brl, "brl");
 function iso(value) {
   if (!value) return null;
   const s = String(value);
@@ -382,17 +401,14 @@ function iso(value) {
   if (!m) return s;
   return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}-03:00`;
 }
-__name(iso, "iso");
 function dateSP(plusDays) {
   const now = new Date(Date.now() + plusDays * 864e5 - 3 * 36e5);
   return now.toISOString().slice(0, 10);
 }
-__name(dateSP, "dateSP");
 function dateBR(plusDays) {
   const [y, m, d] = dateSP(plusDays).split("-");
   return `${d}/${m}/${y}`;
 }
-__name(dateBR, "dateBR");
 function clientIpBinary(req) {
   const ip = (req.ip ?? "").replace(/^::ffff:/i, "");
   if ((0, import_node_net.isIP)(ip) === 4) {
@@ -405,7 +421,6 @@ function clientIpBinary(req) {
   }
   return null;
 }
-__name(clientIpBinary, "clientIpBinary");
 function ipv6ToBuffer(ip) {
   const [head, tail] = ip.split("::");
   const toWords = /* @__PURE__ */ __name((s) => s === "" || s === void 0 ? [] : s.split(":").map((h2) => parseInt(h2, 16)), "toWords");
@@ -419,12 +434,9 @@ function ipv6ToBuffer(ip) {
   words.forEach((w, i) => buf.writeUInt16BE(w, i * 2));
   return buf;
 }
-__name(ipv6ToBuffer, "ipv6ToBuffer");
-var EMAIL_RE = /^[^\s@,;:<>()[\]\\"]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
 function validEmail(value) {
   return value.length <= 254 && EMAIL_RE.test(value);
 }
-__name(validEmail, "validEmail");
 function validCpf(value) {
   const cpf = value.replace(/\D/g, "");
   if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
@@ -437,13 +449,761 @@ function validCpf(value) {
   }
   return true;
 }
-__name(validCpf, "validCpf");
 function digits(value) {
   return value.replace(/\D/g, "");
 }
-__name(digits, "digits");
+var import_node_net, EMAIL_RE;
+var init_http = __esm({
+  "server/src/http.ts"() {
+    "use strict";
+    import_node_net = require("node:net");
+    __name(body, "body");
+    __name(jsonOk, "jsonOk");
+    __name(bodyStr, "bodyStr");
+    __name(bodyFloat, "bodyFloat");
+    __name(bodyInt, "bodyInt");
+    __name(bodyBool, "bodyBool");
+    __name(queryStr, "queryStr");
+    __name(round2, "round2");
+    __name(roundTo, "roundTo");
+    __name(brl, "brl");
+    __name(iso, "iso");
+    __name(dateSP, "dateSP");
+    __name(dateBR, "dateBR");
+    __name(clientIpBinary, "clientIpBinary");
+    __name(ipv6ToBuffer, "ipv6ToBuffer");
+    EMAIL_RE = /^[^\s@,;:<>()[\]\\"]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+    __name(validEmail, "validEmail");
+    __name(validCpf, "validCpf");
+    __name(digits, "digits");
+  }
+});
+
+// server/src/store.ts
+var store_exports = {};
+__export(store_exports, {
+  DEFAULT_RECOVERY: () => DEFAULT_RECOVERY,
+  DEFAULT_SETTINGS: () => DEFAULT_SETTINGS,
+  DEFAULT_SHIPPING: () => DEFAULT_SHIPPING,
+  INTEGRATION_IDS: () => INTEGRATION_IDS,
+  INTEGRATION_SECRET_FIELDS: () => INTEGRATION_SECRET_FIELDS,
+  configGet: () => configGet,
+  configMerge: () => configMerge,
+  configSet: () => configSet,
+  fetchIntegrations: () => fetchIntegrations,
+  fetchOrders: () => fetchOrders,
+  fetchProducts: () => fetchProducts,
+  getRecovery: () => getRecovery,
+  getSettings: () => getSettings,
+  getShipping: () => getShipping,
+  integrationSecrets: () => integrationSecrets,
+  integrationToApi: () => integrationToApi,
+  orderRowToApi: () => orderRowToApi,
+  productRowToApi: () => productRowToApi,
+  publicSettings: () => publicSettings
+});
+function isPlainObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+function configMerge(def, saved) {
+  const out = { ...def };
+  for (const [key, value] of Object.entries(saved ?? {})) {
+    if (isPlainObject(value) && isPlainObject(def[key])) {
+      out[key] = key === "perState" ? value : configMerge(def[key], value);
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+async function configGet(key, def, exec = q) {
+  const row = await exec.one("SELECT config_val FROM store_config WHERE config_key = ?", [key]);
+  if (row === null) return def;
+  try {
+    const decoded = JSON.parse(String(row.config_val));
+    if (!isPlainObject(decoded)) return def;
+    return configMerge(def, decoded);
+  } catch {
+    return def;
+  }
+}
+async function configSet(key, value, exec = q) {
+  await exec.run(
+    `INSERT INTO store_config (config_key, config_val) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE config_val = VALUES(config_val)`,
+    [key, JSON.stringify(value)]
+  );
+}
+async function publicSettings(exec = q) {
+  const s = await getSettings(exec);
+  const sh = await getShipping(exec);
+  const free = sh.freeShipping ?? {};
+  return {
+    name: s.name,
+    email: s.email,
+    phone: s.phone,
+    whatsapp: s.whatsapp,
+    pixDiscountPct: Number(s.pixDiscountPct) || 0,
+    payments: s.payments,
+    // 0 = não há frete grátis por valor.
+    freeShippingFrom: free.enabled ? Number(free.minOrder ?? 0) || 0 : 0,
+    // Estimativa exibida antes de o cliente informar o CEP.
+    shippingFrom: Number(sh.defaultPrice ?? 0) || 0
+  };
+}
+function productRowToApi(r) {
+  const out = {
+    id: r.id,
+    sku: r.sku,
+    name: r.name,
+    category: r.category,
+    categoryLabel: r.category_label,
+    description: String(r.description ?? ""),
+    price: Number(r.price) || 0,
+    stock: Number(r.stock) || 0,
+    image: r.image,
+    weight: String(r.weight ?? ""),
+    active: Boolean(r.active)
+  };
+  if (r.subcategory) out.subcategory = r.subcategory;
+  if (r.long_description) out.longDescription = r.long_description;
+  if (r.old_price !== null && r.old_price !== void 0) out.oldPrice = Number(r.old_price);
+  if (r.tag) out.tag = r.tag;
+  if (r.ingredients) out.ingredients = r.ingredients;
+  if (r.highlight) out.highlight = true;
+  return out;
+}
+async function fetchProducts(onlyActive = true, exec = q) {
+  const sql = `SELECT * FROM products${onlyActive ? " WHERE active = 1" : ""} ORDER BY position ASC, name ASC`;
+  return (await exec.all(sql)).map(productRowToApi);
+}
+function orderRowToApi(r, items) {
+  return {
+    id: r.id,
+    createdAt: iso(r.created_at),
+    customerName: r.customer_name,
+    customerEmail: r.customer_email,
+    customerPhone: r.customer_phone,
+    items: items.map((i) => ({
+      productId: i.product_id,
+      name: i.name,
+      quantity: Number(i.quantity) || 0,
+      unitPrice: Number(i.unit_price) || 0
+    })),
+    subtotal: Number(r.subtotal) || 0,
+    shipping: Number(r.shipping_cost) || 0,
+    discount: Number(r.discount) || 0,
+    total: Number(r.total) || 0,
+    couponCode: r.coupon_code,
+    status: r.status,
+    payment: r.payment,
+    channel: r.channel
+  };
+}
+async function fetchOrders(limit = 500, exec = q) {
+  const cap = Math.max(1, Math.min(Math.trunc(limit) || 500, 2e3));
+  const orders = await exec.all(`SELECT * FROM orders ORDER BY created_at DESC LIMIT ${cap}`);
+  if (orders.length === 0) return [];
+  const ids = orders.map((o) => o.id);
+  const rows = await exec.all(
+    `SELECT * FROM order_items WHERE order_id IN (${placeholders(ids.length)}) ORDER BY id ASC`,
+    ids
+  );
+  const byOrder = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const key = String(row.order_id);
+    const list = byOrder.get(key);
+    if (list) list.push(row);
+    else byOrder.set(key, [row]);
+  }
+  return orders.map((o) => orderRowToApi(o, byOrder.get(String(o.id)) ?? []));
+}
+function integrationToApi(row) {
+  const fields = decryptPayload(row.fields_enc);
+  const safe = {};
+  const configured = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === "" || v === null || v === void 0) continue;
+    configured.push(k);
+    safe[k] = INTEGRATION_SECRET_FIELDS.includes(k) ? "" : String(v);
+  }
+  return {
+    id: row.id,
+    enabled: Boolean(row.enabled),
+    fields: safe,
+    configured,
+    lastStatus: row.last_status || "unknown",
+    lastCheckedAt: iso(row.last_checked_at)
+  };
+}
+async function fetchIntegrations(exec = q) {
+  const rows = await exec.all("SELECT * FROM integrations");
+  const byId = {};
+  for (const r of rows) byId[String(r.id)] = integrationToApi(r);
+  for (const id of INTEGRATION_IDS) {
+    byId[id] ??= {
+      id,
+      enabled: false,
+      fields: {},
+      configured: [],
+      lastStatus: "unknown",
+      lastCheckedAt: null
+    };
+  }
+  return byId;
+}
+async function integrationSecrets(id, exec = q) {
+  const row = await exec.one("SELECT fields_enc FROM integrations WHERE id = ?", [id]);
+  return row ? decryptPayload(row.fields_enc) : {};
+}
+var DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_RECOVERY, INTEGRATION_IDS, INTEGRATION_SECRET_FIELDS, getSettings, getShipping, getRecovery;
+var init_store = __esm({
+  "server/src/store.ts"() {
+    "use strict";
+    init_crypto();
+    init_db();
+    init_http();
+    DEFAULT_SETTINGS = {
+      name: "Qu\xE9ops Pir\xE2mides",
+      email: "contato@queopspiramides.com.br",
+      phone: "(11) 0000-0000",
+      whatsapp: "5511000000000",
+      pixDiscountPct: 5,
+      payments: { card: true, pix: true, boleto: true }
+    };
+    DEFAULT_SHIPPING = {
+      defaultPrice: 24.9,
+      perState: {
+        SP: 14.9,
+        RJ: 19.9,
+        MG: 19.9,
+        ES: 22.9,
+        PR: 24.9,
+        SC: 24.9,
+        RS: 27.9,
+        DF: 22.9
+      },
+      cepRanges: [
+        { id: "cr1", from: "01000000", to: "05999999", price: 9.9, label: "Capital SP" }
+      ],
+      // `states` lista UFs com frete grátis INCONDICIONAL (qualquer valor). Fica
+      // vazio por padrão: com 'SP' aqui, o mínimo de R$ 199 e a faixa de CEP da
+      // capital nunca seriam aplicados — todo pedido paulista sairia com frete 0.
+      freeShipping: { enabled: true, minOrder: 199, states: [] }
+    };
+    DEFAULT_RECOVERY = {
+      enabled: true,
+      delayMinutes: 60,
+      message: "Ol\xE1 {nome}! \u{1F44B} Voc\xEA esqueceu alguns itens na sua sacola da Qu\xE9ops Pir\xE2mides (total {valor}). Use o cupom {cupom} e finalize com desconto: ",
+      couponCode: "VOLTA10"
+    };
+    INTEGRATION_IDS = [
+      "uno",
+      "erp",
+      "zapi",
+      "evolution",
+      "chatwoot",
+      "chatvolt",
+      "mercadopago",
+      "pagseguro",
+      "stripe",
+      "pagarme",
+      "correios",
+      "melhorenvio",
+      "frenet"
+    ];
+    INTEGRATION_SECRET_FIELDS = [
+      "accessToken",
+      "secretKey",
+      "apiKey",
+      "apiToken",
+      "token",
+      "clientToken",
+      "password",
+      "encryptionKey"
+    ];
+    __name(isPlainObject, "isPlainObject");
+    __name(configMerge, "configMerge");
+    __name(configGet, "configGet");
+    __name(configSet, "configSet");
+    getSettings = /* @__PURE__ */ __name((exec = q) => configGet("settings", DEFAULT_SETTINGS, exec), "getSettings");
+    getShipping = /* @__PURE__ */ __name((exec = q) => configGet("shipping", DEFAULT_SHIPPING, exec), "getShipping");
+    getRecovery = /* @__PURE__ */ __name((exec = q) => configGet("recovery", DEFAULT_RECOVERY, exec), "getRecovery");
+    __name(publicSettings, "publicSettings");
+    __name(productRowToApi, "productRowToApi");
+    __name(fetchProducts, "fetchProducts");
+    __name(orderRowToApi, "orderRowToApi");
+    __name(fetchOrders, "fetchOrders");
+    __name(integrationToApi, "integrationToApi");
+    __name(fetchIntegrations, "fetchIntegrations");
+    __name(integrationSecrets, "integrationSecrets");
+  }
+});
+
+// server/src/correios.ts
+var correios_exports = {};
+__export(correios_exports, {
+  SERVICO_PAC: () => SERVICO_PAC,
+  SERVICO_SEDEX: () => SERVICO_SEDEX,
+  autenticar: () => autenticar,
+  cotar: () => cotar,
+  cotarTodos: () => cotarTodos,
+  credsFrom: () => credsFrom,
+  esquecerToken: () => esquecerToken,
+  nomeDoServico: () => nomeDoServico,
+  rastrear: () => rastrear,
+  servicesOf: () => servicesOf
+});
+function nomeDoServico(codigo) {
+  return NOMES[codigo] ?? `Correios ${codigo}`;
+}
+function credsFrom(f) {
+  const s = /* @__PURE__ */ __name((k) => String(f[k] ?? "").trim(), "s");
+  return {
+    user: s("user"),
+    accessCode: s("accessCode"),
+    postingCard: s("postingCard").replace(/\D/g, ""),
+    contract: s("contract"),
+    services: s("services"),
+    originCep: s("originCep").replace(/\D/g, "")
+  };
+}
+function servicesOf(c) {
+  const lista = (c.services ?? "").split(/[,;\s]+/).map((x) => x.replace(/\D/g, "")).filter((x) => x.length > 0);
+  return lista.length > 0 ? lista : [SERVICO_PAC, SERVICO_SEDEX];
+}
+async function autenticar(c) {
+  const chave = `${c.user}:${c.postingCard}`;
+  const agora = Date.now();
+  const salvo = cache.get(chave);
+  if (salvo && salvo.expiraEm - 5 * 6e4 > agora) {
+    return { token: salvo.token, erro: "" };
+  }
+  const basic = Buffer.from(`${c.user}:${c.accessCode}`).toString("base64");
+  const r = await httpCall(
+    "POST",
+    `${BASE}/token/v1/autentica/cartaopostagem`,
+    { Authorization: "Basic " + basic },
+    { numero: c.postingCard }
+  );
+  if (!r.ok) return { token: "", erro: explicar(r) };
+  let dados;
+  try {
+    dados = JSON.parse(r.body);
+  } catch {
+    return { token: "", erro: "Resposta inesperada dos Correios ao autenticar." };
+  }
+  if (!dados.token) return { token: "", erro: "Os Correios n\xE3o devolveram token." };
+  const expira = dados.expiraEm ? Date.parse(dados.expiraEm) : NaN;
+  cache.set(chave, {
+    token: dados.token,
+    expiraEm: Number.isFinite(expira) ? expira : agora + 12 * 36e5
+  });
+  return { token: dados.token, erro: "" };
+}
+function esquecerToken(c) {
+  cache.delete(`${c.user}:${c.postingCard}`);
+}
+function explicar(r) {
+  if (r.status === 401 || r.status === 403) {
+    return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
+  }
+  if (r.status === 400) return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
+  if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
+  return `Correios responderam HTTP ${r.status}.`;
+}
+function moeda(v) {
+  const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+async function cotar(c, servico, cepDestino, pesoGramas, dim = {}) {
+  const vazio = { servico, nome: nomeDoServico(servico), preco: 0, prazoDias: 0, erro: "" };
+  const { token, erro } = await autenticar(c);
+  if (erro) return { ...vazio, erro };
+  const origem = (c.originCep ?? "").replace(/\D/g, "");
+  const destino = String(cepDestino ?? "").replace(/\D/g, "");
+  if (origem.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
+  if (destino.length !== 8) return { ...vazio, erro: "CEP de destino inv\xE1lido." };
+  const corpo = {
+    idLote: "1",
+    parametrosProduto: [{
+      coProduto: servico,
+      nuRequisicao: "1",
+      cepOrigem: origem,
+      cepDestino: destino,
+      psObjeto: String(Math.max(300, Math.round(pesoGramas))),
+      tpObjeto: "2",
+      // pacote
+      comprimento: String(Math.max(16, dim.comprimento ?? 16)),
+      altura: String(Math.max(2, dim.altura ?? 5)),
+      largura: String(Math.max(11, dim.largura ?? 11)),
+      servicosAdicionais: [""]
+    }]
+  };
+  const auth = { Authorization: "Bearer " + token };
+  const [preco, prazo] = await Promise.all([
+    httpCall("POST", `${BASE}/preco/v1/nacional`, auth, corpo),
+    httpCall("POST", `${BASE}/prazo/v1/nacional`, auth, corpo)
+  ]);
+  if (preco.status === 401) {
+    esquecerToken(c);
+    return { ...vazio, erro: "Token expirado; tente de novo." };
+  }
+  if (!preco.ok) return { ...vazio, erro: explicar(preco) };
+  try {
+    const p = JSON.parse(preco.body);
+    const item = Array.isArray(p) ? p[0] : null;
+    if (!item) return { ...vazio, erro: "Correios n\xE3o devolveram pre\xE7o." };
+    if (item.txErro) return { ...vazio, erro: String(item.txErro) };
+    let dias = 0;
+    if (prazo.ok) {
+      const q2 = JSON.parse(prazo.body);
+      dias = Number(q2?.[0]?.prazoEntrega ?? 0) || 0;
+    }
+    return {
+      servico,
+      nome: nomeDoServico(servico),
+      preco: moeda(item.pcFinal ?? item.pcBase),
+      prazoDias: dias,
+      erro: ""
+    };
+  } catch {
+    return { ...vazio, erro: "Resposta inesperada dos Correios ao cotar." };
+  }
+}
+async function cotarTodos(c, cepDestino, pesoGramas, dim) {
+  const servicos = servicesOf(c);
+  const todas = await Promise.all(servicos.map((s) => cotar(c, s, cepDestino, pesoGramas, dim)));
+  const boas = todas.filter((x) => x.erro === "" && x.preco > 0);
+  return boas.length > 0 ? boas.sort((a, b) => a.preco - b.preco) : todas;
+}
+async function rastrear(c, codigo) {
+  const { token, erro } = await autenticar(c);
+  if (erro) return { eventos: [], erro };
+  const limpo = String(codigo ?? "").trim().toUpperCase().replace(/\s/g, "");
+  if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(limpo)) {
+    return { eventos: [], erro: "C\xF3digo de rastreio inv\xE1lido (formato AA123456789BR)." };
+  }
+  const r = await httpCall(
+    "GET",
+    `${BASE}/srorastro/v1/objetos/${limpo}?resultado=T`,
+    { Authorization: "Bearer " + token }
+  );
+  if (r.status === 401) {
+    esquecerToken(c);
+    return { eventos: [], erro: "Token expirado; tente de novo." };
+  }
+  if (!r.ok) return { eventos: [], erro: explicar(r) };
+  try {
+    const dados = JSON.parse(r.body);
+    const obj = dados.objetos?.[0];
+    if (!obj) return { eventos: [], erro: "Objeto n\xE3o encontrado." };
+    if (obj.mensagem) return { eventos: [], erro: String(obj.mensagem) };
+    const brutos = obj.eventos ?? [];
+    const eventos = brutos.map((e) => {
+      const u = e.unidade ?? {};
+      const end = u.endereco ?? {};
+      const cidade = String(end.cidade ?? "");
+      const uf = String(end.uf ?? "");
+      return {
+        data: String(e.dtHrCriado ?? ""),
+        descricao: String(e.descricao ?? ""),
+        local: cidade && uf ? `${cidade}/${uf}` : String(u.tipo ?? "")
+      };
+    });
+    return { eventos, erro: "" };
+  } catch {
+    return { eventos: [], erro: "Resposta inesperada dos Correios ao rastrear." };
+  }
+}
+var BASE, SERVICO_PAC, SERVICO_SEDEX, NOMES, cache;
+var init_correios = __esm({
+  "server/src/correios.ts"() {
+    "use strict";
+    init_providers();
+    BASE = "https://api.correios.com.br";
+    SERVICO_PAC = "03298";
+    SERVICO_SEDEX = "03220";
+    NOMES = {
+      "03298": "PAC",
+      "03220": "Sedex",
+      "03158": "Sedex 10",
+      "03204": "Sedex Hoje",
+      "04510": "PAC",
+      "04014": "Sedex"
+    };
+    __name(nomeDoServico, "nomeDoServico");
+    __name(credsFrom, "credsFrom");
+    __name(servicesOf, "servicesOf");
+    cache = /* @__PURE__ */ new Map();
+    __name(autenticar, "autenticar");
+    __name(esquecerToken, "esquecerToken");
+    __name(explicar, "explicar");
+    __name(moeda, "moeda");
+    __name(cotar, "cotar");
+    __name(cotarTodos, "cotarTodos");
+    __name(rastrear, "rastrear");
+  }
+});
+
+// server/src/providers.ts
+function isPrivateIp(ip) {
+  const kind = (0, import_node_net2.isIP)(ip);
+  if (kind === 4) return isPrivateIpv4(ip);
+  if (kind === 6) return isPrivateIpv6(ip.toLowerCase());
+  return true;
+}
+function isPrivateIpv4(ip) {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = p;
+  return a === 0 || // 0.0.0.0/8
+  a === 10 || // 10.0.0.0/8
+  a === 127 || // loopback
+  a === 100 && b >= 64 && b <= 127 || // 100.64.0.0/10 (CGNAT)
+  a === 169 && b === 254 || // link-local (metadados de nuvem)
+  a === 172 && b >= 16 && b <= 31 || // 172.16.0.0/12
+  a === 192 && b === 0 || // 192.0.0.0/24 e 192.0.2.0/24
+  a === 192 && b === 168 || // 192.168.0.0/16
+  a === 198 && (b === 18 || b === 19) || // benchmark
+  a === 198 && b === 51 || // documentação
+  a === 203 && b === 0 || // documentação
+  a >= 224;
+}
+function isPrivateIpv6(ip) {
+  if (ip === "::" || ip === "::1") return true;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+  if (mapped) return isPrivateIpv4(mapped[1]);
+  const head = parseInt(ip.split(":")[0] || "0", 16);
+  if (Number.isNaN(head)) return true;
+  if ((head & 65024) === 64512) return true;
+  if ((head & 65472) === 65152) return true;
+  if ((head & 65280) === 65280) return true;
+  return false;
+}
+async function isInternalHost(hostRaw) {
+  const host = String(hostRaw ?? "").replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "" || host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host.endsWith(".internal") || host.endsWith(".local")) return true;
+  if ((0, import_node_net2.isIP)(host)) return isPrivateIp(host);
+  const ips = [];
+  const [v4, v6] = await Promise.all([
+    import_node_dns.promises.resolve4(host).catch(() => []),
+    import_node_dns.promises.resolve6(host).catch(() => [])
+  ]);
+  ips.push(...v4, ...v6);
+  if (ips.length === 0) return true;
+  return ips.some(isPrivateIp);
+}
+async function httpCall(method, url, headers = {}, json = null, timeoutMs = 12e3) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, status: 0, body: "", error: "URL inv\xE1lida (use http ou https)." };
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return { ok: false, status: 0, body: "", error: "URL inv\xE1lida (use http ou https)." };
+  }
+  if (await isInternalHost(parsed.hostname)) {
+    return { ok: false, status: 0, body: "", error: "Endere\xE7o interno ou reservado n\xE3o \xE9 permitido." };
+  }
+  const h2 = { ...headers };
+  if (json !== null) h2["Content-Type"] = "application/json";
+  try {
+    const res = await fetch(parsed, {
+      method,
+      headers: h2,
+      body: json === null ? void 0 : JSON.stringify(json),
+      redirect: "manual",
+      // evita redirect para host interno
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    const body2 = (await res.text()).slice(0, 2e4);
+    return { ok: res.status >= 200 && res.status < 300, status: res.status, body: body2, error: "" };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, status: 0, body: "", error: msg };
+  }
+}
+function trimSlash(s) {
+  return s.replace(/\/+$/, "");
+}
+async function providerTest(id, f) {
+  const meta = PROVIDERS_META[id];
+  if (!meta) return { ok: false, message: "Provedor desconhecido." };
+  const missing = meta.fields.filter((k) => str(f, k).trim() === "");
+  if (missing.length) return { ok: false, message: "Preencha: " + missing.join(", ") };
+  const enc = encodeURIComponent;
+  let r;
+  switch (id) {
+    case "zapi":
+      r = await httpCall(
+        "GET",
+        `https://api.z-api.io/instances/${enc(str(f, "instanceId"))}/token/${enc(str(f, "token"))}/status`,
+        str(f, "clientToken") ? { "Client-Token": str(f, "clientToken") } : {}
+      );
+      return { ok: r.ok, message: r.ok ? "Conex\xE3o Z-API OK." : `Falha (HTTP ${r.status}). ${r.error}` };
+    case "evolution":
+      r = await httpCall(
+        "GET",
+        `${trimSlash(str(f, "baseUrl"))}/instance/connectionState/${enc(str(f, "instance"))}`,
+        { apikey: str(f, "apiKey") }
+      );
+      return { ok: r.ok, message: r.ok ? "Conex\xE3o Evolution OK." : `Falha (HTTP ${r.status}). ${r.error}` };
+    case "chatwoot":
+      r = await httpCall(
+        "GET",
+        `${trimSlash(str(f, "baseUrl"))}/api/v1/accounts/${enc(str(f, "accountId"))}/conversations`,
+        { api_access_token: str(f, "apiToken") }
+      );
+      return { ok: r.ok, message: r.ok ? "Conex\xE3o Chatwoot OK." : `Falha (HTTP ${r.status}). ${r.error}` };
+    case "chatvolt":
+      r = await httpCall("GET", "https://api.chatvolt.ai/agents", {
+        Authorization: "Bearer " + str(f, "apiKey")
+      });
+      return { ok: r.ok, message: r.ok ? "Conex\xE3o Chatvolt OK." : `Falha (HTTP ${r.status}). ${r.error}` };
+    case "mercadopago":
+      r = await httpCall("GET", "https://api.mercadopago.com/users/me", {
+        Authorization: "Bearer " + str(f, "accessToken")
+      });
+      return {
+        ok: r.ok,
+        message: r.ok ? "Mercado Pago conectado." : `Falha (HTTP ${r.status}). Confira o Access Token.`
+      };
+    case "stripe":
+      r = await httpCall("GET", "https://api.stripe.com/v1/account", {
+        Authorization: "Bearer " + str(f, "secretKey")
+      });
+      return {
+        ok: r.ok,
+        message: r.ok ? "Stripe conectado." : `Falha (HTTP ${r.status}). Confira a Secret Key.`
+      };
+    case "pagarme":
+      r = await httpCall("GET", "https://api.pagar.me/core/v5/balance", {
+        Authorization: "Basic " + Buffer.from(str(f, "apiKey") + ":").toString("base64")
+      });
+      return {
+        ok: r.ok,
+        message: r.ok ? "Pagar.me conectado." : `Falha (HTTP ${r.status}). Confira a API Key.`
+      };
+    case "melhorenvio": {
+      const base = str(f, "sandbox") === "sandbox" ? "https://sandbox.melhorenvio.com.br" : "https://melhorenvio.com.br";
+      r = await httpCall("GET", base + "/api/v2/me", {
+        Authorization: "Bearer " + str(f, "token"),
+        Accept: "application/json"
+      });
+      return { ok: r.ok, message: r.ok ? "Melhor Envio conectado." : `Falha (HTTP ${r.status}).` };
+    }
+    case "uno":
+      r = await httpCall("GET", "https://api.unoerp.com/v1/ping", {
+        Authorization: "Bearer " + str(f, "token")
+      });
+      return { ok: r.ok, message: r.ok ? "UNO ERP conectado." : `Falha (HTTP ${r.status}). ${r.error}` };
+    case "erp":
+      r = await httpCall("GET", trimSlash(str(f, "baseUrl")) + "/health", {
+        Authorization: "Bearer " + str(f, "token")
+      });
+      return { ok: r.ok, message: r.ok ? "ERP respondeu OK." : `Falha (HTTP ${r.status}). ${r.error}` };
+    case "correios": {
+      const { credsFrom: credsFrom2, autenticar: autenticar2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+      const creds = credsFrom2(f);
+      const { erro } = await autenticar2(creds);
+      if (erro) return { ok: false, message: erro };
+      if ((creds.originCep ?? "").length !== 8) {
+        return { ok: true, message: "Correios conectados. Falta o CEP de origem para cotar frete." };
+      }
+      return { ok: true, message: "Correios conectados (API CWS)." };
+    }
+    default:
+      return { ok: true, message: "Credenciais salvas com seguran\xE7a no servidor." };
+  }
+}
+async function providerSendWhatsapp(phone, message, exec = q) {
+  for (const id of ["zapi", "evolution"]) {
+    const row = await exec.one("SELECT enabled FROM integrations WHERE id = ?", [id]);
+    if (!row || !row.enabled) continue;
+    const f = await integrationSecrets(id, exec);
+    const enc = encodeURIComponent;
+    const r = id === "zapi" ? await httpCall(
+      "POST",
+      `https://api.z-api.io/instances/${enc(str(f, "instanceId"))}/token/${enc(str(f, "token"))}/send-text`,
+      str(f, "clientToken") ? { "Client-Token": str(f, "clientToken") } : {},
+      { phone, message }
+    ) : await httpCall(
+      "POST",
+      `${trimSlash(str(f, "baseUrl"))}/message/sendText/${enc(str(f, "instance"))}`,
+      { apikey: str(f, "apiKey") },
+      { number: phone, text: message }
+    );
+    return { ok: r.ok, message: r.ok ? "Mensagem enviada." : `Falha (HTTP ${r.status}).` };
+  }
+  return { ok: false, message: "Nenhum provedor de WhatsApp est\xE1 ativo em Integra\xE7\xF5es." };
+}
+function fireWebhooks(event, payload) {
+  void (async () => {
+    try {
+      const hooks = await q.all("SELECT url FROM webhooks WHERE event = ? AND active = 1", [event]);
+      await Promise.all(
+        hooks.map((h2) => httpCall("POST", String(h2.url), { "X-Queops-Event": event }, payload, 5e3))
+      );
+    } catch (e) {
+      console.error("[queops] falha ao disparar webhooks de", event, e);
+    }
+  })();
+}
+var import_node_net2, import_node_dns, str, PROVIDERS_META;
+var init_providers = __esm({
+  "server/src/providers.ts"() {
+    "use strict";
+    import_node_net2 = require("node:net");
+    import_node_dns = require("node:dns");
+    init_db();
+    init_store();
+    str = /* @__PURE__ */ __name((f, k) => {
+      const v = f[k];
+      return v === null || v === void 0 || typeof v === "object" ? "" : String(v);
+    }, "str");
+    PROVIDERS_META = {
+      mercadopago: { fields: ["publicKey", "accessToken"] },
+      pagseguro: { fields: ["email", "token"] },
+      stripe: { fields: ["publishableKey", "secretKey"] },
+      pagarme: { fields: ["apiKey", "encryptionKey"] },
+      correios: { fields: ["user", "accessCode", "postingCard"] },
+      melhorenvio: { fields: ["token"] },
+      frenet: { fields: ["token"] },
+      uno: { fields: ["token", "company"] },
+      erp: { fields: ["baseUrl", "token"] },
+      zapi: { fields: ["instanceId", "token"] },
+      evolution: { fields: ["baseUrl", "instance", "apiKey"] },
+      chatwoot: { fields: ["baseUrl", "accountId", "apiToken"] },
+      chatvolt: { fields: ["apiKey", "agentId"] }
+    };
+    __name(isPrivateIp, "isPrivateIp");
+    __name(isPrivateIpv4, "isPrivateIpv4");
+    __name(isPrivateIpv6, "isPrivateIpv6");
+    __name(isInternalHost, "isInternalHost");
+    __name(httpCall, "httpCall");
+    __name(trimSlash, "trimSlash");
+    __name(providerTest, "providerTest");
+    __name(providerSendWhatsapp, "providerSendWhatsapp");
+    __name(fireWebhooks, "fireWebhooks");
+  }
+});
+
+// server/src/app.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path2 = __toESM(require("node:path"), 1);
+var import_compression = __toESM(require("compression"), 1);
+var import_express5 = __toESM(require("express"), 1);
 
 // server/src/auth.ts
+var import_node_crypto2 = require("node:crypto");
+var import_bcryptjs = __toESM(require("bcryptjs"), 1);
+init_crypto();
+init_db();
+init_errors();
+init_http();
 var ROUNDS_SENHA = 12;
 var ROUNDS_TOKEN = 10;
 function hashPassword(plain) {
@@ -596,8 +1356,16 @@ async function requireApiKey(req) {
 }
 __name(requireApiKey, "requireApiKey");
 
+// server/src/app.ts
+init_config();
+init_errors();
+init_http();
+
 // server/src/routes/account.ts
 var import_express = require("express");
+init_db();
+init_errors();
+init_http();
 
 // server/src/routes/helpers.ts
 function h(fn) {
@@ -836,467 +1604,13 @@ accountRoutes.put("/favorites", h(async (req, res) => {
 // server/src/routes/admin.ts
 var import_node_crypto3 = require("node:crypto");
 var import_express2 = require("express");
-
-// server/src/providers.ts
-var import_node_net2 = require("node:net");
-var import_node_dns = require("node:dns");
-
-// server/src/store.ts
-var DEFAULT_SETTINGS = {
-  name: "Qu\xE9ops Pir\xE2mides",
-  email: "contato@queopspiramides.com.br",
-  phone: "(11) 0000-0000",
-  whatsapp: "5511000000000",
-  pixDiscountPct: 5,
-  payments: { card: true, pix: true, boleto: true }
-};
-var DEFAULT_SHIPPING = {
-  defaultPrice: 24.9,
-  perState: {
-    SP: 14.9,
-    RJ: 19.9,
-    MG: 19.9,
-    ES: 22.9,
-    PR: 24.9,
-    SC: 24.9,
-    RS: 27.9,
-    DF: 22.9
-  },
-  cepRanges: [
-    { id: "cr1", from: "01000000", to: "05999999", price: 9.9, label: "Capital SP" }
-  ],
-  // `states` lista UFs com frete grátis INCONDICIONAL (qualquer valor). Fica
-  // vazio por padrão: com 'SP' aqui, o mínimo de R$ 199 e a faixa de CEP da
-  // capital nunca seriam aplicados — todo pedido paulista sairia com frete 0.
-  freeShipping: { enabled: true, minOrder: 199, states: [] }
-};
-var DEFAULT_RECOVERY = {
-  enabled: true,
-  delayMinutes: 60,
-  message: "Ol\xE1 {nome}! \u{1F44B} Voc\xEA esqueceu alguns itens na sua sacola da Qu\xE9ops Pir\xE2mides (total {valor}). Use o cupom {cupom} e finalize com desconto: ",
-  couponCode: "VOLTA10"
-};
-var INTEGRATION_IDS = [
-  "uno",
-  "erp",
-  "zapi",
-  "evolution",
-  "chatwoot",
-  "chatvolt",
-  "mercadopago",
-  "pagseguro",
-  "stripe",
-  "pagarme",
-  "correios",
-  "melhorenvio",
-  "frenet"
-];
-var INTEGRATION_SECRET_FIELDS = [
-  "accessToken",
-  "secretKey",
-  "apiKey",
-  "apiToken",
-  "token",
-  "clientToken",
-  "password",
-  "encryptionKey"
-];
-function isPlainObject(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-__name(isPlainObject, "isPlainObject");
-function configMerge(def, saved) {
-  const out = { ...def };
-  for (const [key, value] of Object.entries(saved ?? {})) {
-    if (isPlainObject(value) && isPlainObject(def[key])) {
-      out[key] = key === "perState" ? value : configMerge(def[key], value);
-      continue;
-    }
-    out[key] = value;
-  }
-  return out;
-}
-__name(configMerge, "configMerge");
-async function configGet(key, def, exec = q) {
-  const row = await exec.one("SELECT config_val FROM store_config WHERE config_key = ?", [key]);
-  if (row === null) return def;
-  try {
-    const decoded = JSON.parse(String(row.config_val));
-    if (!isPlainObject(decoded)) return def;
-    return configMerge(def, decoded);
-  } catch {
-    return def;
-  }
-}
-__name(configGet, "configGet");
-async function configSet(key, value, exec = q) {
-  await exec.run(
-    `INSERT INTO store_config (config_key, config_val) VALUES (?, ?)
-     ON DUPLICATE KEY UPDATE config_val = VALUES(config_val)`,
-    [key, JSON.stringify(value)]
-  );
-}
-__name(configSet, "configSet");
-var getSettings = /* @__PURE__ */ __name((exec = q) => configGet("settings", DEFAULT_SETTINGS, exec), "getSettings");
-var getShipping = /* @__PURE__ */ __name((exec = q) => configGet("shipping", DEFAULT_SHIPPING, exec), "getShipping");
-var getRecovery = /* @__PURE__ */ __name((exec = q) => configGet("recovery", DEFAULT_RECOVERY, exec), "getRecovery");
-async function publicSettings(exec = q) {
-  const s = await getSettings(exec);
-  const sh = await getShipping(exec);
-  const free = sh.freeShipping ?? {};
-  return {
-    name: s.name,
-    email: s.email,
-    phone: s.phone,
-    whatsapp: s.whatsapp,
-    pixDiscountPct: Number(s.pixDiscountPct) || 0,
-    payments: s.payments,
-    // 0 = não há frete grátis por valor.
-    freeShippingFrom: free.enabled ? Number(free.minOrder ?? 0) || 0 : 0,
-    // Estimativa exibida antes de o cliente informar o CEP.
-    shippingFrom: Number(sh.defaultPrice ?? 0) || 0
-  };
-}
-__name(publicSettings, "publicSettings");
-function productRowToApi(r) {
-  const out = {
-    id: r.id,
-    sku: r.sku,
-    name: r.name,
-    category: r.category,
-    categoryLabel: r.category_label,
-    description: String(r.description ?? ""),
-    price: Number(r.price) || 0,
-    stock: Number(r.stock) || 0,
-    image: r.image,
-    weight: String(r.weight ?? ""),
-    active: Boolean(r.active)
-  };
-  if (r.subcategory) out.subcategory = r.subcategory;
-  if (r.long_description) out.longDescription = r.long_description;
-  if (r.old_price !== null && r.old_price !== void 0) out.oldPrice = Number(r.old_price);
-  if (r.tag) out.tag = r.tag;
-  if (r.ingredients) out.ingredients = r.ingredients;
-  if (r.highlight) out.highlight = true;
-  return out;
-}
-__name(productRowToApi, "productRowToApi");
-async function fetchProducts(onlyActive = true, exec = q) {
-  const sql = `SELECT * FROM products${onlyActive ? " WHERE active = 1" : ""} ORDER BY position ASC, name ASC`;
-  return (await exec.all(sql)).map(productRowToApi);
-}
-__name(fetchProducts, "fetchProducts");
-function orderRowToApi(r, items) {
-  return {
-    id: r.id,
-    createdAt: iso(r.created_at),
-    customerName: r.customer_name,
-    customerEmail: r.customer_email,
-    customerPhone: r.customer_phone,
-    items: items.map((i) => ({
-      productId: i.product_id,
-      name: i.name,
-      quantity: Number(i.quantity) || 0,
-      unitPrice: Number(i.unit_price) || 0
-    })),
-    subtotal: Number(r.subtotal) || 0,
-    shipping: Number(r.shipping_cost) || 0,
-    discount: Number(r.discount) || 0,
-    total: Number(r.total) || 0,
-    couponCode: r.coupon_code,
-    status: r.status,
-    payment: r.payment,
-    channel: r.channel
-  };
-}
-__name(orderRowToApi, "orderRowToApi");
-async function fetchOrders(limit = 500, exec = q) {
-  const cap = Math.max(1, Math.min(Math.trunc(limit) || 500, 2e3));
-  const orders = await exec.all(`SELECT * FROM orders ORDER BY created_at DESC LIMIT ${cap}`);
-  if (orders.length === 0) return [];
-  const ids = orders.map((o) => o.id);
-  const rows = await exec.all(
-    `SELECT * FROM order_items WHERE order_id IN (${placeholders(ids.length)}) ORDER BY id ASC`,
-    ids
-  );
-  const byOrder = /* @__PURE__ */ new Map();
-  for (const row of rows) {
-    const key = String(row.order_id);
-    const list = byOrder.get(key);
-    if (list) list.push(row);
-    else byOrder.set(key, [row]);
-  }
-  return orders.map((o) => orderRowToApi(o, byOrder.get(String(o.id)) ?? []));
-}
-__name(fetchOrders, "fetchOrders");
-function integrationToApi(row) {
-  const fields = decryptPayload(row.fields_enc);
-  const safe = {};
-  const configured = [];
-  for (const [k, v] of Object.entries(fields)) {
-    if (v === "" || v === null || v === void 0) continue;
-    configured.push(k);
-    safe[k] = INTEGRATION_SECRET_FIELDS.includes(k) ? "" : String(v);
-  }
-  return {
-    id: row.id,
-    enabled: Boolean(row.enabled),
-    fields: safe,
-    configured,
-    lastStatus: row.last_status || "unknown",
-    lastCheckedAt: iso(row.last_checked_at)
-  };
-}
-__name(integrationToApi, "integrationToApi");
-async function fetchIntegrations(exec = q) {
-  const rows = await exec.all("SELECT * FROM integrations");
-  const byId = {};
-  for (const r of rows) byId[String(r.id)] = integrationToApi(r);
-  for (const id of INTEGRATION_IDS) {
-    byId[id] ??= {
-      id,
-      enabled: false,
-      fields: {},
-      configured: [],
-      lastStatus: "unknown",
-      lastCheckedAt: null
-    };
-  }
-  return byId;
-}
-__name(fetchIntegrations, "fetchIntegrations");
-async function integrationSecrets(id, exec = q) {
-  const row = await exec.one("SELECT fields_enc FROM integrations WHERE id = ?", [id]);
-  return row ? decryptPayload(row.fields_enc) : {};
-}
-__name(integrationSecrets, "integrationSecrets");
-
-// server/src/providers.ts
-var str = /* @__PURE__ */ __name((f, k) => {
-  const v = f[k];
-  return v === null || v === void 0 || typeof v === "object" ? "" : String(v);
-}, "str");
-var PROVIDERS_META = {
-  mercadopago: { fields: ["publicKey", "accessToken"] },
-  pagseguro: { fields: ["email", "token"] },
-  stripe: { fields: ["publishableKey", "secretKey"] },
-  pagarme: { fields: ["apiKey", "encryptionKey"] },
-  correios: { fields: ["user", "password"] },
-  melhorenvio: { fields: ["token"] },
-  frenet: { fields: ["token"] },
-  uno: { fields: ["token", "company"] },
-  erp: { fields: ["baseUrl", "token"] },
-  zapi: { fields: ["instanceId", "token"] },
-  evolution: { fields: ["baseUrl", "instance", "apiKey"] },
-  chatwoot: { fields: ["baseUrl", "accountId", "apiToken"] },
-  chatvolt: { fields: ["apiKey", "agentId"] }
-};
-function isPrivateIp(ip) {
-  const kind = (0, import_node_net2.isIP)(ip);
-  if (kind === 4) return isPrivateIpv4(ip);
-  if (kind === 6) return isPrivateIpv6(ip.toLowerCase());
-  return true;
-}
-__name(isPrivateIp, "isPrivateIp");
-function isPrivateIpv4(ip) {
-  const p = ip.split(".").map(Number);
-  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
-  const [a, b] = p;
-  return a === 0 || // 0.0.0.0/8
-  a === 10 || // 10.0.0.0/8
-  a === 127 || // loopback
-  a === 100 && b >= 64 && b <= 127 || // 100.64.0.0/10 (CGNAT)
-  a === 169 && b === 254 || // link-local (metadados de nuvem)
-  a === 172 && b >= 16 && b <= 31 || // 172.16.0.0/12
-  a === 192 && b === 0 || // 192.0.0.0/24 e 192.0.2.0/24
-  a === 192 && b === 168 || // 192.168.0.0/16
-  a === 198 && (b === 18 || b === 19) || // benchmark
-  a === 198 && b === 51 || // documentação
-  a === 203 && b === 0 || // documentação
-  a >= 224;
-}
-__name(isPrivateIpv4, "isPrivateIpv4");
-function isPrivateIpv6(ip) {
-  if (ip === "::" || ip === "::1") return true;
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
-  if (mapped) return isPrivateIpv4(mapped[1]);
-  const head = parseInt(ip.split(":")[0] || "0", 16);
-  if (Number.isNaN(head)) return true;
-  if ((head & 65024) === 64512) return true;
-  if ((head & 65472) === 65152) return true;
-  if ((head & 65280) === 65280) return true;
-  return false;
-}
-__name(isPrivateIpv6, "isPrivateIpv6");
-async function isInternalHost(hostRaw) {
-  const host = String(hostRaw ?? "").replace(/^\[|\]$/g, "").toLowerCase();
-  if (host === "" || host === "localhost" || host.endsWith(".localhost")) return true;
-  if (host.endsWith(".internal") || host.endsWith(".local")) return true;
-  if ((0, import_node_net2.isIP)(host)) return isPrivateIp(host);
-  const ips = [];
-  const [v4, v6] = await Promise.all([
-    import_node_dns.promises.resolve4(host).catch(() => []),
-    import_node_dns.promises.resolve6(host).catch(() => [])
-  ]);
-  ips.push(...v4, ...v6);
-  if (ips.length === 0) return true;
-  return ips.some(isPrivateIp);
-}
-__name(isInternalHost, "isInternalHost");
-async function httpCall(method, url, headers = {}, json = null, timeoutMs = 12e3) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { ok: false, status: 0, body: "", error: "URL inv\xE1lida (use http ou https)." };
-  }
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    return { ok: false, status: 0, body: "", error: "URL inv\xE1lida (use http ou https)." };
-  }
-  if (await isInternalHost(parsed.hostname)) {
-    return { ok: false, status: 0, body: "", error: "Endere\xE7o interno ou reservado n\xE3o \xE9 permitido." };
-  }
-  const h2 = { ...headers };
-  if (json !== null) h2["Content-Type"] = "application/json";
-  try {
-    const res = await fetch(parsed, {
-      method,
-      headers: h2,
-      body: json === null ? void 0 : JSON.stringify(json),
-      redirect: "manual",
-      // evita redirect para host interno
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    const body2 = (await res.text()).slice(0, 2e4);
-    return { ok: res.status >= 200 && res.status < 300, status: res.status, body: body2, error: "" };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { ok: false, status: 0, body: "", error: msg };
-  }
-}
-__name(httpCall, "httpCall");
-function trimSlash(s) {
-  return s.replace(/\/+$/, "");
-}
-__name(trimSlash, "trimSlash");
-async function providerTest(id, f) {
-  const meta = PROVIDERS_META[id];
-  if (!meta) return { ok: false, message: "Provedor desconhecido." };
-  const missing = meta.fields.filter((k) => str(f, k).trim() === "");
-  if (missing.length) return { ok: false, message: "Preencha: " + missing.join(", ") };
-  const enc = encodeURIComponent;
-  let r;
-  switch (id) {
-    case "zapi":
-      r = await httpCall(
-        "GET",
-        `https://api.z-api.io/instances/${enc(str(f, "instanceId"))}/token/${enc(str(f, "token"))}/status`,
-        str(f, "clientToken") ? { "Client-Token": str(f, "clientToken") } : {}
-      );
-      return { ok: r.ok, message: r.ok ? "Conex\xE3o Z-API OK." : `Falha (HTTP ${r.status}). ${r.error}` };
-    case "evolution":
-      r = await httpCall(
-        "GET",
-        `${trimSlash(str(f, "baseUrl"))}/instance/connectionState/${enc(str(f, "instance"))}`,
-        { apikey: str(f, "apiKey") }
-      );
-      return { ok: r.ok, message: r.ok ? "Conex\xE3o Evolution OK." : `Falha (HTTP ${r.status}). ${r.error}` };
-    case "chatwoot":
-      r = await httpCall(
-        "GET",
-        `${trimSlash(str(f, "baseUrl"))}/api/v1/accounts/${enc(str(f, "accountId"))}/conversations`,
-        { api_access_token: str(f, "apiToken") }
-      );
-      return { ok: r.ok, message: r.ok ? "Conex\xE3o Chatwoot OK." : `Falha (HTTP ${r.status}). ${r.error}` };
-    case "chatvolt":
-      r = await httpCall("GET", "https://api.chatvolt.ai/agents", {
-        Authorization: "Bearer " + str(f, "apiKey")
-      });
-      return { ok: r.ok, message: r.ok ? "Conex\xE3o Chatvolt OK." : `Falha (HTTP ${r.status}). ${r.error}` };
-    case "mercadopago":
-      r = await httpCall("GET", "https://api.mercadopago.com/users/me", {
-        Authorization: "Bearer " + str(f, "accessToken")
-      });
-      return {
-        ok: r.ok,
-        message: r.ok ? "Mercado Pago conectado." : `Falha (HTTP ${r.status}). Confira o Access Token.`
-      };
-    case "stripe":
-      r = await httpCall("GET", "https://api.stripe.com/v1/account", {
-        Authorization: "Bearer " + str(f, "secretKey")
-      });
-      return {
-        ok: r.ok,
-        message: r.ok ? "Stripe conectado." : `Falha (HTTP ${r.status}). Confira a Secret Key.`
-      };
-    case "pagarme":
-      r = await httpCall("GET", "https://api.pagar.me/core/v5/balance", {
-        Authorization: "Basic " + Buffer.from(str(f, "apiKey") + ":").toString("base64")
-      });
-      return {
-        ok: r.ok,
-        message: r.ok ? "Pagar.me conectado." : `Falha (HTTP ${r.status}). Confira a API Key.`
-      };
-    case "melhorenvio": {
-      const base = str(f, "sandbox") === "sandbox" ? "https://sandbox.melhorenvio.com.br" : "https://melhorenvio.com.br";
-      r = await httpCall("GET", base + "/api/v2/me", {
-        Authorization: "Bearer " + str(f, "token"),
-        Accept: "application/json"
-      });
-      return { ok: r.ok, message: r.ok ? "Melhor Envio conectado." : `Falha (HTTP ${r.status}).` };
-    }
-    case "uno":
-      r = await httpCall("GET", "https://api.unoerp.com/v1/ping", {
-        Authorization: "Bearer " + str(f, "token")
-      });
-      return { ok: r.ok, message: r.ok ? "UNO ERP conectado." : `Falha (HTTP ${r.status}). ${r.error}` };
-    case "erp":
-      r = await httpCall("GET", trimSlash(str(f, "baseUrl")) + "/health", {
-        Authorization: "Bearer " + str(f, "token")
-      });
-      return { ok: r.ok, message: r.ok ? "ERP respondeu OK." : `Falha (HTTP ${r.status}). ${r.error}` };
-    default:
-      return { ok: true, message: "Credenciais salvas com seguran\xE7a no servidor." };
-  }
-}
-__name(providerTest, "providerTest");
-async function providerSendWhatsapp(phone, message, exec = q) {
-  for (const id of ["zapi", "evolution"]) {
-    const row = await exec.one("SELECT enabled FROM integrations WHERE id = ?", [id]);
-    if (!row || !row.enabled) continue;
-    const f = await integrationSecrets(id, exec);
-    const enc = encodeURIComponent;
-    const r = id === "zapi" ? await httpCall(
-      "POST",
-      `https://api.z-api.io/instances/${enc(str(f, "instanceId"))}/token/${enc(str(f, "token"))}/send-text`,
-      str(f, "clientToken") ? { "Client-Token": str(f, "clientToken") } : {},
-      { phone, message }
-    ) : await httpCall(
-      "POST",
-      `${trimSlash(str(f, "baseUrl"))}/message/sendText/${enc(str(f, "instance"))}`,
-      { apikey: str(f, "apiKey") },
-      { number: phone, text: message }
-    );
-    return { ok: r.ok, message: r.ok ? "Mensagem enviada." : `Falha (HTTP ${r.status}).` };
-  }
-  return { ok: false, message: "Nenhum provedor de WhatsApp est\xE1 ativo em Integra\xE7\xF5es." };
-}
-__name(providerSendWhatsapp, "providerSendWhatsapp");
-function fireWebhooks(event, payload) {
-  void (async () => {
-    try {
-      const hooks = await q.all("SELECT url FROM webhooks WHERE event = ? AND active = 1", [event]);
-      await Promise.all(
-        hooks.map((h2) => httpCall("POST", String(h2.url), { "X-Queops-Event": event }, payload, 5e3))
-      );
-    } catch (e) {
-      console.error("[queops] falha ao disparar webhooks de", event, e);
-    }
-  })();
-}
-__name(fireWebhooks, "fireWebhooks");
-
-// server/src/routes/admin.ts
+init_config();
+init_crypto();
+init_db();
+init_errors();
+init_http();
+init_providers();
+init_store();
 var adminRoutes = (0, import_express2.Router)();
 var STATUS_PEDIDO = ["pending", "paid", "shipped", "delivered", "canceled"];
 var rid = /* @__PURE__ */ __name((prefix, bytes) => prefix + (0, import_node_crypto3.randomBytes)(bytes).toString("hex"), "rid");
@@ -1569,6 +1883,36 @@ adminRoutes.post("/whatsapp/test", h(async (req, res) => {
   if (phone.length < 10) fail("Informe o n\xFAmero com DDI e DDD.", 422, "invalid_phone");
   jsonOk(res, await providerSendWhatsapp(phone, "Mensagem de teste \u2014 Qu\xE9ops Pir\xE2mides \u2705"));
 }));
+adminRoutes.put("/orders/:id/tracking", h(async (req, res) => {
+  await requireAdmin(req);
+  const code = bodyStr(body(req), "trackingCode", "", 40).trim().toUpperCase().replace(/\s/g, "");
+  if (code !== "" && !/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(code)) {
+    fail("C\xF3digo de rastreio inv\xE1lido (formato AA123456789BR).", 422, "invalid_tracking");
+  }
+  const existe = await q.one("SELECT id FROM orders WHERE id = ?", [req.params.id]);
+  if (!existe) fail("Pedido n\xE3o encontrado.", 404, "not_found");
+  await q.run(
+    "UPDATE orders SET tracking_code = ?, tracking_status = '', tracking_at = NULL WHERE id = ?",
+    [code, req.params.id]
+  );
+  jsonOk(res, { trackingCode: code });
+}));
+adminRoutes.get("/orders/:id/tracking", h(async (req, res) => {
+  await requireAdmin(req);
+  const row = await q.one("SELECT tracking_code FROM orders WHERE id = ?", [req.params.id]);
+  if (!row) fail("Pedido n\xE3o encontrado.", 404, "not_found");
+  const code = String(row.tracking_code ?? "");
+  if (code === "") jsonOk(res, { trackingCode: "", eventos: [], erro: "Pedido sem c\xF3digo de rastreio." });
+  const { credsFrom: credsFrom2, rastrear: rastrear2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+  const { eventos, erro } = await rastrear2(credsFrom2(await integrationSecrets("correios")), code);
+  if (erro === "" && eventos.length > 0) {
+    await q.run(
+      "UPDATE orders SET tracking_status = ?, tracking_at = NOW() WHERE id = ?",
+      [eventos[0].descricao.slice(0, 190), req.params.id]
+    );
+  }
+  jsonOk(res, { trackingCode: code, eventos, erro });
+}));
 adminRoutes.patch("/carts/:id", h(async (req, res) => {
   await requireAdmin(req);
   const status = bodyStr(body(req), "status", "", 20);
@@ -1655,8 +1999,14 @@ __name(safeImageUrl, "safeImageUrl");
 
 // server/src/routes/public.ts
 var import_express3 = require("express");
+init_db();
+init_errors();
+init_http();
 
 // server/src/pricing.ts
+init_db();
+init_http();
+init_store();
 function normalizeCep(cep) {
   const d = String(cep ?? "").replace(/\D/g, "");
   return d.length === 8 ? d : "";
@@ -1788,6 +2138,52 @@ async function resolveCoupon(code, subtotal, exec = q, today = new Date(Date.now
   return [row, null];
 }
 __name(resolveCoupon, "resolveCoupon");
+function pesoDoCarrinho(items, found) {
+  const PADRAO_G = 500;
+  let total = 0;
+  for (const item of items) {
+    const bruto = String(found.get(item.productId)?.weight ?? "").trim().toLowerCase();
+    total += pesoEmGramas(bruto, PADRAO_G) * item.quantity;
+  }
+  return Math.max(300, Math.round(total));
+}
+__name(pesoDoCarrinho, "pesoDoCarrinho");
+async function cotarNosCorreios(ship, cep, pesoGramas, exec) {
+  if (ship.reason.startsWith("free_")) return null;
+  if (normalizeCep(cep) === "") return null;
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'correios' AND enabled = 1"
+    );
+    if (!row) return null;
+    const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
+    const { credsFrom: credsFrom2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+    const creds = credsFrom2(await integrationSecrets2("correios", exec));
+    if (creds.user === "" || creds.accessCode === "" || (creds.originCep ?? "").length !== 8) {
+      return null;
+    }
+    const cotacoes = await cotarTodos2(creds, cep, pesoGramas);
+    const melhor = cotacoes.find((c) => c.erro === "" && c.preco > 0);
+    if (!melhor) return null;
+    const prazo = melhor.prazoDias > 0 ? ` \u2014 at\xE9 ${melhor.prazoDias} dias \xFAteis` : "";
+    return { cost: round2(melhor.preco), label: `${melhor.nome}${prazo}` };
+  } catch {
+    return null;
+  }
+}
+__name(cotarNosCorreios, "cotarNosCorreios");
+function pesoEmGramas(texto, padrao = 500) {
+  const m = texto.match(/([\d.,]+)\s*(kg|g|gramas?|quilos?)?/i);
+  if (!m) return padrao;
+  const bruto = m[1].replace(/\.(?=\d{3}\b)/g, "").replace(",", ".");
+  const n = Number(bruto);
+  if (!Number.isFinite(n) || n <= 0) return padrao;
+  const unidade = (m[2] ?? "").toLowerCase();
+  if (unidade === "") return n < 100 ? Math.round(n * 1e3) : Math.round(n);
+  if (unidade.startsWith("k") || unidade.startsWith("q")) return Math.round(n * 1e3);
+  return Math.round(n);
+}
+__name(pesoEmGramas, "pesoEmGramas");
 async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
   let uf = String(ufIn ?? "").trim().toUpperCase();
   if (uf === "") uf = ufFromCep(cep);
@@ -1855,6 +2251,13 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
   }
   subtotal = round2(subtotal);
   const ship = calculateShipping(await getShipping(exec), subtotal, uf, cep);
+  const pesoTotal = pesoDoCarrinho(items, found);
+  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec);
+  if (cotado !== null) {
+    ship.cost = cotado.cost;
+    ship.label = cotado.label;
+    ship.reason = "correios";
+  }
   const [coupon, couponError] = await resolveCoupon(couponCode, subtotal, exec);
   let couponDiscount = 0;
   if (coupon !== null) {
@@ -1887,6 +2290,8 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
 __name(quoteCart, "quoteCart");
 
 // server/src/routes/public.ts
+init_providers();
+init_store();
 var publicRoutes = (0, import_express3.Router)();
 publicRoutes.get("/session", h(async (req, res) => {
   const admin = await currentAdmin(req);
@@ -2133,6 +2538,11 @@ publicRoutes.post("/carts/abandoned", h(async (req, res) => {
 
 // server/src/routes/v1.ts
 var import_express4 = require("express");
+init_db();
+init_errors();
+init_http();
+init_providers();
+init_store();
 var v1Routes = (0, import_express4.Router)();
 var STATUS_PEDIDO2 = ["pending", "paid", "shipped", "delivered", "canceled"];
 v1Routes.get("/products", h(async (req, res) => {
@@ -2235,6 +2645,8 @@ v1Routes.get("/customers", h(async (req, res) => {
 
 // server/src/session.ts
 var import_node_crypto4 = require("node:crypto");
+init_config();
+init_db();
 var COOKIE_NAME = "qp_session";
 var ROTATE_AFTER_MS = 30 * 60 * 1e3;
 var GC_DAYS = 14;
@@ -2488,6 +2900,8 @@ function createApp() {
 __name(createApp, "createApp");
 
 // server/src/index.ts
+init_config();
+init_db();
 async function main() {
   const problemas = configProblems();
   if (problemas.length) {
