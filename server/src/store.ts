@@ -82,9 +82,17 @@ export const INTEGRATION_IDS = [
 ] as const;
 
 /** Quais campos de cada integração são segredo e nunca voltam para o navegador. */
+/*
+ * Campos tratados como segredo: nunca voltam ao navegador, e um valor vazio
+ * vindo do painel significa "não mexi neste campo" em vez de "apague".
+ *
+ * Esquecer de listar um campo novo aqui tem dois efeitos, os dois ruins: o
+ * segredo trafega em claro para o navegador, e o próximo save o apaga — porque
+ * o input de senha manda '' e nada preserva o valor anterior.
+ */
 export const INTEGRATION_SECRET_FIELDS = [
   'accessToken', 'secretKey', 'apiKey', 'apiToken', 'token', 'clientToken',
-  'password', 'encryptionKey',
+  'password', 'encryptionKey', 'accessCode',
 ];
 
 // ------------------------------------------------------------- merge ----

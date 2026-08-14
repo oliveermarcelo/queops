@@ -722,7 +722,8 @@ var init_store = __esm({
       "token",
       "clientToken",
       "password",
-      "encryptionKey"
+      "encryptionKey",
+      "accessCode"
     ];
     __name(isPlainObject, "isPlainObject");
     __name(configMerge, "configMerge");
