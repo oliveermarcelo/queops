@@ -39,8 +39,7 @@ Crie um banco e um usuário com senha forte. Anote os quatro valores:
 npm install
 npm run sync:midia        # imagens (só funciona com o site antigo no ar)
 npm run seed:catalogo     # catálogo a partir de src/data.ts
-npm run build             # front em dist/
-npm run build:server      # servidor em .build/app.js
+npm run build             # front em dist/ E servidor em .build/
 npm run empacotar         # monta deploy/
 ```
 
@@ -103,7 +102,7 @@ Na tela da aplicação Node, seção **Environment variables**, adicione:
 | `APP_URL` | `https://queopspiramides.com.br` |
 | `APP_ENV` | `production` |
 | `SECURE_COOKIES` | `true` |
-| `PUBLIC_DIR` | `public` |
+| `PUBLIC_DIR` | `public` (opcional — o servidor detecta sozinho) |
 
 ```bash
 # gera a APP_KEY (32 bytes em base64)
@@ -186,13 +185,40 @@ ele aparece em **Pedidos** no painel e que o estoque caiu.
 - **Atualizar depois:**
 
   ```bash
-  npm run build && npm run build:server && npm run empacotar
+  npm run build && npm run empacotar
   ```
 
   Suba o conteúdo de `deploy/` por cima (o `.env` do servidor não é
   sobrescrito, porque não vai no pacote) e clique em **Restart**. Rode o
   `migrate.js` de novo se o esquema mudou — ele adiciona as colunas que
   faltarem, sem apagar dados.
+
+---
+
+## Publicando de outro jeito (Render, Railway, Coolify, Docker…)
+
+O pacote `deploy/` existe para o gerenciador de arquivos do hPanel, onde não há
+etapa de build. Numa plataforma que constrói a partir do Git, use os comandos
+convencionais e ignore o `empacotar`:
+
+| Etapa | Comando |
+|---|---|
+| Install | `npm install` |
+| Build | `npm run build` |
+| Start | `npm start` |
+
+`npm run build` compila o front **e** o servidor — a pasta `.build/` não é
+versionada, então sem isso o `start` não acharia o `app.js`. A pasta da vitrine
+é detectada sozinha (`dist/` neste caso), e as variáveis de ambiente são as
+mesmas do passo 5. A plataforma precisa instalar as `devDependencies` no build,
+que é o padrão da maioria.
+
+O `migrate.js` e o `diagnostico.js` saem no mesmo build, em `.build/`:
+
+```bash
+node .build/migrate.js --admin-email=… --admin-pass=…
+node .build/diagnostico.js
+```
 
 ---
 

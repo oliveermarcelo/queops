@@ -84,10 +84,11 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 |---|---|
 | `npm run dev` | Servidor de desenvolvimento do front (porta 3000) |
 | `npm run dev:api` | API Node local com recarga automática (porta 8080) |
-| `npm run build` | Build do front em `dist/` |
-| `npm run build:server` | Compila o servidor em `.build/app.js` (+ `migrate.js`) |
+| `npm run build` | Build completo: front em `dist/` **e** servidor em `.build/` |
+| `npm run build:front` | Só o front |
+| `npm run build:server` | Só o servidor (`app.js`, `migrate.js`, `diagnostico.js`) |
 | `npm start` | Sobe o servidor já compilado |
-| `npm run preview` | Build completo + servidor, como em produção |
+| `npm run preview` | `build` + `start`, como em produção |
 | `npm run lint` | Checagem de tipos do front e do servidor |
 | `npm run migrar` | Cria/atualiza as tabelas e carrega o catálogo |
 | `npm run seed:catalogo` | Gera `server/db/catalog.json` a partir de `src/data.ts` |
@@ -205,4 +206,27 @@ e rodando as três suítes de ponta a ponta sem alteração contra o servidor No
 
 ## Deploy
 
-Veja [DEPLOY.md](DEPLOY.md).
+Veja [DEPLOY.md](DEPLOY.md) para a Hostinger, passo a passo.
+
+**Em qualquer plataforma que faça build a partir do Git** (Render, Railway,
+Coolify, Dokku, Docker…), a sequência convencional já funciona sem configuração
+extra:
+
+```bash
+npm install
+npm run build     # front → dist/  +  servidor → .build/
+npm start         # node .build/app.js
+```
+
+Duas coisas foram feitas para que isso valha:
+
+- `npm run build` compila o **front e o servidor**. A pasta `.build/` não é
+  versionada (é artefato), então um `start` logo depois do clone não encontraria
+  o `app.js` — e o erro apareceria como se fosse do código.
+- A pasta da vitrine é **detectada**: `public/` no pacote de deploy, `dist/`
+  quando se roda o projeto inteiro. `PUBLIC_DIR` continua existindo e tem
+  precedência, mas não é mais obrigatório. Errar essa pasta dava página em
+  branco sem nenhuma mensagem.
+
+O que a plataforma precisa: Node 20+, as variáveis do `.env.example` e instalar
+as `devDependencies` no build (o padrão da maioria).

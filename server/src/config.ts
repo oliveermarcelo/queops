@@ -12,9 +12,31 @@
 // Precisa ser o primeiro import: popula process.env a partir do .env, se houver.
 import './env.ts';
 
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 function env(name: string, fallback = ''): string {
   const v = process.env[name];
   return v === undefined || v === '' ? fallback : v;
+}
+
+/**
+ * Onde está a vitrine compilada, quando ninguém disse.
+ *
+ * Duas formas de rodar, e cada uma põe o front num lugar diferente:
+ *   pacote de deploy  → public/   (o empacotar.mjs renomeia o dist para cá)
+ *   projeto inteiro   → dist/     (é onde o Vite escreve)
+ *
+ * Errar isso dá uma página em branco sem nenhuma mensagem — o servidor sobe,
+ * responde, e simplesmente não acha o index.html. Detectar em vez de exigir
+ * PUBLIC_DIR elimina a pegadinha; quem quiser outra pasta ainda pode definir a
+ * variável, que tem precedência.
+ */
+function detectPublicDir(): string {
+  for (const pasta of ['public', 'dist']) {
+    if (existsSync(path.join(process.cwd(), pasta, 'index.html'))) return pasta;
+  }
+  return 'public';
 }
 
 function envBool(name: string, fallback: boolean): boolean {
@@ -62,7 +84,7 @@ export const config: AppConfig = {
   appKey: env('APP_KEY'),
   appUrl: env('APP_URL', 'https://queopspiramides.com.br'),
   secureCookies: envBool('SECURE_COOKIES', true),
-  publicDir: env('PUBLIC_DIR', 'public'),
+  publicDir: env('PUBLIC_DIR', '') || detectPublicDir(),
   trustProxy: envBool('TRUST_PROXY', true),
 } as AppConfig;
 
