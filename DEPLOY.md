@@ -78,8 +78,33 @@ seguinte.
 
 ## 4. Enviar os arquivos
 
-**hPanel → Gerenciador de Arquivos** → entre na pasta `queops` e envie **todo o
-conteúdo** de `deploy/` (não a pasta `deploy` em si).
+Há dois caminhos. Escolha **um**.
+
+### a) Deploy por Git (hPanel → Avançado → GIT)
+
+O pacote compilado é versionado justamente para isto: o hPanel só faz
+`git clone`, não roda build no servidor. Aponte o repositório e o branch, e a
+cada release:
+
+```bash
+npm run build && npm run build:server && npm run empacotar
+git add deploy/ && git commit -m "release" && git push
+```
+
+Depois, no hPanel, clique em **Deploy** e em **Restart**.
+
+> **O build tem de rodar antes do push.** Sem ele, o `deploy/` do repositório
+> continua o da versão anterior e é isso que vai para o ar. O `npm run
+> empacotar` recusa compilado mais velho que o código-fonte, mas ele só ajuda
+> se você o rodar.
+
+Neste modo a raiz da aplicação é a **pasta `deploy/` do repositório clonado** —
+ajuste "Application root" no gerenciador de Node para apontar para ela.
+
+### b) Envio manual (Gerenciador de Arquivos ou FTP)
+
+Entre na pasta `queops` e envie **todo o conteúdo** de `deploy/` (não a pasta
+`deploy` em si).
 
 O `app.js` precisa ficar na raiz da aplicação, ao lado de `package.json`,
 `public/` e `db/`.
@@ -189,9 +214,11 @@ ele aparece em **Pedidos** no painel e que o estoque caiu.
   npm run build && npm run build:server && npm run empacotar
   ```
 
-  Suba o conteúdo de `deploy/` por cima (o `.env` do servidor não é
-  sobrescrito, porque não vai no pacote) e clique em **Restart**. Rode o
-  `migrate.js` de novo se o esquema mudou — ele adiciona as colunas que
+  Por Git, commite o `deploy/` e dê push; depois **Deploy** e **Restart** no
+  hPanel. No envio manual, suba o conteúdo de `deploy/` por cima. Nos dois
+  casos o `.env` do servidor não é sobrescrito, porque não vai no pacote.
+
+  Rode o `migrate.js` de novo se o esquema mudou — ele adiciona as colunas que
   faltarem, sem apagar dados.
 
 ---
@@ -237,6 +264,8 @@ AVISO  O que fazer                  Usuário ou senha errados — ou o usuário 
 | **Página em branco** | o `public/` não subiu, ou `PUBLIC_DIR` aponta para outro nome |
 | **/admin dá 404** | o `app.js` não é o startup file, ou a aplicação não reiniciou |
 | **Loja diz "A loja não respondeu"** | o `migrate.js` ainda não rodou: não há tabelas |
+| **"app.js não encontrado" no deploy por Git** | o `deploy/` não foi commitado, ou "Application root" não aponta para ele |
+| **Mudança não aparece depois do deploy** | faltou rodar o build antes do push: o `deploy/` do repositório é o antigo |
 | **Erro 419 ao salvar** | sessão expirada; recarregue a página |
 | **Login do painel não entra** | 8 senhas erradas bloqueiam o e-mail por 15 minutos |
 | **"too many connections"** | baixe `DB_POOL` para 5 nas variáveis de ambiente |
