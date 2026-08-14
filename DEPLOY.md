@@ -99,7 +99,22 @@ Depois, no hPanel, clique em **Deploy** e em **Restart**.
 > se você o rodar.
 
 Neste modo a raiz da aplicação é a **pasta `deploy/` do repositório clonado** —
-ajuste "Application root" no gerenciador de Node para apontar para ela.
+ajuste "Application root" no gerenciador de Node para apontar para ela, e use
+`app.js` como "Application startup file".
+
+**Se não der para apontar para `deploy/`** (o painel insiste na raiz do
+repositório, ou exige um `server.js`), existe o atalho: a raiz tem um
+`server.js` que carrega `deploy/app.js` e ajusta o `PUBLIC_DIR` sozinho. Nesse
+caso:
+
+| Campo | Valor |
+|---|---|
+| Application root | a pasta do repositório clonado |
+| Application startup file | `server.js` |
+
+O `npm install` da raiz instala mais coisa do que o servidor precisa (Vite,
+React, TypeScript), mas funciona: as quatro dependências de runtime estão lá.
+Apontar para `deploy/` continua sendo mais enxuto.
 
 ### b) Envio manual (Gerenciador de Arquivos ou FTP)
 
