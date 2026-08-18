@@ -35,6 +35,10 @@ export interface SessionData {
   customerId?: number;
   csrf?: string;
   createdAt?: number;
+  /** Pedidos feitos por este navegador — é o que autoriza consultar o status
+   *  deles sem login. Guardamos só os últimos, porque a lista serve para a tela
+   *  de acompanhamento do pagamento, não como histórico. */
+  pedidos?: string[];
 }
 
 function newId(): string {

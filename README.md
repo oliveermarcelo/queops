@@ -96,7 +96,9 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 | `npm run gerar:sitemap` | Gera `public/sitemap.xml` a partir do catálogo |
 | `npm run empacotar` | Monta a pasta `deploy/` pronta para subir |
 | `npm run diagnostico` | Confere ambiente, banco, tabelas e catálogo |
-| `npm run teste` | Testes do motor de preços (`node --test`, sem banco) |
+| `npm run teste` | Testes de preço e de pagamento (`node --test`, sem banco) |
+| `npm run teste:pagamento` | Travas de pagamento contra um MySQL de verdade |
+| `npm run teste:cobranca` | Checkout pela HTTP: nenhum pedido sem cobrança |
 | `npm run teste:e2e` | Testes de ponta a ponta no navegador (Playwright) |
 
 ---
@@ -124,6 +126,37 @@ curl -H "Authorization: Bearer qp_live_..." \
 O servidor guarda apenas o hash do token: ele aparece uma única vez, na
 criação. Webhooks (`order.created`, `order.status_changed`) são configurados na
 mesma tela.
+
+---
+
+## Pagamentos (Mercado Pago)
+
+Cartão e Pix são pagos **dentro da loja**, sem redirecionar o cliente. Como as
+credenciais são cadastradas em Painel → Integrações (cifradas no banco), a
+lojista troca a conta do Mercado Pago sozinha, sem mexer no servidor.
+
+Quatro regras que o código impõe — e que os testes provam:
+
+1. **Sem cobrança não existe pedido.** `POST /api/orders` recusa com 503 antes de
+   gravar qualquer coisa quando não há meio de pagamento ligado. A tela nunca diz
+   "Total pago" para um pedido que ninguém pagou.
+2. **O valor nunca vem do navegador.** A cobrança usa o total recalculado pelo
+   servidor dentro da transação, a partir dos preços do banco.
+3. **O status é consultado, não acreditado.** O webhook diz apenas "o pedido X
+   mudou"; o status verdadeiro vem de uma consulta autenticada à API. A
+   assinatura (`x-signature`) é conferida à parte, e sem a chave secreta
+   cadastrada nenhum aviso é aceito.
+4. **Estoque volta uma vez só.** Recusa, expiração e falha de comunicação
+   devolvem as peças à prateleira; avisos repetidos ou simultâneos não inflam o
+   estoque (trava `stock_restored` + `FOR UPDATE`).
+
+O cartão é digitado num formulário do Mercado Pago embutido na página (Bricks):
+os números não passam pelo nosso JavaScript nem pelo nosso servidor — o que
+chega aqui é um token de uso único. É isso que mantém a loja fora do escopo de
+PCI-DSS.
+
+Como ligar: [`DEPLOY.md` § 9](DEPLOY.md). Como testar, com os cartões que forçam
+aprovação e recusa: [`tests/README.md`](tests/README.md).
 
 ---
 

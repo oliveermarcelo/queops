@@ -13,7 +13,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, Check, ShieldCheck, CreditCard, User, MapPin,
-  AlertCircle, Truck, QrCode, Barcode, Lock, Tag, Loader2, X,
+  AlertCircle, Truck, QrCode, Clock, Lock, Tag, Loader2, X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CartItem } from '../types';
@@ -23,6 +23,9 @@ import { safeImageSrc } from '../utils/safeUrl';
 import { brlNumber } from '../utils/currency';
 import { INSTALLMENTS } from '../config';
 import { useCatalog } from '../catalog/CatalogContext';
+import { type ConfigPagamento, type DadosCartao } from '../pagamento/mercadopago';
+import CartaoMercadoPago from './checkout/CartaoMercadoPago';
+import PixMercadoPago, { type DadosPix } from './checkout/PixMercadoPago';
 
 interface CheckoutPageProps {
   cartItems: CartItem[];
@@ -50,8 +53,17 @@ interface ConfirmedOrder {
   id: string;
   customerName: string;
   total: number;
-  payment: 'card' | 'pix' | 'boleto';
+  payment: 'card' | 'pix';
   deliveryEta: string;
+  /**
+   * O que o meio de pagamento respondeu. É por causa deste campo que a tela
+   * pode deixar de mentir: sem ele, o antigo checkout dizia "Total pago" para
+   * qualquer pedido gravado, inclusive os que ninguém pagou.
+   */
+  paymentStatus: 'aprovado' | 'aguardando' | 'recusado';
+  pix: DadosPix | null;
+  /** 'teste' → ambiente de sandbox, nenhum dinheiro se move. */
+  ambiente: 'teste' | 'producao' | null;
 }
 
 const labelCls = 'block text-[13px] font-semibold text-gray-700 mb-2';
@@ -67,7 +79,6 @@ const STEPS = [
 const PAYMENT_LABELS: Record<ConfirmedOrder['payment'], string> = {
   card: 'Cartão de Crédito',
   pix: 'Pix',
-  boleto: 'Boleto Bancário',
 };
 
 /** Valida um CPF brasileiro pelos dois dígitos verificadores. */
@@ -93,7 +104,7 @@ export default function CheckoutPage({
   onClearCart,
   onProfileSaved,
 }: CheckoutPageProps) {
-  const [stage, setStage] = useState<'checkout' | 'success'>('checkout');
+  const [stage, setStage] = useState<'checkout' | 'pix' | 'pix_expirado' | 'success'>('checkout');
 
   const addr = account?.addresses?.find((a) => a.isDefault) ?? account?.addresses?.[0];
 
@@ -122,15 +133,52 @@ export default function CheckoutPage({
 
   const { settings } = useCatalog();
 
-  // Formas de pagamento habilitadas no painel. Se o lojista desligar o boleto,
-  // ele some daqui — e o servidor recusa o pedido que insista nele.
+  /*
+   * Configuração do meio de pagamento (chave pública, ambiente, métodos).
+   *
+   * `null` = ainda carregando; `enabled: false` = não há credencial cadastrada.
+   * A tela precisa distinguir os dois: "carregando" mostra o esqueleto, "não
+   * configurado" mostra o aviso — nunca um botão que só falharia no fim.
+   */
+  const [configPagamento, setConfigPagamento] = useState<ConfigPagamento | null>(null);
+  const [configFalhou, setConfigFalhou] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    api
+      .get<ConfigPagamento>('/payments/config')
+      .then((c) => vivo && setConfigPagamento(c))
+      .catch(() => vivo && setConfigFalhou(true));
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  // Formas de pagamento habilitadas no painel E suportadas pelo provedor. Se a
+  // lojista desligar o Pix, ele some daqui — e o servidor recusa o pedido que
+  // insista nele.
   const enabledPayments = useMemo(() => {
     const p = settings?.payments;
-    const lista = (['pix', 'card', 'boleto'] as const).filter((m) => p?.[m] !== false);
+    const doProvedor = configPagamento?.methods;
+    const lista = (['pix', 'card'] as const).filter(
+      (m) => p?.[m] !== false && doProvedor?.[m] !== false,
+    );
     return lista.length ? lista : (['pix'] as const);
-  }, [settings]);
+  }, [settings, configPagamento]);
 
-  const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix' | 'boleto'>('pix');
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix'>('pix');
+
+  /** Máximo de parcelas: o servidor manda o número, e é o mesmo que ele aceita. */
+  const parcelasMax = configPagamento?.installmentsMax ?? INSTALLMENTS;
+
+  /**
+   * Muda a cada recusa para remontar o formulário de cartão.
+   *
+   * O token do cartão é de uso único: depois de uma recusa ele já foi gastado, e
+   * reenviar o mesmo daria erro de token inválido em vez do motivo real. Um
+   * formulário novo gera um token novo.
+   */
+  const [tentativaCartao, setTentativaCartao] = useState(0);
 
   // Se o método escolhido deixar de estar disponível, cai no primeiro válido.
   useEffect(() => {
@@ -218,8 +266,7 @@ export default function CheckoutPage({
 
   const ALL_PAYMENTS = [
     { id: 'pix' as const, icon: QrCode, title: 'Pix', desc: 'Aprovação na hora', tag: quote?.pixDiscountPct ? `${brlNumber(quote.pixDiscountPct).replace(',00', '')}% OFF` : '' },
-    { id: 'card' as const, icon: CreditCard, title: 'Cartão de Crédito', desc: `Em até ${INSTALLMENTS}x sem juros`, tag: '' },
-    { id: 'boleto' as const, icon: Barcode, title: 'Boleto', desc: 'Compensa em 2 dias úteis', tag: '' },
+    { id: 'card' as const, icon: CreditCard, title: 'Cartão de Crédito', desc: `Em até ${parcelasMax}x sem juros`, tag: '' },
   ];
   const PAYMENTS = ALL_PAYMENTS.filter((pm) => enabledPayments.includes(pm.id));
 
@@ -268,10 +315,25 @@ export default function CheckoutPage({
     setAppliedCoupon(couponInput.trim().toUpperCase());
   };
 
-  const handlePlaceOrder = async () => {
+  /**
+   * Fecha o pedido — e cobra.
+   *
+   * Só existe pedido depois de o servidor falar com o meio de pagamento. No
+   * cartão, `cartao` traz o token que o formulário do Mercado Pago gerou (o
+   * número do cartão não passa por aqui). No Pix, não há token: a resposta traz
+   * o QR code e a tela passa a esperar o pagamento.
+   *
+   * A função REJEITA em caso de falha, de propósito: é assim que o formulário do
+   * cartão sabe que precisa reabilitar o botão.
+   */
+  const finalizarPedido = async (cartao?: DadosCartao): Promise<void> => {
     if (cartItems.length === 0) {
       setErrorMsg('A sua sacola está vazia.');
-      return;
+      throw new Error('sacola vazia');
+    }
+    if (!temCotacao) {
+      setErrorMsg('Aguarde o cálculo do frete e do total.');
+      throw new Error('sem cotação');
     }
     setErrorMsg('');
     setIsSubmitting(true);
@@ -285,9 +347,14 @@ export default function CheckoutPage({
         payment: paymentMethod,
         coupon: appliedCoupon,
         address: { cep, street, number, complement, neighborhood, city, state: stateCode },
+        card: cartao === undefined ? undefined : {
+          token: cartao.token,
+          paymentMethodId: cartao.payment_method_id,
+          installments: cartao.installments,
+        },
       });
-      setOrder(res.order);
-      setStage('success');
+      const pedido = res.order;
+      setOrder(pedido);
       // Limpa aqui, e não só no botão "Voltar à loja": quem fechava a aba na
       // tela de confirmação reencontrava a sacola cheia e repetia o pedido.
       onClearCart();
@@ -295,19 +362,96 @@ export default function CheckoutPage({
       fetchAccount()
         .then((acc) => acc && onProfileSaved?.(acc))
         .catch(() => undefined);
+
+      /*
+       * Pix vai para a tela de espera, não para a de confirmação: o pedido está
+       * reservado, mas ninguém pagou ainda. Cartão aprovado (ou em análise) vai
+       * para a confirmação — que informa qual dos dois é.
+       */
+      setStage(pedido.payment === 'pix' && pedido.pix !== null ? 'pix' : 'success');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       const msg =
         err instanceof ApiError ? err.message : 'Não foi possível concluir o pedido.';
       setErrorMsg(msg);
       refreshQuote();
+      /*
+       * Recusa do cartão queima o token. Sem um formulário novo, a segunda
+       * tentativa falharia por "token inválido" e esconderia o motivo real —
+       * que é justamente o que o cliente precisa ler para resolver.
+       */
+      if (err instanceof ApiError && (err.code === 'payment_rejected' || err.code === 'missing_card_token')) {
+        setTentativaCartao((t) => t + 1);
+      }
+      throw err;
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // ---- Tela de sucesso ----
+  /** Para os botões da própria tela, onde a rejeição não tem quem a trate. */
+  const finalizarSemPropagar = (): void => {
+    void finalizarPedido().catch(() => undefined);
+  };
+
+  // ---- Tela do Pix: pedido reservado, dinheiro ainda NÃO ----
+  if (stage === 'pix' && order?.pix) {
+    return (
+      <PixMercadoPago
+        pedidoId={order.id}
+        total={order.total}
+        pix={order.pix}
+        onPago={() => {
+          setOrder({ ...order, paymentStatus: 'aprovado' });
+          setStage('success');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onExpirado={() => setStage('pix_expirado')}
+      />
+    );
+  }
+
+  // ---- Pix vencido: o pedido foi cancelado e o estoque voltou ----
+  if (stage === 'pix_expirado') {
+    return (
+      <div className="pt-40 lg:pt-44 pb-24 bg-brand-cream min-h-screen">
+        <div className="max-w-xl mx-auto px-4">
+          <div className="bg-white rounded-3xl border border-gray-100 p-8 sm:p-12 text-center shadow-[0_20px_60px_rgba(43,49,37,0.12)]">
+            <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-600 mb-5">
+              <Clock size={30} aria-hidden="true" />
+            </div>
+            <h2 className="text-2xl font-extrabold text-gray-900 m-0">Este Pix venceu</h2>
+            <p className="text-gray-500 leading-relaxed mt-3 mb-0">
+              O prazo para pagar terminou e o pedido {order ? <strong className="text-gray-700">{order.id}</strong> : null} foi
+              cancelado. <strong className="text-gray-700">Nada foi cobrado.</strong> As peças
+              voltaram para a loja e você pode fazer o pedido de novo.
+            </p>
+            <button
+              onClick={onBack}
+              className="mt-8 px-8 py-4 bg-primary-blue hover:bg-primary-container text-white rounded-full text-sm font-bold uppercase tracking-wider transition cursor-pointer"
+            >
+              Voltar à loja
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /*
+   * ---- Tela final ----
+   *
+   * Duas versões, e a diferença entre elas é o ponto mais importante desta tela:
+   * "Pagamento aprovado / Total pago" só aparece quando o dinheiro entrou de
+   * verdade. Cartão em análise mostra "em análise" e "Total do pedido".
+   *
+   * A versão antiga afirmava "PEDIDO CONFIRMADO · Total pago" para qualquer
+   * pedido gravado — inclusive quando nenhuma cobrança havia acontecido. A
+   * lojista via pedidos achando que tinha dinheiro entrando, e o cliente ia
+   * embora achando que tinha pagado.
+   */
   if (stage === 'success' && order) {
+    const aprovado = order.paymentStatus === 'aprovado';
     return (
       <div className="pt-40 lg:pt-44 pb-24 bg-brand-cream min-h-screen">
         <div className="max-w-xl mx-auto px-4">
@@ -316,19 +460,48 @@ export default function CheckoutPage({
             animate={{ opacity: 1, y: 0 }}
             className="bg-white rounded-3xl border border-gray-100 p-8 sm:p-12 text-center shadow-[0_20px_60px_rgba(43,49,37,0.12)]"
           >
-            <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-600 mb-6 ring-8 ring-emerald-50/50">
-              <Check size={40} strokeWidth={3} aria-hidden="true" />
+            <div
+              className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ring-8 ${
+                aprovado
+                  ? 'bg-emerald-50 text-emerald-600 ring-emerald-50/50'
+                  : 'bg-amber-50 text-amber-600 ring-amber-50/50'
+              }`}
+            >
+              {aprovado
+                ? <Check size={40} strokeWidth={3} aria-hidden="true" />
+                : <Clock size={38} aria-hidden="true" />}
             </div>
-            <span className="text-[11px] bg-emerald-100 text-emerald-700 uppercase px-3 py-1 rounded-full font-bold tracking-widest">
-              Pedido confirmado
+            <span
+              className={`text-[11px] uppercase px-3 py-1 rounded-full font-bold tracking-widest ${
+                aprovado ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+              }`}
+            >
+              {aprovado ? 'Pagamento aprovado' : 'Pagamento em análise'}
             </span>
             <h2 className="text-3xl font-extrabold text-gray-900 mt-5">
               Obrigado, {order.customerName.split(' ')[0]}!
             </h2>
             <p className="text-gray-500 max-w-md mx-auto leading-relaxed mt-3">
-              Recebemos o seu pedido <strong className="text-gray-700">{order.id}</strong>. A
-              confirmação foi enviada para o seu e-mail.
+              {aprovado ? (
+                <>
+                  O pagamento do pedido <strong className="text-gray-700">{order.id}</strong> foi
+                  confirmado e já estamos preparando o envio. Guarde este número para acompanhar.
+                </>
+              ) : (
+                <>
+                  Recebemos o pedido <strong className="text-gray-700">{order.id}</strong>. O
+                  emissor do cartão está analisando o pagamento — isso costuma levar alguns
+                  minutos. O envio só começa depois da aprovação.
+                </>
+              )}
             </p>
+
+            {order.ambiente === 'teste' && (
+              <p role="status" className="mt-6 mb-0 p-3 bg-amber-50 border border-amber-200 rounded-xl text-[12px] text-amber-800 font-semibold">
+                Ambiente de teste do Mercado Pago: nenhum valor real foi movimentado.
+              </p>
+            )}
+
             <div className="bg-gray-50/70 rounded-2xl p-6 border border-gray-100 text-left text-sm space-y-3.5 mt-8">
               <div className="flex justify-between">
                 <span className="text-gray-400">Nº do pedido</span>
@@ -342,10 +515,14 @@ export default function CheckoutPage({
                 <span className="text-gray-400 flex items-center gap-1.5">
                   <Truck className="w-4 h-4" aria-hidden="true" /> Entrega prevista
                 </span>
-                <span className="font-semibold text-gray-800">{order.deliveryEta}</span>
+                <span className="font-semibold text-gray-800">
+                  {aprovado ? order.deliveryEta : 'após a aprovação'}
+                </span>
               </div>
               <div className="border-t border-dashed border-gray-200 pt-3.5 flex justify-between items-baseline">
-                <span className="font-bold text-gray-900">Total pago</span>
+                <span className="font-bold text-gray-900">
+                  {aprovado ? 'Total pago' : 'Total do pedido'}
+                </span>
                 <span className="text-2xl font-extrabold text-primary-blue">
                   R$ {brlNumber(order.total)}
                 </span>
@@ -560,6 +737,57 @@ export default function CheckoutPage({
                           );
                         })}
                       </fieldset>
+
+                      {/* Meio de pagamento não configurado: avisar, não fingir. */}
+                      {(configFalhou || (configPagamento !== null && !configPagamento.enabled)) && (
+                        <div role="alert" className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-sm">
+                          <p className="font-bold m-0">A loja ainda não está aceitando pagamento online.</p>
+                          <p className="m-0 mt-1 text-amber-800">
+                            Fale com a gente pelo WhatsApp para concluir a sua compra — o seu
+                            carrinho fica guardado.
+                          </p>
+                        </div>
+                      )}
+
+                      {configPagamento?.ambiente === 'teste' && (
+                        <p role="status" className="mt-6 mb-0 p-3 bg-amber-50 border border-amber-200 rounded-xl text-[12px] text-amber-800 font-semibold">
+                          Ambiente de teste: nenhuma cobrança real acontece aqui.
+                        </p>
+                      )}
+
+                      {/* Cartão: o formulário é do Mercado Pago, dentro da página. */}
+                      {paymentMethod === 'card' && configPagamento?.enabled && (
+                        <div className="mt-7 pt-7 border-t border-gray-100">
+                          <h3 className="text-sm font-extrabold text-gray-900 m-0 mb-1">
+                            Dados do cartão
+                          </h3>
+                          <p className="text-xs text-gray-400 mt-0 mb-5 flex items-center gap-1.5">
+                            <Lock size={12} aria-hidden="true" />
+                            Preenchido direto no Mercado Pago — os números do cartão não passam pela
+                            nossa loja.
+                          </p>
+                          <CartaoMercadoPago
+                            remontar={tentativaCartao}
+                            publicKey={configPagamento.publicKey}
+                            valor={grandTotal}
+                            email={email}
+                            cpf={cpf.replace(/\D/g, '')}
+                            parcelasMax={parcelasMax}
+                            onPagar={finalizarPedido}
+                          />
+                        </div>
+                      )}
+
+                      {/* Pix: o QR nasce só depois de o pedido ser criado. */}
+                      {paymentMethod === 'pix' && configPagamento?.enabled && (
+                        <div className="mt-7 pt-7 border-t border-gray-100">
+                          <p className="text-sm text-gray-500 m-0">
+                            Ao continuar, geramos um QR code válido por 30 minutos. As peças ficam
+                            reservadas nesse período e a confirmação é automática — você não precisa
+                            enviar comprovante.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </motion.div>
@@ -594,17 +822,25 @@ export default function CheckoutPage({
                     Continuar <ArrowRight size={16} aria-hidden="true" />
                   </button>
                 ) : (
-                  <button
-                    onClick={handlePlaceOrder}
-                    disabled={isSubmitting || quoting || !temCotacao}
-                    className="inline-flex items-center gap-2 px-8 py-3.5 bg-brand-red hover:bg-[#82502d] text-white rounded-full text-sm font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98] disabled:opacity-60"
-                  >
-                    {isSubmitting ? (
-                      <><Loader2 size={16} className="animate-spin" aria-hidden="true" /> Processando…</>
-                    ) : (
-                      <><Lock size={16} aria-hidden="true" /> Concluir pedido</>
-                    )}
-                  </button>
+                  /*
+                   * No cartão, quem tem botão é o formulário do Mercado Pago —
+                   * ele só libera o envio quando os campos estão válidos, e um
+                   * segundo botão nosso conseguiria disparar um pedido sem
+                   * cartão nenhum. No Pix, o botão é este.
+                   */
+                  paymentMethod === 'pix' && (
+                    <button
+                      onClick={finalizarSemPropagar}
+                      disabled={isSubmitting || quoting || !temCotacao || configPagamento?.enabled !== true}
+                      className="inline-flex items-center gap-2 px-8 py-3.5 bg-brand-red hover:bg-[#82502d] text-white rounded-full text-sm font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98] disabled:opacity-60"
+                    >
+                      {isSubmitting ? (
+                        <><Loader2 size={16} className="animate-spin" aria-hidden="true" /> Gerando o código…</>
+                      ) : (
+                        <><QrCode size={16} aria-hidden="true" /> Gerar código Pix</>
+                      )}
+                    </button>
+                  )
                 )}
               </div>
             </div>

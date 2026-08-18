@@ -21,10 +21,17 @@ await page.waitForTimeout(800);
 const drawer = await page.locator('[role=dialog]').count();
 drawer ? ok('gaveta do carrinho abre com role=dialog') : fail('gaveta sem role=dialog');
 
-// Esc fecha (acessibilidade)
+/*
+ * Esc fecha (acessibilidade).
+ *
+ * Espera o diálogo DESAPARECER em vez de dormir um tempo fixo: a gaveta tem
+ * animação de saída de ~600ms, e o timeout de 500ms acusava falha num
+ * comportamento que estava correto — teste instável ensina a ignorar teste.
+ */
 await page.keyboard.press('Escape');
-await page.waitForTimeout(500);
-(await page.locator('[role=dialog]').count()) === 0 ? ok('Esc fecha a gaveta') : fail('Esc não fechou');
+await page.locator('[role=dialog]').waitFor({ state: 'detached', timeout: 5000 })
+  .then(() => ok('Esc fecha a gaveta'))
+  .catch(() => fail('Esc não fechou'));
 
 // vai ao checkout pela gaveta
 await page.locator('header button').filter({ hasText: /R\$/ }).first().click();
@@ -63,11 +70,60 @@ await page.waitForTimeout(1200);
 const resumo2 = await page.locator('text=Resumo do pedido').locator('..').locator('..').innerText();
 /Desconto Pix/.test(resumo2) ? ok('desconto Pix vindo das configurações') : fail('sem desconto Pix');
 
-await page.click('button:has-text("Concluir pedido")');
-await page.waitForSelector('text=Pedido confirmado', { timeout: 20000 });
+/*
+ * Daqui para frente o teste depende de haver meio de pagamento configurado,
+ * porque SEM COBRANÇA NÃO EXISTE PEDIDO — foi o defeito mais grave que esta
+ * loja teve: a tela afirmava "Pedido confirmado · Total pago" sem ninguém ter
+ * sido cobrado. Então verificamos o que for verdade no ambiente atual:
+ *
+ *   - sem credencial do Mercado Pago → a loja RECUSA e avisa, e nada é gravado;
+ *   - com credencial de teste (TEST-…) → o Pix gera o QR e a tela diz
+ *     "Aguardando o pagamento", nunca "Total pago".
+ */
+const cfg = await page.evaluate(() => fetch('/api/payments/config').then(r => r.json()));
+let num = '';
+
+if (!cfg.enabled) {
+  const corpo = await page.locator('body').innerText();
+  /não está aceitando pagamento online/i.test(corpo)
+    ? ok('sem gateway configurado, o checkout avisa em vez de fingir')
+    : fail('sem gateway e sem aviso na tela de pagamento');
+
+  const botao = page.locator('button:has-text("Gerar código Pix")');
+  (await botao.count()) === 1 ? ok('botão do Pix presente') : fail('botão do Pix ausente');
+  (await botao.first().isDisabled())
+    ? ok('e desabilitado, porque não há como cobrar')
+    : fail('botão do Pix habilitado sem meio de pagamento');
+
+  (await page.locator('text=Finalizar compra').count())
+    ? ok('nenhum pedido é confirmado sem cobrança')
+    : fail('a tela avançou sem cobrança');
+  /Total pago/i.test(corpo)
+    ? fail('a tela afirma "Total pago" sem cobrança')
+    : ok('a tela não afirma "Total pago"');
+
+  await page.screenshot({ path: 'tests/e2e/.saida/checkout.png' });
+  await browser.close();
+  console.log(log.join('\n'));
+  console.log(
+    '\nNOTA: o resto do fluxo (QR do Pix, pedido no painel) exige credencial do'
+    + '\nMercado Pago. Cadastre as chaves TEST- em Painel → Integrações e rode de novo.',
+  );
+  const parcial = log.filter(l => l.startsWith('FALHA')).length;
+  process.exit(parcial ? 1 : 0);
+}
+
+await page.click('button:has-text("Gerar código Pix")');
+await page.waitForSelector('text=Aguardando o pagamento', { timeout: 30000 });
 const conf = await page.locator('body').innerText();
-const num = (conf.match(/QP-\d{6}/) ?? [])[0];
-num ? ok('pedido gravado: ' + num) : fail('sem número de pedido');
+num = (conf.match(/QP-\d{6}/) ?? [])[0] ?? '';
+num ? ok('pedido reservado com Pix: ' + num) : fail('sem número de pedido');
+/Total pago/i.test(conf)
+  ? fail('a tela do Pix afirma "Total pago" antes de o dinheiro entrar')
+  : ok('a tela do Pix não afirma pagamento');
+(await page.locator('img[alt*="QR code"]').count())
+  ? ok('QR code do Pix desenhado na página')
+  : fail('sem QR code na tela do Pix');
 await page.screenshot({ path: 'tests/e2e/.saida/checkout.png' });
 
 // o pedido aparece no painel?

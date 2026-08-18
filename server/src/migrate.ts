@@ -112,6 +112,49 @@ async function addMissingColumns(noComments: string): Promise<number> {
   return adicionadas;
 }
 
+/**
+ * Índices que precisam existir além dos criados junto da tabela.
+ *
+ * O `addMissingColumns` acima resolve colunas novas, mas não índices: num banco
+ * que já existe, o `CREATE TABLE IF NOT EXISTS` não roda e a chave nova nunca
+ * apareceria. Como índice esquecido não quebra nada na hora — só deixa a
+ * consulta lenta, ou permite a duplicata que ele deveria barrar —, o erro passa
+ * despercebido até o dia em que dói.
+ */
+const INDICES: { tabela: string; nome: string; definicao: string }[] = [
+  {
+    tabela: 'orders',
+    nome: 'uq_order_payment_ref',
+    // Único: é por ele que o webhook do provedor encontra o pedido, e o mesmo
+    // pagamento não pode acabar vinculado a dois pedidos diferentes.
+    definicao: 'UNIQUE KEY uq_order_payment_ref (payment_ref)',
+  },
+];
+
+async function addMissingIndexes(): Promise<number> {
+  let criados = 0;
+  for (const { tabela, nome, definicao } of INDICES) {
+    const existe = await q.one(
+      `SELECT 1 AS ok FROM information_schema.statistics
+        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
+        LIMIT 1`,
+      [tabela, nome],
+    );
+    if (existe) continue;
+    try {
+      await q.run(`ALTER TABLE \`${tabela}\` ADD ${definicao}`);
+      say(`  + índice ${tabela}.${nome}`);
+      criados++;
+    } catch (e) {
+      // Duplicata pré-existente impede a chave única. Avisar é melhor do que
+      // abortar a migração inteira por causa de um índice.
+      const err = e as { code?: string; message?: string };
+      say(`  ! não consegui criar ${tabela}.${nome}: ${err.code ?? ''} ${err.message ?? ''}`.trimEnd());
+    }
+  }
+  return criados;
+}
+
 interface CatalogProduct {
   id: string;
   sku?: string;
@@ -362,6 +405,9 @@ async function main(): Promise<void> {
 
   const adicionadas = await addMissingColumns(noComments);
   say(adicionadas === 0 ? 'Nenhuma coluna nova a adicionar.' : `Colunas adicionadas: ${adicionadas}.`);
+
+  const indices = await addMissingIndexes();
+  say(indices === 0 ? 'Nenhum índice novo a adicionar.' : `Índices adicionados: ${indices}.`);
 
   // ------------------------------------------------------------ catálogo ----
   await importCatalog(dir);

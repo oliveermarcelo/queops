@@ -171,6 +171,53 @@ caminho com SSH é o normal em plano Business, e resolve tudo num comando.
 Teste o caminho inteiro: adicione ao carrinho, finalize um pedido e confirme que
 ele aparece em **Pedidos** no painel e que o estoque caiu.
 
+Até o passo 9 abaixo, o checkout vai **recusar** o pedido com o aviso "a loja
+ainda não está aceitando pagamento online". Isso é o comportamento correto, e não
+um erro de instalação: sem meio de pagamento ligado não existe pedido confirmado.
+
+---
+
+## 9. Ligar o Mercado Pago
+
+Cartão e Pix são pagos **dentro da loja**, sem redirecionar o cliente. Os números
+do cartão nunca passam pelo nosso servidor: quem os recebe é um formulário do
+Mercado Pago embutido na página, que devolve apenas um token de uso único.
+
+1. No [painel do Mercado Pago](https://www.mercadopago.com.br/developers/panel)
+   → **Suas integrações** → sua aplicação, copie:
+   - **Public Key** e **Access Token**. Use as **credenciais de teste**
+     (começam com `TEST-`) enquanto estiver conferindo, e troque pelas de
+     produção (`APP_USR-`) só quando o fluxo estiver aprovado.
+2. Ainda no Mercado Pago, em **Webhooks → Configurar notificações**, cadastre:
+
+   ```
+   https://SEU-DOMINIO/api/webhooks/mercadopago
+   ```
+
+   Marque os eventos de **pagamentos/pedidos** e copie a **chave secreta** que
+   ele mostra.
+3. No painel da loja → **Integrações** → Mercado Pago: cole os três campos
+   (Public Key, Access Token e chave secreta do webhook) e **ligue** a
+   integração. As credenciais são gravadas cifradas (AES-256-GCM) e o Access
+   Token nunca volta para o navegador.
+4. Recarregue o checkout. Com credencial de teste, a tela mostra o aviso
+   "Ambiente de teste"; com produção, o aviso desaparece.
+
+Três coisas que valem saber antes de a primeira venda real acontecer:
+
+- **Sem a chave secreta do webhook**, a confirmação automática do Pix é
+  recusada. É de propósito: sem ela não há como distinguir um aviso do Mercado
+  Pago de um aviso de qualquer pessoa na internet. O cliente ainda paga — a
+  página consulta o status enquanto está aberta — mas quem fechar a aba antes de
+  pagar deixa o pedido pendente até alguém conferir no painel.
+- **O endereço do webhook precisa ser público e em HTTPS.** Em `localhost` ele
+  não chega; é normal.
+- **Access Token que já apareceu em e-mail, conversa ou print está queimado.**
+  Renove em *Suas integrações → sua aplicação → Renovar* e cadastre o novo.
+
+O roteiro de teste com os cartões que forçam aprovação e recusa está em
+[`tests/README.md`](tests/README.md).
+
 ---
 
 ## Depois de no ar

@@ -22,7 +22,7 @@ const str = (f: Fields, k: string): string => {
 
 /** Catálogo de provedores e os campos que cada um exige. */
 export const PROVIDERS_META: Record<string, { fields: string[] }> = {
-  mercadopago: { fields: ['publicKey', 'accessToken'] },
+  mercadopago: { fields: ['publicKey', 'accessToken'] },  // webhookSecret é opcional no teste de conexão
   pagseguro: { fields: ['email', 'token'] },
   stripe: { fields: ['publishableKey', 'secretKey'] },
   pagarme: { fields: ['apiKey', 'encryptionKey'] },

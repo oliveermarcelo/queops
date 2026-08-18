@@ -3,37 +3,20 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 
+import { CSP_META } from './server/src/csp.ts';
+
 /**
  * Content-Security-Policy — defesa em profundidade contra injeção de script.
  *
- * Vai só no build de produção (`apply: 'build'`), para o HMR do Vite (que usa
- * script inline e eval) continuar funcionando em `npm run dev`.
+ * A política é a MESMA que o Express manda como header HTTP: as duas leem de
+ * server/src/csp.ts, onde está o porquê de cada exceção. Manter duas cópias já
+ * as fez divergir, e o navegador aplica a INTERSEÇÃO da <meta> com o header —
+ * a mais restritiva bloqueia em silêncio o que a outra libera.
  *
- *  - script-src 'self'   → nada de <script> inline nem eval
- *  - img-src 'self' https: data: → o catálogo é servido do próprio domínio, mas
- *    o painel permite colar a URL de uma imagem externa ao cadastrar um produto;
- *    `safeImageSrc` já barra esquemas perigosos (javascript:, data:text/html, SVG)
- *  - connect-src 'self'  → o front só fala com a nossa API; as chamadas a
- *    gateways e ERPs saem do servidor Node, não do navegador
- *  - object-src 'none', base-uri 'self', form-action 'self'
- *
- * Uma CSP em <meta> não consegue impor frame-ancestors nem enviar relatórios —
- * essa diretiva vai como header HTTP real, enviado pelo Express (server/src/app.ts).
- * Em produção, sirva a política inteira também como header no servidor/CDN.
+ * A <meta> só é injetada no build de produção (`apply: 'build'`), para o HMR do
+ * Vite (que usa script inline e eval) continuar funcionando em `npm run dev`.
  */
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' https: data:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  // frame-ancestors é ignorado em <meta>: vai como header, no Express.
-  'upgrade-insecure-requests',
-].join('; ');
+const CSP = CSP_META;
 
 function cspPlugin(): Plugin {
   return {

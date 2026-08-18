@@ -84,7 +84,7 @@ export const INTEGRATION_IDS = [
 /** Quais campos de cada integração são segredo e nunca voltam para o navegador. */
 export const INTEGRATION_SECRET_FIELDS = [
   'accessToken', 'secretKey', 'apiKey', 'apiToken', 'token', 'clientToken',
-  'password', 'encryptionKey',
+  'password', 'encryptionKey', 'webhookSecret',
 ];
 
 // ------------------------------------------------------------- merge ----

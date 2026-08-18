@@ -40,11 +40,28 @@ export const PROVIDERS: ProviderMeta[] = [
     id: 'mercadopago',
     name: 'Mercado Pago',
     category: 'payment',
-    description: 'Cartão, Pix e boleto com o checkout do Mercado Pago.',
-    docsUrl: 'https://www.mercadopago.com.br/developers',
+    description: 'Cartão e Pix pagos dentro da loja, sem redirecionar o cliente.',
+    docsUrl: 'https://www.mercadopago.com.br/developers/pt/docs',
     fields: [
-      { key: 'publicKey', label: 'Public Key' },
-      { key: 'accessToken', label: 'Access Token', type: 'password' },
+      {
+        key: 'publicKey',
+        label: 'Public Key',
+        placeholder: 'APP_USR-… (ou TEST-… para testar)',
+        help: 'Vai para o navegador do cliente: é ela que permite digitar o cartão sem que os números passem pela loja.',
+      },
+      {
+        key: 'accessToken',
+        label: 'Access Token',
+        type: 'password',
+        placeholder: 'APP_USR-… (ou TEST-… para testar)',
+        help: 'Secreto. Fica cifrado no banco e nunca chega ao navegador. Se ele já apareceu em e-mail, conversa ou print, renove em Suas integrações → Renovar antes de usar.',
+      },
+      {
+        key: 'webhookSecret',
+        label: 'Chave secreta do webhook',
+        type: 'password',
+        help: 'Copie em Suas integrações → Webhooks → Configurar notificações. Sem ela a confirmação automática do Pix é recusada: é o que distingue um aviso do Mercado Pago de um aviso de qualquer pessoa na internet.',
+      },
     ],
   },
   {

@@ -16,42 +16,21 @@ import express, { type NextFunction, type Request, type Response } from 'express
 
 import { requireCsrf } from './auth.ts';
 import { config } from './config.ts';
+import { CSP_API, CSP_LOJA } from './csp.ts';
 import { ApiError } from './errors.ts';
 import { jsonOk } from './http.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { publicRoutes } from './routes/public.ts';
 import { v1Routes } from './routes/v1.ts';
+import { webhookRoutes } from './routes/webhooks.ts';
 import { sessionMiddleware } from './session.ts';
 
-/**
- * Content-Security-Policy da loja.
- *
- * O `index.html` gerado pelo Vite já traz a política numa <meta>, mas duas
- * diretivas só valem como header HTTP de verdade: `frame-ancestors` (o
- * navegador ignora na meta) e o envio de relatórios. Era esse o papel do
- * public/.htaccess, e é o que este header recria.
- *
- * img-src permite https: porque o painel aceita colar a URL de uma imagem
- * externa ao cadastrar um produto — `safeImageUrl` já barra os esquemas
- * perigosos (javascript:, data:text/html, SVG).
+/*
+ * A política em si mora em csp.ts, compartilhada com o build do front — a <meta>
+ * do index.html e este header precisam dizer a MESMA coisa (o navegador aplica
+ * a interseção das duas). Ver o comentário lá.
  */
-const CSP_LOJA = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' https: data:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-  'upgrade-insecure-requests',
-].join('; ');
-
-/** A API não renderiza nada e não deve ser embutida em iframe. */
-const CSP_API = "default-src 'none'; frame-ancestors 'none'";
 
 export function createApp(): express.Express {
   const app = express();
@@ -117,17 +96,21 @@ export function createApp(): express.Express {
   api.use(sessionMiddleware);
 
   /**
-   * CSRF em tudo que altera estado, EXCETO /api/v1/*.
+   * CSRF em tudo que altera estado, EXCETO /api/v1/* e /api/webhooks/*.
    *
-   * As rotas v1 são servidor-a-servidor, autenticadas por chave no header
-   * Authorization — não há cookie envolvido, logo não há requisição forjada
-   * pelo navegador a barrar. Mesma decisão da versão PHP.
+   * As duas exceções têm o mesmo motivo: quem chama é outro servidor, não o
+   * navegador de ninguém. Não há cookie de sessão envolvido, então não há
+   * requisição forjada a barrar — exigir um token que o chamador não tem como
+   * obter só quebraria a integração. Cada uma se autentica do seu jeito: a v1
+   * por chave no Authorization, os webhooks por assinatura HMAC.
    */
   api.use((req, _res, next) => {
-    if (!req.path.startsWith('/v1/')) requireCsrf(req);
+    const servidorAServidor = req.path.startsWith('/v1/') || req.path.startsWith('/webhooks/');
+    if (!servidorAServidor) requireCsrf(req);
     next();
   });
 
+  api.use('/webhooks', webhookRoutes);
   api.use('/v1', v1Routes);
   api.use('/admin', adminRoutes);
   api.use('/account', accountRoutes);
