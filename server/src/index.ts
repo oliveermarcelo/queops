@@ -35,6 +35,18 @@ async function main(): Promise<void> {
   const app = createApp();
   const server = app.listen(config.port, config.host, () => {
     console.log(`[queops] no ar em http://${config.host}:${config.port} (${config.env})`);
+
+    /*
+     * Não avisamos mais quando PORT não vem do ambiente.
+     *
+     * A suspeita era que a hospedagem da Hostinger injetasse a porta e que a
+     * ausência dela explicasse um 503. Não explicava: o Passenger encontra a
+     * aplicação por socket, e a loja subiu escutando na 3000 sem PORT nenhuma.
+     * O 503 daquele dia era acesso negado no MySQL — `localhost` resolvia para
+     * ::1, host que o usuário do banco não tem permissão de usar.
+     *
+     * O aviso ficava, então, repetindo a cada reinício uma informação falsa.
+     */
   });
 
   // Encerramento limpo: o Passenger manda SIGTERM a cada deploy, e sem isto as

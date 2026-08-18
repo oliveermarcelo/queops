@@ -20,7 +20,7 @@ mexeu em nenhuma regra de cobrança.
 ```bash
 npm run teste             # inclui server/tests/pagamento.test.ts (19 casos)
 npm run teste:pagamento   # 25 verificações contra um MySQL de verdade
-npm start &               # a loja precisa estar no ar para o próximo
+npm run start:build &     # a loja precisa estar no ar para o próximo
 npm run teste:cobranca    # 9 verificações pela HTTP, na porta de entrada real
 ```
 
@@ -97,7 +97,7 @@ Precisam da loja no ar. Com o build pronto:
 ```bash
 npm run build
 npm run build:server
-npm start &                 # sobe em http://127.0.0.1:8080 (ver .env)
+npm run start:build &       # sobe em http://127.0.0.1:8080 (ver .env)
 npm run teste:e2e
 ```
 
@@ -125,7 +125,7 @@ git log --oneline -- api/          # ache o commit anterior à remoção
 git worktree add /tmp/queops-php <commit>
 # aponte /tmp/queops-php/api/config.php para o mesmo banco do .env
 php -S 127.0.0.1:8000 -t dist /tmp/queops-php/scripts/dev-server.php &
-npm start &
+npm run start:build &
 node tests/paridade-php-node.mjs
 ```
 

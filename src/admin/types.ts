@@ -34,6 +34,17 @@ export interface Order {
   status: OrderStatus;
   payment: 'card' | 'pix' | 'boleto';
   channel: 'site' | 'whatsapp' | 'erp';
+  /** Código dos Correios (AA123456789BR). Vazio enquanto não despachado. */
+  trackingCode?: string;
+  /** Último status consultado, para não bater na API a cada abertura da tela. */
+  trackingStatus?: string;
+}
+
+/** Um evento do rastreio dos Correios. */
+export interface TrackingEvent {
+  data: string;
+  descricao: string;
+  local: string;
 }
 
 export interface Customer {

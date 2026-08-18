@@ -26,10 +26,17 @@ Crie um banco e um usuário com senha forte. Anote os quatro valores:
 
 | Variável | Onde encontrar |
 |---|---|
-| `DB_HOST` | quase sempre `localhost` |
+| `DB_HOST` | **`127.0.0.1`** — veja o aviso abaixo |
 | `DB_NAME` | o nome mostrado na lista — leva o prefixo da conta (`u123456789_queops`) |
 | `DB_USER` | idem, com prefixo |
 | `DB_PASS` | a senha que você definiu |
+
+> **Use `127.0.0.1`, não `localhost`.** O driver resolve `localhost` por DNS e
+> chega ao MySQL como `::1` (IPv6), host para o qual o usuário do banco não tem
+> permissão na Hostinger. O erro é `ER_ACCESS_DENIED_ERROR` mesmo com a senha
+> correta — e, como o servidor encerra quando o banco não responde, a loja
+> responde 503. Pelo SSH o cliente `mysql` conecta por socket e funciona com
+> `localhost`, o que torna o diagnóstico confuso.
 
 ---
 
@@ -77,8 +84,48 @@ seguinte.
 
 ## 4. Enviar os arquivos
 
-**hPanel → Gerenciador de Arquivos** → entre na pasta `queops` e envie **todo o
-conteúdo** de `deploy/` (não a pasta `deploy` em si).
+Há dois caminhos. Escolha **um**.
+
+### a) Deploy por Git (hPanel → Avançado → GIT)
+
+O pacote compilado é versionado justamente para isto: o hPanel só faz
+`git clone`, não roda build no servidor. Aponte o repositório e o branch, e a
+cada release:
+
+```bash
+npm run build && npm run build:server && npm run empacotar
+git add deploy/ && git commit -m "release" && git push
+```
+
+Depois, no hPanel, clique em **Deploy** e em **Restart**.
+
+> **O build tem de rodar antes do push.** Sem ele, o `deploy/` do repositório
+> continua o da versão anterior e é isso que vai para o ar. O `npm run
+> empacotar` recusa compilado mais velho que o código-fonte, mas ele só ajuda
+> se você o rodar.
+
+Neste modo a raiz da aplicação é a **pasta `deploy/` do repositório clonado** —
+ajuste "Application root" no gerenciador de Node para apontar para ela, e use
+`app.js` como "Application startup file".
+
+**Se não der para apontar para `deploy/`** (o painel insiste na raiz do
+repositório, ou exige um `server.js`), existe o atalho: a raiz tem um
+`server.js` que carrega `deploy/app.js` e ajusta o `PUBLIC_DIR` sozinho. Nesse
+caso:
+
+| Campo | Valor |
+|---|---|
+| Application root | a pasta do repositório clonado |
+| Application startup file | `server.js` |
+
+O `npm install` da raiz instala mais coisa do que o servidor precisa (Vite,
+React, TypeScript), mas funciona: as quatro dependências de runtime estão lá.
+Apontar para `deploy/` continua sendo mais enxuto.
+
+### b) Envio manual (Gerenciador de Arquivos ou FTP)
+
+Entre na pasta `queops` e envie **todo o conteúdo** de `deploy/` (não a pasta
+`deploy` em si).
 
 O `app.js` precisa ficar na raiz da aplicação, ao lado de `package.json`,
 `public/` e `db/`.
@@ -235,9 +282,11 @@ O roteiro de teste com os cartões que forçam aprovação e recusa está em
   npm run build && npm run empacotar
   ```
 
-  Suba o conteúdo de `deploy/` por cima (o `.env` do servidor não é
-  sobrescrito, porque não vai no pacote) e clique em **Restart**. Rode o
-  `migrate.js` de novo se o esquema mudou — ele adiciona as colunas que
+  Por Git, commite o `deploy/` e dê push; depois **Deploy** e **Restart** no
+  hPanel. No envio manual, suba o conteúdo de `deploy/` por cima. Nos dois
+  casos o `.env` do servidor não é sobrescrito, porque não vai no pacote.
+
+  Rode o `migrate.js` de novo se o esquema mudou — ele adiciona as colunas que
   faltarem, sem apagar dados.
 
 ---
@@ -252,10 +301,16 @@ convencionais e ignore o `empacotar`:
 |---|---|
 | Install | `npm install` |
 | Build | `npm run build` |
-| Start | `npm start` |
+| Start | `npm run start:build` |
+
+Repare que o Start aqui é `start:build`, e não `start`. O `npm start` executa o
+pacote **versionado** (`server.js` → `deploy/app.js`), que é o que o hPanel
+precisa; numa plataforma que constrói a partir do Git ele serviria a release
+antiga do repositório em silêncio, ignorando o build que acabou de rodar.
+`start:build` roda o que o build gerou agora.
 
 `npm run build` compila o front **e** o servidor — a pasta `.build/` não é
-versionada, então sem isso o `start` não acharia o `app.js`. A pasta da vitrine
+versionada, então sem isso nem um nem outro acharia o `app.js`. A pasta da vitrine
 é detectada sozinha (`dist/` neste caso), e as variáveis de ambiente são as
 mesmas do passo 5. A plataforma precisa instalar as `devDependencies` no build,
 que é o padrão da maioria.
@@ -310,6 +365,8 @@ AVISO  O que fazer                  Usuário ou senha errados — ou o usuário 
 | **Página em branco** | o `public/` não subiu, ou `PUBLIC_DIR` aponta para outro nome |
 | **/admin dá 404** | o `app.js` não é o startup file, ou a aplicação não reiniciou |
 | **Loja diz "A loja não respondeu"** | o `migrate.js` ainda não rodou: não há tabelas |
+| **"app.js não encontrado" no deploy por Git** | o `deploy/` não foi commitado, ou "Application root" não aponta para ele |
+| **Mudança não aparece depois do deploy** | faltou rodar o build antes do push: o `deploy/` do repositório é o antigo |
 | **Erro 419 ao salvar** | sessão expirada; recarregue a página |
 | **Login do painel não entra** | 8 senhas erradas bloqueiam o e-mail por 15 minutos |
 | **"too many connections"** | baixe `DB_POOL` para 5 nas variáveis de ambiente |

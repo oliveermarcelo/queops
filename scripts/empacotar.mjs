@@ -18,7 +18,7 @@
  * do hPanel) e nunca é versionado.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,12 +37,54 @@ if (!existsSync(resolve(build, 'app.js'))) {
   process.exit(1);
 }
 
+/*
+ * Compilado velho é o acidente mais provável aqui: o pacote vai versionado, e
+ * empacotar sem rebuildar publica a versão anterior sem avisar ninguém. Este
+ * check compara a data do código-fonte com a do compilado e falha se o
+ * compilado ficou para trás.
+ */
+function maisRecente(dir, filtro) {
+  let quando = 0;
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    const caminho = resolve(dir, item.name);
+    if (item.isDirectory()) {
+      quando = Math.max(quando, maisRecente(caminho, filtro));
+    } else if (filtro(item.name)) {
+      quando = Math.max(quando, statSync(caminho).mtimeMs);
+    }
+  }
+  return quando;
+}
+
+const ehFonte = (nome) => /\.(ts|tsx|css|html)$/.test(nome);
+const desatualizados = [
+  { o: 'servidor', fonte: maisRecente(resolve(root, 'server/src'), ehFonte),
+    build: statSync(resolve(build, 'app.js')).mtimeMs, comando: 'npm run build:server' },
+  { o: 'front', fonte: maisRecente(resolve(root, 'src'), ehFonte),
+    build: maisRecente(dist, (n) => n.endsWith('.js')), comando: 'npm run build' },
+].filter(({ fonte, build: quando }) => fonte > quando);
+
+if (desatualizados.length > 0) {
+  console.error('O compilado está mais velho que o código-fonte:\n');
+  for (const { o, comando } of desatualizados) {
+    console.error(`  ${o.padEnd(9)} rode \`${comando}\``);
+  }
+  console.error('\nEmpacotar assim publicaria a versão anterior. Rebuilde e tente de novo.');
+  process.exit(1);
+}
+
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
-// ---- servidor ----
-for (const f of ['app.js', 'migrate.js', 'diagnostico.js',
-  'app.js.map', 'migrate.js.map', 'diagnostico.js.map']) {
+/*
+ * ---- servidor ----
+ *
+ * Sem os .map: o pacote é versionado (o deploy da Hostinger é por Git), e são
+ * ~300 KB de sourcemap que mudam a cada build e só servem para depurar. Para
+ * investigar um erro de produção, o rastro de pilha já traz os nomes das
+ * funções — o build usa `keepNames`.
+ */
+for (const f of ['app.js', 'migrate.js', 'diagnostico.js']) {
   const src = resolve(build, f);
   if (existsSync(src)) cpSync(src, resolve(out, f));
 }

@@ -87,7 +87,8 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 | `npm run build` | Build completo: front em `dist/` **e** servidor em `.build/` |
 | `npm run build:front` | Só o front |
 | `npm run build:server` | Só o servidor (`app.js`, `migrate.js`, `diagnostico.js`) |
-| `npm start` | Sobe o servidor já compilado |
+| `npm start` | Sobe o pacote de produção versionado (`server.js` → `deploy/app.js`) — é o que o hPanel executa |
+| `npm run start:build` | Sobe o que o `npm run build` acabou de gerar (`.build/app.js` + `dist/`) |
 | `npm run preview` | `build` + `start`, como em produção |
 | `npm run lint` | Checagem de tipos do front e do servidor |
 | `npm run migrar` | Cria/atualiza as tabelas e carrega o catálogo |
@@ -248,7 +249,7 @@ extra:
 ```bash
 npm install
 npm run build     # front → dist/  +  servidor → .build/
-npm start         # node .build/app.js
+npm run start:build   # roda o que o build acabou de gerar
 ```
 
 Duas coisas foram feitas para que isso valha:

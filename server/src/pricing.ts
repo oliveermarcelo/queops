@@ -68,7 +68,14 @@ export function deliveryDaysFor(uf: string): number {
 
 export interface ShippingResult {
   cost: number;
-  reason: 'free_state' | 'free_cep_range' | 'free_min_order' | 'cep_range' | 'per_state' | 'default';
+  reason:
+    | 'free_state'
+    | 'free_cep_range'
+    | 'free_min_order'
+    | 'cep_range'
+    | 'per_state'
+    | 'default'
+    | 'correios';
   label: string;
 }
 
@@ -219,6 +226,110 @@ export interface RawItem {
 }
 
 /**
+ * Peso do carrinho em GRAMAS.
+ *
+ * `products.weight` é VARCHAR livre: vem "1,2 kg", "800g", "0.5" ou vazio,
+ * conforme quem cadastrou. Interpretamos o que der e caímos num padrão quando
+ * não dá — frete que falha por peso ausente é pior do que frete aproximado.
+ */
+function pesoDoCarrinho(
+  items: QuoteItem[],
+  found: Map<string, Record<string, unknown>>,
+): number {
+  const PADRAO_G = 500;
+  let total = 0;
+  for (const item of items) {
+    const bruto = String(found.get(item.productId)?.weight ?? '').trim().toLowerCase();
+    total += pesoEmGramas(bruto, PADRAO_G) * item.quantity;
+  }
+  return Math.max(300, Math.round(total));
+}
+
+/**
+ * Preço dos Correios para este carrinho, ou `null` para manter o das regras.
+ *
+ * Devolve `null` — em vez de lançar — em todo caminho que não produz preço
+ * confiável: integração desligada, frete já gratuito, credencial incompleta,
+ * API fora do ar. Frete é caminho de venda: na dúvida, o valor configurado no
+ * painel prevalece e a loja continua vendendo.
+ */
+async function cotarNosCorreios(
+  ship: ShippingResult,
+  cep: string,
+  pesoGramas: number,
+  exec: Q,
+): Promise<{ cost: number; label: string } | null> {
+  /*
+   * Cada saída registra o motivo no log.
+   *
+   * São cinco caminhos que devolvem null, e do lado de fora todos parecem
+   * iguais: o frete sai pelo valor fixo, sem pista nenhuma. Ficar em silêncio
+   * aqui transforma "por que Acre e Bahia custam o mesmo?" numa investigação.
+   */
+  const pulou = (motivo: string): null => {
+    console.warn(`[queops] frete: Correios não consultados — ${motivo}`);
+    return null;
+  };
+
+  /*
+   * Frete grátis por regra do painel não vira cotação: cotar aqui só trocaria
+   * uma promoção configurada por preço cheio. Não registramos no log porque é
+   * o comportamento pedido, não uma falha.
+   */
+  if (ship.reason.startsWith('free_')) return null;
+  if (normalizeCep(cep) === '') return pulou('CEP de destino inválido');
+
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'correios' AND enabled = 1",
+    );
+    if (!row) return pulou('integração desligada em Painel → Integrações');
+
+    const { integrationSecrets } = await import('./store.ts');
+    const { credsFrom, cotarTodos } = await import('./correios.ts');
+    const creds = credsFrom(await integrationSecrets('correios', exec));
+    if (creds.user === '' || creds.accessCode === '') {
+      return pulou('usuário ou código de acesso não cadastrados');
+    }
+    if ((creds.originCep ?? '').length !== 8) {
+      return pulou('CEP de origem não configurado no painel');
+    }
+
+    const cotacoes = await cotarTodos(creds, cep, pesoGramas);
+    const melhor = cotacoes.find((c) => c.erro === '' && c.preco > 0);
+    if (!melhor) {
+      const erros = cotacoes.map((c) => `${c.nome}: ${c.erro || 'sem preço'}`).join(' · ');
+      return pulou(`nenhum serviço cotou (${erros})`);
+    }
+
+    const prazo = melhor.prazoDias > 0 ? ` — até ${melhor.prazoDias} dias úteis` : '';
+    return { cost: round2(melhor.preco), label: `${melhor.nome}${prazo}` };
+  } catch (e) {
+    // Correios instáveis não podem derrubar o checkout.
+    return pulou(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** "1,2 kg" → 1200 · "800 g" → 800 · "0.5" → 500 (assume kg) · "" → padrão. */
+export function pesoEmGramas(texto: string, padrao = 500): number {
+  const m = texto.match(/([\d.,]+)\s*(kg|g|gramas?|quilos?)?/i);
+  if (!m) return padrao;
+  /*
+   * "1.234" é mil e duzentos; "1.5" é um e meio. O ponto só é separador de
+   * milhar quando vem seguido de exatamente três dígitos — sem essa distinção,
+   * "1.5 kg" virava 15 kg e o frete saía dez vezes maior.
+   */
+  const bruto = m[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.');
+  const n = Number(bruto);
+  if (!Number.isFinite(n) || n <= 0) return padrao;
+  const unidade = (m[2] ?? '').toLowerCase();
+  // Sem unidade: número pequeno quase sempre é kg ("0,5"), grande é grama.
+  if (unidade === '' ) return n < 100 ? Math.round(n * 1000) : Math.round(n);
+  if (unidade.startsWith('k') || unidade.startsWith('q')) return Math.round(n * 1000);
+  return Math.round(n);
+}
+
+/**
  * Cotação completa do carrinho.
  *
  * `exec` permite rodar dentro da transação do pedido, para que o preço lido
@@ -300,6 +411,25 @@ export async function quoteCart(
 
   // ---- 2. Frete -----------------------------------------------------------
   const ship = calculateShipping(await getShipping(exec), subtotal, uf, cep);
+
+  /*
+   * Cotação nos Correios, quando a integração está ligada.
+   *
+   * As regras do painel têm precedência: se alguma delas deu frete grátis
+   * (`free_*`), o grátis vale e nem consultamos a API — cotar aqui só
+   * substituiria uma promoção configurada por um preço cheio.
+   *
+   * Nos demais casos o preço da API entra no lugar do valor fixo. Se a
+   * cotação falhar (API fora do ar, CEP fora de área, credencial vencida), o
+   * valor calculado pelas regras permanece: a loja continua vendendo.
+   */
+  const pesoTotal = pesoDoCarrinho(items, found);
+  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec);
+  if (cotado !== null) {
+    ship.cost = cotado.cost;
+    ship.label = cotado.label;
+    ship.reason = 'correios';
+  }
 
   // ---- 3. Cupom -----------------------------------------------------------
   const [coupon, couponError] = await resolveCoupon(couponCode, subtotal, exec);

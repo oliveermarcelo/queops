@@ -171,10 +171,23 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
     }
   };
 
+  /*
+   * Salva antes de testar, quando há edição pendente.
+   *
+   * O teste roda no servidor contra a credencial CIFRADA no banco — o que está
+   * na tela não viaja junto. Sem salvar primeiro, quem digitou e clicou em
+   * "Testar conexão" recebia "falta preencher" com o campo visivelmente
+   * preenchido, e concluía que o provedor tinha recusado a credencial.
+   */
   const handleTest = async () => {
     setBusy(true);
     setResult(null);
     try {
+      if (dirty) {
+        await updateIntegration(provider.id, { fields: draft, enabled: cfg?.enabled ?? false });
+        setDraft({});
+        setDirty(false);
+      }
       setResult(await testIntegration(provider.id));
     } catch (err) {
       setResult({ ok: false, message: err instanceof Error ? err.message : 'Falha no teste.' });

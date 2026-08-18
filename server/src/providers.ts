@@ -20,13 +20,40 @@ const str = (f: Fields, k: string): string => {
   return v === null || v === undefined || typeof v === 'object' ? '' : String(v);
 };
 
+/**
+ * Rótulos legíveis das credenciais.
+ *
+ * Sem isto a mensagem de campo faltando sai com o nome da chave — "Preencha:
+ * accessCode" — que não corresponde a nada que a pessoa vê na tela.
+ */
+const FIELD_LABELS: Record<string, string> = {
+  accessCode: 'Código de acesso à API',
+  accessToken: 'Access Token',
+  accountId: 'Account ID',
+  agentId: 'Agent ID',
+  apiKey: 'API Key',
+  apiToken: 'API Token',
+  baseUrl: 'URL base',
+  company: 'Empresa',
+  email: 'E-mail',
+  encryptionKey: 'Encryption Key',
+  instance: 'Instância',
+  instanceId: 'Instance ID',
+  postingCard: 'Cartão de postagem',
+  publicKey: 'Public Key',
+  publishableKey: 'Publishable Key',
+  secretKey: 'Secret Key',
+  token: 'Token',
+  user: 'Usuário',
+};
+
 /** Catálogo de provedores e os campos que cada um exige. */
 export const PROVIDERS_META: Record<string, { fields: string[] }> = {
   mercadopago: { fields: ['publicKey', 'accessToken'] },  // webhookSecret é opcional no teste de conexão
   pagseguro: { fields: ['email', 'token'] },
   stripe: { fields: ['publishableKey', 'secretKey'] },
   pagarme: { fields: ['apiKey', 'encryptionKey'] },
-  correios: { fields: ['user', 'password'] },
+  correios: { fields: ['user', 'accessCode', 'postingCard'] },
   melhorenvio: { fields: ['token'] },
   frenet: { fields: ['token'] },
   uno: { fields: ['token', 'company'] },
@@ -179,8 +206,17 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
   const meta = PROVIDERS_META[id];
   if (!meta) return { ok: false, message: 'Provedor desconhecido.' };
 
+  /*
+   * O teste usa as credenciais SALVAS, não o que está na tela — o segredo
+   * nunca trafega de volta ao navegador. Quem digitou e clicou direto em
+   * "Testar conexão" vê este aviso; dizer para salvar antes evita a leitura
+   * errada de que a credencial foi recusada pelo provedor.
+   */
   const missing = meta.fields.filter((k) => str(f, k).trim() === '');
-  if (missing.length) return { ok: false, message: 'Preencha: ' + missing.join(', ') };
+  if (missing.length) {
+    const nomes = missing.map((k) => FIELD_LABELS[k] ?? k).join(', ');
+    return { ok: false, message: `Salve antes de testar. Falta preencher: ${nomes}.` };
+  }
 
   const enc = encodeURIComponent;
   let r: HttpCallResult;
@@ -265,6 +301,19 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
         Authorization: 'Bearer ' + str(f, 'token'),
       });
       return { ok: r.ok, message: r.ok ? 'ERP respondeu OK.' : `Falha (HTTP ${r.status}). ${r.error}` };
+
+    case 'correios': {
+      const { credsFrom, autenticar } = await import('./correios.ts');
+      const creds = credsFrom(f as Record<string, unknown>);
+      const { erro } = await autenticar(creds);
+      if (erro) return { ok: false, message: erro };
+      // Autenticou, mas sem CEP de origem nenhuma cotação sai — melhor avisar
+      // agora do que o cliente descobrir no checkout.
+      if ((creds.originCep ?? '').length !== 8) {
+        return { ok: true, message: 'Correios conectados. Falta o CEP de origem para cotar frete.' };
+      }
+      return { ok: true, message: 'Correios conectados (API CWS).' };
+    }
 
     default:
       // Provedores sem endpoint público de verificação barato.

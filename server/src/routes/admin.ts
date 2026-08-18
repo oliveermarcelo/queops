@@ -341,6 +341,48 @@ adminRoutes.post('/whatsapp/test', h(async (req, res) => {
   jsonOk(res, await providerSendWhatsapp(phone, 'Mensagem de teste — Quéops Pirâmides ✅'));
 }));
 
+/*
+ * PUT /api/admin/orders/:id/tracking — grava o código de rastreio do pedido.
+ *
+ * A consulta aos Correios não acontece aqui: quem quiser o status chama o GET
+ * abaixo. Assim salvar o código continua rápido mesmo com a API instável.
+ */
+adminRoutes.put('/orders/:id/tracking', h(async (req, res) => {
+  await requireAdmin(req);
+  const code = bodyStr(body(req), 'trackingCode', '', 40).trim().toUpperCase().replace(/\s/g, '');
+  if (code !== '' && !/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(code)) {
+    fail('Código de rastreio inválido (formato AA123456789BR).', 422, 'invalid_tracking');
+  }
+  const existe = await q.one('SELECT id FROM orders WHERE id = ?', [req.params.id]);
+  if (!existe) fail('Pedido não encontrado.', 404, 'not_found');
+  await q.run(
+    "UPDATE orders SET tracking_code = ?, tracking_status = '', tracking_at = NULL WHERE id = ?",
+    [code, req.params.id],
+  );
+  jsonOk(res, { trackingCode: code });
+}));
+
+// GET /api/admin/orders/:id/tracking — consulta os Correios e guarda o último status
+adminRoutes.get('/orders/:id/tracking', h(async (req, res) => {
+  await requireAdmin(req);
+  const row = await q.one('SELECT tracking_code FROM orders WHERE id = ?', [req.params.id]);
+  if (!row) fail('Pedido não encontrado.', 404, 'not_found');
+
+  const code = String(row.tracking_code ?? '');
+  if (code === '') jsonOk(res, { trackingCode: '', eventos: [], erro: 'Pedido sem código de rastreio.' });
+
+  const { credsFrom, rastrear } = await import('../correios.ts');
+  const { eventos, erro } = await rastrear(credsFrom(await integrationSecrets('correios')), code);
+
+  if (erro === '' && eventos.length > 0) {
+    await q.run(
+      'UPDATE orders SET tracking_status = ?, tracking_at = NOW() WHERE id = ?',
+      [eventos[0].descricao.slice(0, 190), req.params.id],
+    );
+  }
+  jsonOk(res, { trackingCode: code, eventos, erro });
+}));
+
 // PATCH /api/admin/carts/:id — muda o status do carrinho abandonado
 adminRoutes.patch('/carts/:id', h(async (req, res) => {
   await requireAdmin(req);
