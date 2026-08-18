@@ -758,6 +758,7 @@ var correios_exports = {};
 __export(correios_exports, {
   SERVICO_PAC: () => SERVICO_PAC,
   SERVICO_SEDEX: () => SERVICO_SEDEX,
+  _internos: () => _internos,
   autenticar: () => autenticar,
   cotar: () => cotar,
   cotarTodos: () => cotarTodos,
@@ -777,6 +778,7 @@ function credsFrom(f) {
     accessCode: s("accessCode"),
     postingCard: s("postingCard").replace(/\D/g, ""),
     contract: s("contract"),
+    dr: s("dr"),
     services: s("services"),
     originCep: s("originCep").replace(/\D/g, "")
   };
@@ -825,7 +827,7 @@ function explicar(r, onde = "auth") {
     const detalhe = detalheDoErro(r.body);
     if (detalhe !== "") return detalhe;
     if (onde === "cotacao") {
-      return 'Cota\xE7\xE3o recusada. Confira se os c\xF3digos em "Servi\xE7os a cotar" pertencem ao seu contrato e se o cart\xE3o de postagem est\xE1 correto.';
+      return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Se estiver usando c\xF3digos de contrato (03220, 03298), preencha tamb\xE9m "C\xF3digo do contrato" e "C\xF3digo da DR" \u2014 ou troque em "Servi\xE7os a cotar" pelos c\xF3digos de balc\xE3o: 04014 (Sedex) e 04510 (PAC).';
     }
     return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
   }
@@ -833,14 +835,37 @@ function explicar(r, onde = "auth") {
   return `Correios responderam HTTP ${r.status}.`;
 }
 function detalheDoErro(body2) {
+  const limpo = String(body2 ?? "").trim();
+  if (limpo === "") return "";
   try {
-    const d = JSON.parse(body2);
-    const msg = d.msgs ?? d.msg ?? d.message ?? d.txErro ?? d.error;
-    if (Array.isArray(msg)) return msg.map(String).join(" \xB7 ").slice(0, 300);
-    if (typeof msg === "string" && msg.trim() !== "") return msg.slice(0, 300);
+    const d = JSON.parse(limpo);
+    const candidatos2 = [
+      d.msgs,
+      d.msg,
+      d.message,
+      d.txErro,
+      d.error,
+      d.descricao,
+      d.causa,
+      d.mensagem,
+      d.detail,
+      d.erros
+    ];
+    for (const c of candidatos2) {
+      if (Array.isArray(c) && c.length > 0) {
+        const partes = c.map((x) => {
+          if (typeof x === "string") return x;
+          const o = x;
+          return String(o?.descricao ?? o?.mensagem ?? o?.msg ?? JSON.stringify(x));
+        });
+        return partes.join(" \xB7 ").slice(0, 300);
+      }
+      if (typeof c === "string" && c.trim() !== "") return c.trim().slice(0, 300);
+    }
+    return limpo.slice(0, 300);
   } catch {
+    return limpo.length <= 300 ? limpo : "";
   }
-  return "";
 }
 function moeda(v) {
   const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
@@ -854,22 +879,25 @@ async function cotar(c, servico, cepDestino, pesoGramas, dim = {}) {
   const destino = String(cepDestino ?? "").replace(/\D/g, "");
   if (origem.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
   if (destino.length !== 8) return { ...vazio, erro: "CEP de destino inv\xE1lido." };
-  const corpo = {
-    idLote: "1",
-    parametrosProduto: [{
-      coProduto: servico,
-      nuRequisicao: "1",
-      cepOrigem: origem,
-      cepDestino: destino,
-      psObjeto: String(Math.max(300, Math.round(pesoGramas))),
-      tpObjeto: "2",
-      // pacote
-      comprimento: String(Math.max(16, dim.comprimento ?? 16)),
-      altura: String(Math.max(2, dim.altura ?? 5)),
-      largura: String(Math.max(11, dim.largura ?? 11)),
-      servicosAdicionais: [""]
-    }]
+  const produto = {
+    coProduto: servico,
+    nuRequisicao: "1",
+    cepOrigem: origem,
+    cepDestino: destino,
+    psObjeto: String(Math.max(300, Math.round(pesoGramas))),
+    tpObjeto: "2",
+    // pacote
+    comprimento: String(Math.max(16, dim.comprimento ?? 16)),
+    altura: String(Math.max(2, dim.altura ?? 5)),
+    largura: String(Math.max(11, dim.largura ?? 11))
   };
+  const contrato = (c.contract ?? "").replace(/\D/g, "");
+  const dr = (c.dr ?? "").replace(/\D/g, "");
+  if (contrato !== "" && dr !== "") {
+    produto.nuContrato = contrato;
+    produto.nuDR = dr;
+  }
+  const corpo = { idLote: "1", parametrosProduto: [produto] };
   const auth = { Authorization: "Bearer " + token };
   const [preco, prazo] = await Promise.all([
     httpCall("POST", `${BASE}/preco/v1/nacional`, auth, corpo),
@@ -879,7 +907,13 @@ async function cotar(c, servico, cepDestino, pesoGramas, dim = {}) {
     esquecerToken(c);
     return { ...vazio, erro: "Token expirado; tente de novo." };
   }
-  if (!preco.ok) return { ...vazio, erro: explicar(preco, "cotacao") };
+  if (!preco.ok) {
+    console.error(
+      `[queops] Correios recusaram a cota\xE7\xE3o de ${servico} (HTTP ${preco.status}):`,
+      String(preco.body ?? "").slice(0, 600)
+    );
+    return { ...vazio, erro: explicar(preco, "cotacao") };
+  }
   try {
     const p = JSON.parse(preco.body);
     const item = Array.isArray(p) ? p[0] : null;
@@ -946,7 +980,7 @@ async function rastrear(c, codigo) {
     return { eventos: [], erro: "Resposta inesperada dos Correios ao rastrear." };
   }
 }
-var BASE, SERVICO_PAC, SERVICO_SEDEX, NOMES, cache;
+var BASE, SERVICO_PAC, SERVICO_SEDEX, NOMES, cache, _internos;
 var init_correios = __esm({
   "server/src/correios.ts"() {
     "use strict";
@@ -970,6 +1004,7 @@ var init_correios = __esm({
     __name(esquecerToken, "esquecerToken");
     __name(explicar, "explicar");
     __name(detalheDoErro, "detalheDoErro");
+    _internos = { detalheDoErro };
     __name(moeda, "moeda");
     __name(cotar, "cotar");
     __name(cotarTodos, "cotarTodos");

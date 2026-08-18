@@ -40,6 +40,8 @@ export interface CorreiosCreds {
   accessCode: string;
   postingCard: string;
   contract?: string;
+  /** Código da DR (regional). Obrigatório sempre que o contrato é informado. */
+  dr?: string;
   services?: string;
   originCep?: string;
 }
@@ -52,6 +54,7 @@ export function credsFrom(f: Record<string, unknown>): CorreiosCreds {
     accessCode: s('accessCode'),
     postingCard: s('postingCard').replace(/\D/g, ''),
     contract: s('contract'),
+    dr: s('dr'),
     services: s('services'),
     originCep: s('originCep').replace(/\D/g, ''),
   };
@@ -143,8 +146,16 @@ function explicar(r: HttpCallResult, onde: 'auth' | 'cotacao' | 'rastreio' = 'au
     const detalhe = detalheDoErro(r.body);
     if (detalhe !== '') return detalhe;
     if (onde === 'cotacao') {
-      return 'Cotação recusada. Confira se os códigos em "Serviços a cotar" pertencem '
-        + 'ao seu contrato e se o cartão de postagem está correto.';
+      /*
+       * Os Correios recusaram sem dizer o motivo. O caso mais comum de longe:
+       * códigos 03xxx são de CONTRATO (Sedex/PAC contrato) e só cotam quando o
+       * contrato e a DR vão junto na requisição. Os equivalentes de balcão —
+       * 04014 (Sedex) e 04510 (PAC) — cotam sem contrato nenhum.
+       */
+      return 'Cotação recusada pelos Correios, sem detalhe. Se estiver usando códigos de '
+        + 'contrato (03220, 03298), preencha também "Código do contrato" e "Código da DR" — '
+        + 'ou troque em "Serviços a cotar" pelos códigos de balcão: 04014 (Sedex) e '
+        + '04510 (PAC).';
     }
     return 'Requisição recusada. Confira o número do cartão de postagem.';
   }
@@ -152,18 +163,52 @@ function explicar(r: HttpCallResult, onde: 'auth' | 'cotacao' | 'rastreio' = 'au
   return `Correios responderam HTTP ${r.status}.`;
 }
 
-/** Extrai a mensagem que a CWS manda no corpo do erro, quando manda. */
+/**
+ * Extrai a mensagem que a CWS manda no corpo do erro.
+ *
+ * A CWS não tem um formato só: dependendo do endpoint e da camada que recusou
+ * (gateway ou aplicação), o motivo vem em `msgs`, `descricao`, `causa`,
+ * `mensagem` ou dentro de uma lista `erros`. Cobrir só dois desses nomes
+ * fazia a mensagem verdadeira — "ERP-xxx: tal serviço não pertence ao
+ * contrato" — ser trocada pelo palpite genérico da função acima.
+ *
+ * Se nada casar e ainda assim houver corpo, devolvemos o corpo cru abreviado:
+ * texto técnico é melhor do que texto inventado.
+ */
 function detalheDoErro(body: string): string {
+  const limpo = String(body ?? '').trim();
+  if (limpo === '') return '';
+
   try {
-    const d = JSON.parse(body) as Record<string, unknown>;
-    const msg = d.msgs ?? d.msg ?? d.message ?? d.txErro ?? d.error;
-    if (Array.isArray(msg)) return msg.map(String).join(' · ').slice(0, 300);
-    if (typeof msg === 'string' && msg.trim() !== '') return msg.slice(0, 300);
+    const d = JSON.parse(limpo) as Record<string, unknown>;
+
+    const candidatos = [
+      d.msgs, d.msg, d.message, d.txErro, d.error,
+      d.descricao, d.causa, d.mensagem, d.detail, d.erros,
+    ];
+    for (const c of candidatos) {
+      if (Array.isArray(c) && c.length > 0) {
+        // A lista pode ser de textos ou de objetos {codigo, descricao}.
+        const partes = c.map((x) => {
+          if (typeof x === 'string') return x;
+          const o = x as Record<string, unknown>;
+          return String(o?.descricao ?? o?.mensagem ?? o?.msg ?? JSON.stringify(x));
+        });
+        return partes.join(' · ').slice(0, 300);
+      }
+      if (typeof c === 'string' && c.trim() !== '') return c.trim().slice(0, 300);
+    }
+
+    // JSON sem nenhum campo conhecido: melhor o cru do que nada.
+    return limpo.slice(0, 300);
   } catch {
-    // Corpo não-JSON: nada a aproveitar.
+    // Corpo não-JSON (HTML de gateway, por exemplo): só serve se for curto.
+    return limpo.length <= 300 ? limpo : '';
   }
-  return '';
 }
+
+/** Exposto para teste: é a função que decide se o motivo real chega ao painel. */
+export const _internos = { detalheDoErro };
 
 // ----------------------------------------------------------------- preço -----
 
@@ -205,21 +250,40 @@ export async function cotar(
   if (origem.length !== 8) return { ...vazio, erro: 'CEP de origem não configurado no painel.' };
   if (destino.length !== 8) return { ...vazio, erro: 'CEP de destino inválido.' };
 
-  const corpo = {
-    idLote: '1',
-    parametrosProduto: [{
-      coProduto: servico,
-      nuRequisicao: '1',
-      cepOrigem: origem,
-      cepDestino: destino,
-      psObjeto: String(Math.max(300, Math.round(pesoGramas))),
-      tpObjeto: '2', // pacote
-      comprimento: String(Math.max(16, dim.comprimento ?? 16)),
-      altura: String(Math.max(2, dim.altura ?? 5)),
-      largura: String(Math.max(11, dim.largura ?? 11)),
-      servicosAdicionais: [''],
-    }],
+  const produto: Record<string, unknown> = {
+    coProduto: servico,
+    nuRequisicao: '1',
+    cepOrigem: origem,
+    cepDestino: destino,
+    psObjeto: String(Math.max(300, Math.round(pesoGramas))),
+    tpObjeto: '2', // pacote
+    comprimento: String(Math.max(16, dim.comprimento ?? 16)),
+    altura: String(Math.max(2, dim.altura ?? 5)),
+    largura: String(Math.max(11, dim.largura ?? 11)),
   };
+
+  /*
+   * `servicosAdicionais` NÃO vai como `['']`.
+   *
+   * Uma lista com uma string vazia não é "nenhum serviço adicional" — é um
+   * código de serviço em branco, e a CWS recusa a requisição inteira por causa
+   * dele. Quando não há adicional a pedir, o campo simplesmente não existe.
+   */
+
+  /*
+   * Contrato: `nuDR` é obrigatório quando `nuContrato` é enviado (manual da API
+   * Preço). Mandar um sem o outro derruba a cotação — por isso os dois só
+   * entram juntos, e a ausência dos dois é um caminho válido: sem contrato, a
+   * CWS cota o preço público do serviço.
+   */
+  const contrato = (c.contract ?? '').replace(/\D/g, '');
+  const dr = (c.dr ?? '').replace(/\D/g, '');
+  if (contrato !== '' && dr !== '') {
+    produto.nuContrato = contrato;
+    produto.nuDR = dr;
+  }
+
+  const corpo = { idLote: '1', parametrosProduto: [produto] };
 
   const auth = { Authorization: 'Bearer ' + token };
   const [preco, prazo] = await Promise.all([
@@ -231,7 +295,18 @@ export async function cotar(
     esquecerToken(c);
     return { ...vazio, erro: 'Token expirado; tente de novo.' };
   }
-  if (!preco.ok) return { ...vazio, erro: explicar(preco, 'cotacao') };
+  if (!preco.ok) {
+    /*
+     * O corpo cru vai para o log, sempre. A mensagem do painel é curta por
+     * necessidade; quando ela não bastar, o que os Correios realmente
+     * responderam tem de estar em algum lugar — e é aqui.
+     */
+    console.error(
+      `[queops] Correios recusaram a cotação de ${servico} (HTTP ${preco.status}):`,
+      String(preco.body ?? '').slice(0, 600),
+    );
+    return { ...vazio, erro: explicar(preco, 'cotacao') };
+  }
 
   try {
     const p = JSON.parse(preco.body) as Array<Record<string, unknown>>;
