@@ -207,6 +207,8 @@ export interface Quote {
   shipping: number;
   shippingLabel: string;
   shippingReason?: string;
+  /** Motivo de os Correios não terem cotado. Só chega ao painel. */
+  shippingNote?: string;
   couponCode: string | null;
   couponDiscount: number;
   couponError: string | null;
@@ -258,16 +260,23 @@ async function cotarNosCorreios(
   cep: string,
   pesoGramas: number,
   exec: Q,
+  diagnostico: { motivo: string },
 ): Promise<{ cost: number; label: string } | null> {
   /*
-   * Cada saída registra o motivo no log.
+   * Cada saída registra o motivo — no log E no objeto de diagnóstico.
    *
    * São cinco caminhos que devolvem null, e do lado de fora todos parecem
    * iguais: o frete sai pelo valor fixo, sem pista nenhuma. Ficar em silêncio
    * aqui transforma "por que Acre e Bahia custam o mesmo?" numa investigação.
+   *
+   * O log sozinho não resolvia: quem cuida da loja não tem SSH, e a diferença
+   * entre "os Correios estão fora do ar" e "falta o CEP de origem" é a
+   * diferença entre esperar e resolver. Por isso o motivo volta na cotação —
+   * mas só para quem está logado no painel (ver a rota /checkout/quote).
    */
   const pulou = (motivo: string): null => {
     console.warn(`[queops] frete: Correios não consultados — ${motivo}`);
+    diagnostico.motivo = motivo;
     return null;
   };
 
@@ -424,7 +433,8 @@ export async function quoteCart(
    * valor calculado pelas regras permanece: a loja continua vendendo.
    */
   const pesoTotal = pesoDoCarrinho(items, found);
-  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec);
+  const diagnosticoFrete = { motivo: '' };
+  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec, diagnosticoFrete);
   if (cotado !== null) {
     ship.cost = cotado.cost;
     ship.label = cotado.label;
@@ -458,6 +468,12 @@ export async function quoteCart(
     shipping: ship.cost,
     shippingLabel: ship.label,
     shippingReason: ship.reason,
+    /*
+     * Por que os Correios não entraram nesta cotação. Vazio quando entraram
+     * (ou quando o frete grátis do painel tinha precedência, que é regra e não
+     * falha). A rota só entrega este campo para administradores.
+     */
+    shippingNote: diagnosticoFrete.motivo,
     couponCode: coupon?.code ?? null,
     couponDiscount,
     couponError,

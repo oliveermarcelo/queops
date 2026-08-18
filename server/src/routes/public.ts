@@ -106,13 +106,23 @@ publicRoutes.get('/products/:id', h(async (req, res) => {
 // POST /api/checkout/quote — prévia de frete/cupom/total (sem gravar nada)
 publicRoutes.post('/checkout/quote', h(async (req, res) => {
   const b = body(req);
-  jsonOk(res, await quoteCart(
+  const cotacao = await quoteCart(
     b.items,
     bodyStr(b, 'state', '', 2),
     bodyStr(b, 'cep', '', 12),
     bodyStr(b, 'coupon', '', 40),
     bodyStr(b, 'payment', 'card', 10),
-  ));
+  );
+
+  /*
+   * O motivo de os Correios não terem cotado é informação de bastidor: útil
+   * para quem cuida da loja, ruído (e às vezes constrangimento) para o cliente,
+   * que não precisa saber que falta cadastrar um CEP de origem. Então só sai
+   * para quem está logado no painel — para todo o resto, o campo nem existe.
+   */
+  const { shippingNote, ...publico } = cotacao;
+  const admin = await currentAdmin(req);
+  jsonOk(res, admin === null || !shippingNote ? publico : { ...publico, shippingNote });
 }));
 
 // POST /api/orders — cria o pedido de verdade

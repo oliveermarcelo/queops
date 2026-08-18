@@ -30,6 +30,15 @@ interface ShippingEstimate {
   shippingLabel: string;
   deliveryDays: number;
   uf: string;
+  /**
+   * Por que os Correios não cotaram este frete.
+   *
+   * O servidor só manda este campo para quem está logado no painel — o cliente
+   * nunca o recebe. É o que permite descobrir na própria tela, sem SSH, se o
+   * valor saiu da tabela fixa porque falta o CEP de origem ou porque a API dos
+   * Correios recusou a cotação.
+   */
+  shippingNote?: string;
 }
 
 export default function ProductDetailPage({
@@ -495,6 +504,13 @@ export default function ProductDetailPage({
                           {shippingResult.deliveryDays} dias úteis
                         </span>
                       </div>
+                      {/* Só chega para administradores; o cliente nunca vê. */}
+                      {shippingResult.shippingNote && (
+                        <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-normal mt-1 mb-0">
+                          <strong>Só você vê isto (painel):</strong> este valor veio da tabela de
+                          frete, não dos Correios — {shippingResult.shippingNote}
+                        </p>
+                      )}
                       <p className="text-[11px] text-gray-500 leading-normal pt-1">
                         Cada peça segue com embalagem reforçada para pirâmides e cristais. O valor
                         final é confirmado no checkout.

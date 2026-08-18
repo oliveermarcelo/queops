@@ -2509,9 +2509,10 @@ function pesoDoCarrinho(items, found) {
   return Math.max(300, Math.round(total));
 }
 __name(pesoDoCarrinho, "pesoDoCarrinho");
-async function cotarNosCorreios(ship, cep, pesoGramas, exec) {
+async function cotarNosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
   const pulou = /* @__PURE__ */ __name((motivo) => {
     console.warn(`[queops] frete: Correios n\xE3o consultados \u2014 ${motivo}`);
+    diagnostico.motivo = motivo;
     return null;
   }, "pulou");
   if (ship.reason.startsWith("free_")) return null;
@@ -2623,7 +2624,8 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
   subtotal = round2(subtotal);
   const ship = calculateShipping(await getShipping(exec), subtotal, uf, cep);
   const pesoTotal = pesoDoCarrinho(items, found);
-  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec);
+  const diagnosticoFrete = { motivo: "" };
+  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec, diagnosticoFrete);
   if (cotado !== null) {
     ship.cost = cotado.cost;
     ship.label = cotado.label;
@@ -2646,6 +2648,12 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
     shipping: ship.cost,
     shippingLabel: ship.label,
     shippingReason: ship.reason,
+    /*
+     * Por que os Correios não entraram nesta cotação. Vazio quando entraram
+     * (ou quando o frete grátis do painel tinha precedência, que é regra e não
+     * falha). A rota só entrega este campo para administradores.
+     */
+    shippingNote: diagnosticoFrete.motivo,
     couponCode: coupon?.code ?? null,
     couponDiscount,
     couponError,
@@ -2720,13 +2728,16 @@ publicRoutes.get("/products/:id", h(async (req, res) => {
 }));
 publicRoutes.post("/checkout/quote", h(async (req, res) => {
   const b = body(req);
-  jsonOk(res, await quoteCart(
+  const cotacao = await quoteCart(
     b.items,
     bodyStr(b, "state", "", 2),
     bodyStr(b, "cep", "", 12),
     bodyStr(b, "coupon", "", 40),
     bodyStr(b, "payment", "card", 10)
-  ));
+  );
+  const { shippingNote, ...publico } = cotacao;
+  const admin = await currentAdmin(req);
+  jsonOk(res, admin === null || !shippingNote ? publico : { ...publico, shippingNote });
 }));
 publicRoutes.post("/orders", h(async (req, res) => {
   const b = body(req);

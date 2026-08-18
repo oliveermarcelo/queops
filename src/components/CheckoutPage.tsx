@@ -39,6 +39,8 @@ interface Quote {
   subtotal: number;
   shipping: number;
   shippingLabel: string;
+  /** Por que os Correios não cotaram. O servidor só manda para o painel. */
+  shippingNote?: string;
   couponCode: string | null;
   couponDiscount: number;
   couponError: string | null;
@@ -945,6 +947,13 @@ export default function CheckoutPage({
                         : `R$ ${brlNumber(shippingCost)}`}
                   </span>
                 </div>
+                {/* Bastidor: só chega para quem está logado no painel. */}
+                {quote?.shippingNote && (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-normal m-0">
+                    <strong>Só você vê isto (painel):</strong> frete da tabela fixa, não dos
+                    Correios — {quote.shippingNote}
+                  </p>
+                )}
                 <div className="flex justify-between items-baseline pt-3.5 border-t border-dashed border-gray-200">
                   <span className="font-bold text-gray-900">Total</span>
                   <span className="text-2xl font-extrabold text-primary-blue">
