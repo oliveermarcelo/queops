@@ -59,6 +59,12 @@ function env(name, fallback = "") {
   const v = process.env[name];
   return v === void 0 || v === "" ? fallback : v;
 }
+function detectPublicDir() {
+  for (const pasta of ["public", "dist"]) {
+    if ((0, import_node_fs2.existsSync)(import_node_path2.default.join(process.cwd(), pasta, "index.html"))) return pasta;
+  }
+  return "public";
+}
 function envBool(name, fallback) {
   const v = process.env[name];
   if (v === void 0 || v === "") return fallback;
@@ -77,12 +83,15 @@ function configProblems() {
   }
   return p;
 }
-var config;
+var import_node_fs2, import_node_path2, config;
 var init_config = __esm({
   "server/src/config.ts"() {
     "use strict";
     init_env();
+    import_node_fs2 = require("node:fs");
+    import_node_path2 = __toESM(require("node:path"), 1);
     __name(env, "env");
+    __name(detectPublicDir, "detectPublicDir");
     __name(envBool, "envBool");
     config = {
       env: env("APP_ENV", "production") === "development" ? "development" : "production",
@@ -101,7 +110,7 @@ var init_config = __esm({
       appKey: env("APP_KEY"),
       appUrl: env("APP_URL", "https://queopspiramides.com.br"),
       secureCookies: envBool("SECURE_COOKIES", true),
-      publicDir: env("PUBLIC_DIR", "public"),
+      publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");
@@ -281,8 +290,8 @@ var init_db = __esm({
 });
 
 // server/src/diagnostico.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_node_fs3 = require("node:fs");
+var import_node_path3 = __toESM(require("node:path"), 1);
 init_config();
 var linhas = [];
 var ok = /* @__PURE__ */ __name((rotulo, texto) => linhas.push(["ok", rotulo, texto]), "ok");
@@ -345,20 +354,20 @@ async function main() {
   }
   ok("APP_ENV", config.env);
   ok("SECURE_COOKIES", String(config.secureCookies));
-  const publicDir = import_node_path2.default.resolve(process.cwd(), config.publicDir);
-  if ((0, import_node_fs2.existsSync)(import_node_path2.default.join(publicDir, "index.html"))) {
+  const publicDir = import_node_path3.default.resolve(process.cwd(), config.publicDir);
+  if ((0, import_node_fs3.existsSync)(import_node_path3.default.join(publicDir, "index.html"))) {
     ok(`Vitrine (${config.publicDir}/index.html)`, "presente");
   } else {
     erro(`Vitrine (${config.publicDir}/index.html)`, "AUSENTE \u2014 o conte\xFAdo de deploy/ n\xE3o subiu, ou PUBLIC_DIR aponta para outra pasta");
   }
   for (const arquivo of ["db/schema.sql", "db/catalog.json"]) {
-    if ((0, import_node_fs2.existsSync)(import_node_path2.default.resolve(process.cwd(), arquivo))) {
+    if ((0, import_node_fs3.existsSync)(import_node_path3.default.resolve(process.cwd(), arquivo))) {
       ok(arquivo, "presente");
     } else {
       aviso(arquivo, "ausente \u2014 necess\xE1rio para rodar o migrate.js");
     }
   }
-  if ((0, import_node_fs2.existsSync)(import_node_path2.default.resolve(process.cwd(), "node_modules/express"))) {
+  if ((0, import_node_fs3.existsSync)(import_node_path3.default.resolve(process.cwd(), "node_modules/express"))) {
     ok("Depend\xEAncias instaladas", "node_modules presente");
   } else {
     erro("Depend\xEAncias instaladas", 'AUSENTES \u2014 clique em "Run NPM Install" no hPanel');
@@ -429,7 +438,7 @@ async function main() {
     }
   }
   try {
-    const catalogo = JSON.parse((0, import_node_fs2.readFileSync)(import_node_path2.default.resolve(process.cwd(), "db/catalog.json"), "utf8"));
+    const catalogo = JSON.parse((0, import_node_fs3.readFileSync)(import_node_path3.default.resolve(process.cwd(), "db/catalog.json"), "utf8"));
     const produtos = catalogo.products ?? [];
     const remotas = produtos.filter((p) => /^https?:\/\//i.test(p.image ?? "")).length;
     if (remotas === 0) {

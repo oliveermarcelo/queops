@@ -182,6 +182,16 @@ export default function CartaoMercadoPago({
           >
             <RotateCcw size={13} aria-hidden="true" /> Tentar de novo
           </button>
+          {/*
+            Quem chegou até aqui quer comprar. Bloqueio de rede, extensão do
+            navegador ou rede corporativa impedem o formulário de cartão e não
+            têm solução do nosso lado — mas o Pix não depende de nada disso.
+            Dizer isso agora é a diferença entre a venda e a desistência.
+          */}
+          <p className="text-[12px] text-red-600/90 m-0">
+            Enquanto isso, o <strong>Pix</strong> funciona: escolha ali acima, que a aprovação é na
+            hora.
+          </p>
         </div>
       )}
     </div>

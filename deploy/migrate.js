@@ -24,8 +24,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // server/src/migrate.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_node_fs3 = require("node:fs");
+var import_node_path3 = __toESM(require("node:path"), 1);
 
 // server/src/auth.ts
 var import_node_crypto = require("node:crypto");
@@ -50,11 +50,20 @@ for (const arquivo of candidatos) {
 }
 
 // server/src/config.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path2 = __toESM(require("node:path"), 1);
 function env(name, fallback = "") {
   const v = process.env[name];
   return v === void 0 || v === "" ? fallback : v;
 }
 __name(env, "env");
+function detectPublicDir() {
+  for (const pasta of ["public", "dist"]) {
+    if ((0, import_node_fs2.existsSync)(import_node_path2.default.join(process.cwd(), pasta, "index.html"))) return pasta;
+  }
+  return "public";
+}
+__name(detectPublicDir, "detectPublicDir");
 function envBool(name, fallback) {
   const v = process.env[name];
   if (v === void 0 || v === "") return fallback;
@@ -78,7 +87,7 @@ var config = {
   appKey: env("APP_KEY"),
   appUrl: env("APP_URL", "https://queopspiramides.com.br"),
   secureCookies: envBool("SECURE_COOKIES", true),
-  publicDir: env("PUBLIC_DIR", "public"),
+  publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
   trustProxy: envBool("TRUST_PROXY", true)
 };
 function configProblems() {
@@ -315,12 +324,12 @@ __name(configSet, "configSet");
 // server/src/migrate.ts
 function dbDir() {
   const candidatos2 = [
-    import_node_path2.default.resolve(process.cwd(), "server/db"),
-    import_node_path2.default.resolve(process.cwd(), "db")
+    import_node_path3.default.resolve(process.cwd(), "server/db"),
+    import_node_path3.default.resolve(process.cwd(), "db")
   ];
   for (const c of candidatos2) {
     try {
-      (0, import_node_fs2.readFileSync)(import_node_path2.default.join(c, "schema.sql"));
+      (0, import_node_fs3.readFileSync)(import_node_path3.default.join(c, "schema.sql"));
       return c;
     } catch {
     }
@@ -373,10 +382,41 @@ async function addMissingColumns(noComments) {
   return adicionadas;
 }
 __name(addMissingColumns, "addMissingColumns");
+var INDICES = [
+  {
+    tabela: "orders",
+    nome: "uq_order_payment_ref",
+    // Único: é por ele que o webhook do provedor encontra o pedido, e o mesmo
+    // pagamento não pode acabar vinculado a dois pedidos diferentes.
+    definicao: "UNIQUE KEY uq_order_payment_ref (payment_ref)"
+  }
+];
+async function addMissingIndexes() {
+  let criados = 0;
+  for (const { tabela, nome, definicao } of INDICES) {
+    const existe = await q.one(
+      `SELECT 1 AS ok FROM information_schema.statistics
+        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
+        LIMIT 1`,
+      [tabela, nome]
+    );
+    if (existe) continue;
+    try {
+      await q.run(`ALTER TABLE \`${tabela}\` ADD ${definicao}`);
+      say(`  + \xEDndice ${tabela}.${nome}`);
+      criados++;
+    } catch (e) {
+      const err = e;
+      say(`  ! n\xE3o consegui criar ${tabela}.${nome}: ${err.code ?? ""} ${err.message ?? ""}`.trimEnd());
+    }
+  }
+  return criados;
+}
+__name(addMissingIndexes, "addMissingIndexes");
 async function importCatalog(dir) {
   let catalog;
   try {
-    catalog = JSON.parse((0, import_node_fs2.readFileSync)(import_node_path2.default.join(dir, "catalog.json"), "utf8"));
+    catalog = JSON.parse((0, import_node_fs3.readFileSync)(import_node_path3.default.join(dir, "catalog.json"), "utf8"));
   } catch {
     say("catalog.json ausente \u2014 pulei a carga do cat\xE1logo.");
     return;
@@ -569,7 +609,7 @@ async function main() {
   }
   const opts = parseArgs(process.argv.slice(2));
   const dir = dbDir();
-  const sql = (0, import_node_fs2.readFileSync)(import_node_path2.default.join(dir, "schema.sql"), "utf8");
+  const sql = (0, import_node_fs3.readFileSync)(import_node_path3.default.join(dir, "schema.sql"), "utf8");
   const { statements, noComments } = splitStatements(sql);
   for (const stmt of statements) {
     await q.run(stmt);
@@ -577,6 +617,8 @@ async function main() {
   say(`Tabelas criadas/verificadas: ${statements.length} comandos.`);
   const adicionadas = await addMissingColumns(noComments);
   say(adicionadas === 0 ? "Nenhuma coluna nova a adicionar." : `Colunas adicionadas: ${adicionadas}.`);
+  const indices = await addMissingIndexes();
+  say(indices === 0 ? "Nenhum \xEDndice novo a adicionar." : `\xCDndices adicionados: ${indices}.`);
   await importCatalog(dir);
   const padroes = [
     ["settings", DEFAULT_SETTINGS],

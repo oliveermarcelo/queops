@@ -59,6 +59,12 @@ function env(name, fallback = "") {
   const v = process.env[name];
   return v === void 0 || v === "" ? fallback : v;
 }
+function detectPublicDir() {
+  for (const pasta of ["public", "dist"]) {
+    if ((0, import_node_fs2.existsSync)(import_node_path2.default.join(process.cwd(), pasta, "index.html"))) return pasta;
+  }
+  return "public";
+}
 function envBool(name, fallback) {
   const v = process.env[name];
   if (v === void 0 || v === "") return fallback;
@@ -77,12 +83,15 @@ function configProblems() {
   }
   return p;
 }
-var config;
+var import_node_fs2, import_node_path2, config;
 var init_config = __esm({
   "server/src/config.ts"() {
     "use strict";
     init_env();
+    import_node_fs2 = require("node:fs");
+    import_node_path2 = __toESM(require("node:path"), 1);
     __name(env, "env");
+    __name(detectPublicDir, "detectPublicDir");
     __name(envBool, "envBool");
     config = {
       env: env("APP_ENV", "production") === "development" ? "development" : "production",
@@ -101,7 +110,7 @@ var init_config = __esm({
       appKey: env("APP_KEY"),
       appUrl: env("APP_URL", "https://queopspiramides.com.br"),
       secureCookies: envBool("SECURE_COOKIES", true),
-      publicDir: env("PUBLIC_DIR", "public"),
+      publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");
@@ -723,6 +732,7 @@ var init_store = __esm({
       "clientToken",
       "password",
       "encryptionKey",
+      "webhookSecret",
       "accessCode"
     ];
     __name(isPlainObject, "isPlainObject");
@@ -1210,6 +1220,7 @@ var init_providers = __esm({
     };
     PROVIDERS_META = {
       mercadopago: { fields: ["publicKey", "accessToken"] },
+      // webhookSecret é opcional no teste de conexão
       pagseguro: { fields: ["email", "token"] },
       stripe: { fields: ["publishableKey", "secretKey"] },
       pagarme: { fields: ["apiKey", "encryptionKey"] },
@@ -1236,10 +1247,10 @@ var init_providers = __esm({
 });
 
 // server/src/app.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_node_fs3 = require("node:fs");
+var import_node_path3 = __toESM(require("node:path"), 1);
 var import_compression = __toESM(require("compression"), 1);
-var import_express5 = __toESM(require("express"), 1);
+var import_express6 = __toESM(require("express"), 1);
 
 // server/src/auth.ts
 var import_node_crypto2 = require("node:crypto");
@@ -1402,6 +1413,29 @@ __name(requireApiKey, "requireApiKey");
 
 // server/src/app.ts
 init_config();
+
+// server/src/csp.ts
+var MP_SCRIPT = "https://sdk.mercadopago.com https://*.mercadopago.com https://*.mlstatic.com";
+var MP_CONEXAO = "https://*.mercadopago.com https://*.mercadopago.com.br https://*.mlstatic.com";
+var MP_IFRAME = "https://*.mercadopago.com https://*.mercadopago.com.br https://*.mercadolibre.com";
+var COMUNS = [
+  "default-src 'self'",
+  `script-src 'self' ${MP_SCRIPT}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' https: data:",
+  "font-src 'self' data:",
+  `connect-src 'self' ${MP_CONEXAO}`,
+  `frame-src ${MP_IFRAME}`,
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "upgrade-insecure-requests"
+];
+var CSP_META = COMUNS.join("; ");
+var CSP_LOJA = [...COMUNS, "frame-ancestors 'none'"].join("; ");
+var CSP_API = "default-src 'none'; frame-ancestors 'none'";
+
+// server/src/app.ts
 init_errors();
 init_http();
 
@@ -2045,7 +2079,273 @@ __name(safeImageUrl, "safeImageUrl");
 var import_express3 = require("express");
 init_db();
 init_errors();
+init_config();
 init_http();
+
+// server/src/payments/mercadopago.ts
+var import_mercadopago = require("mercadopago");
+init_errors();
+init_store();
+init_db();
+var PROVEDOR = "mercadopago";
+async function credenciais(exec = q) {
+  const f = await integrationSecrets(PROVEDOR, exec);
+  const texto = /* @__PURE__ */ __name((k) => {
+    const v = f[k];
+    return v === null || v === void 0 || typeof v === "object" ? "" : String(v).trim();
+  }, "texto");
+  const accessToken = texto("accessToken");
+  if (accessToken === "") return null;
+  return {
+    publicKey: texto("publicKey"),
+    accessToken,
+    webhookSecret: texto("webhookSecret")
+  };
+}
+__name(credenciais, "credenciais");
+async function habilitado(exec = q) {
+  const row = await exec.one("SELECT enabled FROM integrations WHERE id = ?", [PROVEDOR]);
+  if (!row?.enabled) return false;
+  return await credenciais(exec) !== null;
+}
+__name(habilitado, "habilitado");
+function cliente(cred) {
+  return new import_mercadopago.Order(
+    new import_mercadopago.MercadoPagoConfig({
+      accessToken: cred.accessToken,
+      options: { timeout: 15e3 }
+    })
+  );
+}
+__name(cliente, "cliente");
+function ambiente(cred) {
+  return cred.accessToken.startsWith("TEST-") ? "teste" : "producao";
+}
+__name(ambiente, "ambiente");
+function traduzirStatus(status, detalhe) {
+  const s = String(status ?? "").toLowerCase();
+  const d = String(detalhe ?? "").toLowerCase();
+  if (s === "processed" || s === "approved" || d === "accredited") return "aprovado";
+  if (s === "action_required" || s === "pending" || s === "in_process" || s === "authorized" || s === "created" || d === "waiting_transfer" || d === "pending_capture") {
+    return "aguardando";
+  }
+  return "recusado";
+}
+__name(traduzirStatus, "traduzirStatus");
+function motivoRecusa(detalhe) {
+  const mapa = {
+    cc_rejected_bad_filled_card_number: "Confira o n\xFAmero do cart\xE3o.",
+    cc_rejected_bad_filled_date: "Confira a data de validade do cart\xE3o.",
+    cc_rejected_bad_filled_security_code: "Confira o c\xF3digo de seguran\xE7a (CVV).",
+    cc_rejected_bad_filled_other: "Confira os dados do cart\xE3o.",
+    cc_rejected_insufficient_amount: "O cart\xE3o n\xE3o tem limite suficiente para esta compra.",
+    cc_rejected_high_risk: "O pagamento foi recusado pelo banco. Tente outro cart\xE3o ou pague com Pix.",
+    cc_rejected_max_attempts: "Muitas tentativas com este cart\xE3o. Tente outro ou pague com Pix.",
+    cc_rejected_call_for_authorize: "Ligue para o seu banco e autorize o valor desta compra.",
+    cc_rejected_card_disabled: "O cart\xE3o est\xE1 desativado. Fale com o seu banco.",
+    cc_rejected_duplicated_payment: "Este pagamento j\xE1 foi feito. Confira antes de tentar de novo.",
+    cc_rejected_card_error: "N\xE3o foi poss\xEDvel processar o cart\xE3o. Tente novamente.",
+    cc_rejected_blacklist: "O pagamento n\xE3o foi autorizado. Tente outro cart\xE3o ou pague com Pix.",
+    cc_rejected_invalid_installments: "O cart\xE3o n\xE3o aceita esse n\xFAmero de parcelas.",
+    rejected_by_bank: "O banco recusou a compra. Tente outro cart\xE3o ou pague com Pix.",
+    expired: "O prazo para pagamento expirou."
+  };
+  return mapa[String(detalhe ?? "").toLowerCase()] ?? "O pagamento n\xE3o foi aprovado. Tente outro cart\xE3o ou pague com Pix.";
+}
+__name(motivoRecusa, "motivoRecusa");
+function valor(n) {
+  return (Math.round(n * 100) / 100).toFixed(2);
+}
+__name(valor, "valor");
+function chaveIdempotencia(orderId, tentativa) {
+  return `queops-${orderId}-${tentativa}`;
+}
+__name(chaveIdempotencia, "chaveIdempotencia");
+function primeiroPagamento(resposta) {
+  const transacoes = resposta?.transactions?.payments;
+  return Array.isArray(transacoes) && transacoes.length > 0 ? transacoes[0] : null;
+}
+__name(primeiroPagamento, "primeiroPagamento");
+function lerPix(pagamento) {
+  const metodo = pagamento?.payment_method ?? {};
+  const copiaECola = String(metodo.qr_code ?? "");
+  const qrCodeBase64 = String(metodo.qr_code_base64 ?? "");
+  if (copiaECola === "" && qrCodeBase64 === "") return void 0;
+  return {
+    copiaECola,
+    qrCodeBase64,
+    expiraEm: pagamento?.expiration_time ? String(pagamento.expiration_time) : null
+  };
+}
+__name(lerPix, "lerPix");
+async function cobrar(dados, cred, tentativa = 0) {
+  const pagamento = { amount: valor(dados.total) };
+  if (dados.metodo === "card") {
+    pagamento.payment_method = {
+      id: dados.paymentMethodId,
+      type: "credit_card",
+      token: dados.token,
+      installments: dados.parcelas,
+      // Aparece na fatura do cliente. Cartão com nome irreconhecível vira
+      // contestação — e contestação custa mais caro que a venda.
+      statement_descriptor: "QUEOPS"
+    };
+  } else {
+    pagamento.payment_method = { id: "pix", type: "bank_transfer" };
+    pagamento.expiration_time = `PT${dados.expiraEmMinutos}M`;
+  }
+  const corpo = {
+    type: "online",
+    processing_mode: "automatic",
+    total_amount: valor(dados.total),
+    external_reference: dados.orderId,
+    description: dados.descricao,
+    payer: {
+      email: dados.pagador.email,
+      first_name: dados.pagador.nome,
+      last_name: dados.pagador.sobrenome,
+      identification: { type: "CPF", number: dados.pagador.cpf }
+    },
+    transactions: { payments: [pagamento] },
+    config: { online: { callback_url: dados.webhookUrl } }
+  };
+  let resposta;
+  try {
+    resposta = await cliente(cred).create({
+      body: corpo,
+      requestOptions: { idempotencyKey: chaveIdempotencia(dados.orderId, tentativa) }
+    });
+  } catch (e) {
+    const err = e;
+    console.error("[queops] falha ao cobrar no Mercado Pago:", err.status ?? "", err.message ?? e);
+    fail(
+      "N\xE3o conseguimos falar com o meio de pagamento. Nada foi cobrado \u2014 tente de novo em instantes.",
+      502,
+      "gateway_unavailable",
+      e
+    );
+  }
+  const pago = primeiroPagamento(resposta);
+  const status = String(pago?.status ?? resposta?.status ?? "");
+  const detalhe = String(pago?.status_detail ?? resposta?.status_detail ?? "");
+  const traduzido = traduzirStatus(status, detalhe);
+  return {
+    status: traduzido,
+    // O id do PEDIDO no MP é o que o webhook manda de volta; guardamos ele.
+    ref: String(resposta?.id ?? ""),
+    detalhe: detalhe || status,
+    pix: dados.metodo === "pix" ? lerPix(pago) : void 0,
+    mensagem: traduzido === "recusado" ? motivoRecusa(detalhe) : void 0
+  };
+}
+__name(cobrar, "cobrar");
+async function consultarPedido(ref, cred) {
+  try {
+    const resposta = await cliente(cred).get({ id: ref });
+    const pago = primeiroPagamento(resposta);
+    const status = String(pago?.status ?? resposta?.status ?? "");
+    const detalhe = String(pago?.status_detail ?? resposta?.status_detail ?? "");
+    return {
+      status: traduzirStatus(status, detalhe),
+      detalhe: detalhe || status,
+      orderId: String(resposta?.external_reference ?? "")
+    };
+  } catch (e) {
+    const err = e;
+    console.error("[queops] falha ao consultar pedido no Mercado Pago:", ref, err.status ?? "", err.message ?? e);
+    return null;
+  }
+}
+__name(consultarPedido, "consultarPedido");
+
+// server/src/payments/pedidos.ts
+init_db();
+init_providers();
+var JA_RESOLVIDO = ["paid", "shipped", "delivered"];
+async function devolverEstoque(tx, orderId) {
+  const marcou = await tx.run(
+    "UPDATE orders SET stock_restored = 1 WHERE id = ? AND stock_restored = 0",
+    [orderId]
+  );
+  if (marcou === 0) return false;
+  const itens = await tx.all(
+    "SELECT product_id, quantity FROM order_items WHERE order_id = ?",
+    [orderId]
+  );
+  for (const item of itens) {
+    await tx.run("UPDATE products SET stock = stock + ? WHERE id = ?", [
+      Number(item.quantity) || 0,
+      item.product_id
+    ]);
+  }
+  return true;
+}
+__name(devolverEstoque, "devolverEstoque");
+async function aplicarPagamento(opts) {
+  const { orderId, status, detalhe, provedor, ref } = opts;
+  const resultado = await transaction(async (tx) => {
+    const pedido = await tx.one("SELECT * FROM orders WHERE id = ? FOR UPDATE", [orderId]);
+    if (pedido === null) {
+      return { mudou: false, status: "pending", estoqueDevolvido: false };
+    }
+    const atual = String(pedido.status);
+    if (ref && ref !== "" && !pedido.payment_ref) {
+      await tx.run("UPDATE orders SET payment_provider = ?, payment_ref = ? WHERE id = ?", [
+        provedor,
+        ref,
+        orderId
+      ]);
+    }
+    if (JA_RESOLVIDO.includes(atual)) {
+      return { mudou: false, status: atual, estoqueDevolvido: false };
+    }
+    if (status === "aprovado") {
+      await tx.run(
+        `UPDATE orders
+            SET status = 'paid',
+                payment_detail = ?,
+                paid_at = COALESCE(paid_at, NOW())
+          WHERE id = ?`,
+        [detalhe.slice(0, 60), orderId]
+      );
+      return { mudou: true, status: "paid", estoqueDevolvido: false };
+    }
+    if (status === "recusado") {
+      const devolveu = await devolverEstoque(tx, orderId);
+      await tx.run(
+        "UPDATE orders SET status = 'canceled', payment_detail = ? WHERE id = ?",
+        [detalhe.slice(0, 60), orderId]
+      );
+      return {
+        mudou: atual !== "canceled",
+        status: "canceled",
+        estoqueDevolvido: devolveu
+      };
+    }
+    await tx.run("UPDATE orders SET status = 'pending', payment_detail = ? WHERE id = ?", [
+      detalhe.slice(0, 60),
+      orderId
+    ]);
+    return { mudou: atual !== "pending", status: "pending", estoqueDevolvido: false };
+  });
+  if (resultado.mudou) {
+    fireWebhooks("order.status_changed", { orderId, status: resultado.status, detalhe });
+  }
+  return resultado;
+}
+__name(aplicarPagamento, "aplicarPagamento");
+async function cancelarSemCobranca(orderId, motivo) {
+  await transaction(async (tx) => {
+    const pedido = await tx.one("SELECT status FROM orders WHERE id = ? FOR UPDATE", [orderId]);
+    if (pedido === null || JA_RESOLVIDO.includes(String(pedido.status))) return;
+    await devolverEstoque(tx, orderId);
+    await tx.run("UPDATE orders SET status = 'canceled', payment_detail = ? WHERE id = ?", [
+      motivo.slice(0, 60),
+      orderId
+    ]);
+  });
+}
+__name(cancelarSemCobranca, "cancelarSemCobranca");
 
 // server/src/pricing.ts
 init_db();
@@ -2355,6 +2655,21 @@ publicRoutes.get("/session", h(async (req, res) => {
     customer: currentCustomerId(req) !== null
   });
 }));
+publicRoutes.get("/payments/config", h(async (_req, res) => {
+  const settings = await getSettings();
+  const metodos = settings.payments ?? {};
+  const cred = await habilitado() ? await credenciais() : null;
+  jsonOk(res, {
+    provider: PROVEDOR,
+    enabled: cred !== null && cred.publicKey !== "",
+    publicKey: cred?.publicKey ?? "",
+    // 'teste' aparece como aviso na tela: ninguém deve concluir uma compra de
+    // verdade achando que pagou num ambiente onde o dinheiro não se move.
+    ambiente: cred === null ? null : ambiente(cred),
+    installmentsMax: INSTALLMENTS_MAX,
+    methods: { card: metodos.card !== false, pix: metodos.pix !== false }
+  });
+}));
 publicRoutes.get("/catalog", h(async (_req, res) => {
   const parents = await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC");
   const children = /* @__PURE__ */ new Map();
@@ -2407,7 +2722,7 @@ publicRoutes.post("/orders", h(async (req, res) => {
   if (!validEmail(email)) fail("Informe um e-mail v\xE1lido.", 422, "invalid_email");
   if (digits(phone).length < 10) fail("Informe um telefone com DDD.", 422, "invalid_phone");
   if (!validCpf(cpf)) fail("CPF inv\xE1lido.", 422, "invalid_cpf");
-  if (!["card", "pix", "boleto"].includes(payment)) fail("Forma de pagamento inv\xE1lida.", 422, "invalid_payment");
+  if (!["card", "pix"].includes(payment)) fail("Forma de pagamento inv\xE1lida.", 422, "invalid_payment");
   const settings = await getSettings();
   if (!settings.payments?.[payment]) {
     fail("Esta forma de pagamento n\xE3o est\xE1 dispon\xEDvel.", 422, "payment_disabled");
@@ -2418,6 +2733,28 @@ publicRoutes.post("/orders", h(async (req, res) => {
   if (normalizeCep(cep) === "") fail("Informe um CEP v\xE1lido com 8 d\xEDgitos.", 422, "invalid_cep");
   if (bodyStr(endereco, "street") === "" || bodyStr(endereco, "number") === "" || bodyStr(endereco, "city") === "") {
     fail("Preencha rua, n\xFAmero e cidade.", 422, "invalid_address");
+  }
+  if (!await habilitado()) {
+    fail(
+      "A loja ainda n\xE3o est\xE1 aceitando pagamentos online. Fale com a gente para concluir a sua compra.",
+      503,
+      "payments_disabled"
+    );
+  }
+  const cred = await credenciais();
+  if (cred === null) {
+    fail(
+      "A loja ainda n\xE3o est\xE1 aceitando pagamentos online. Fale com a gente para concluir a sua compra.",
+      503,
+      "payments_disabled"
+    );
+  }
+  const cartao = b.card !== null && typeof b.card === "object" && !Array.isArray(b.card) ? b.card : {};
+  const cardToken = bodyStr(cartao, "token", "", 120);
+  const cardMethodId = bodyStr(cartao, "paymentMethodId", "", 40);
+  const parcelas = Math.max(1, Math.min(bodyInt(cartao, "installments", 1), INSTALLMENTS_MAX));
+  if (payment === "card" && (cardToken === "" || cardMethodId === "")) {
+    fail("Preencha os dados do cart\xE3o.", 422, "missing_card_token");
   }
   const sessionCustomerId = currentCustomerId(req);
   const etaDays = deliveryDaysFor(uf);
@@ -2530,8 +2867,54 @@ publicRoutes.post("/orders", h(async (req, res) => {
     fail("N\xE3o foi poss\xEDvel concluir o pedido. Confira o estoque e tente de novo.", 409, "order_failed");
   }
   const { orderId, quote } = gravado;
+  const nomePartes = name.trim().split(/\s+/);
+  const dadosBase = {
+    orderId,
+    total: quote.total,
+    descricao: `Pedido ${orderId} \u2014 Qu\xE9ops Pir\xE2mides`,
+    pagador: {
+      email,
+      nome: nomePartes[0] ?? name,
+      sobrenome: nomePartes.slice(1).join(" ") || (nomePartes[0] ?? name),
+      cpf: digits(cpf)
+    },
+    webhookUrl: `${config.appUrl.replace(/\/+$/, "")}/api/webhooks/mercadopago`
+  };
+  let cobranca;
+  try {
+    cobranca = payment === "card" ? await cobrar({
+      ...dadosBase,
+      metodo: "card",
+      token: cardToken,
+      parcelas,
+      paymentMethodId: cardMethodId
+    }, cred) : await cobrar({
+      ...dadosBase,
+      metodo: "pix",
+      expiraEmMinutos: PIX_EXPIRA_MINUTOS
+    }, cred);
+  } catch (e) {
+    await cancelarSemCobranca(orderId, "gateway_unavailable");
+    throw e;
+  }
+  await aplicarPagamento({
+    orderId,
+    status: cobranca.status,
+    detalhe: cobranca.detalhe,
+    provedor: PROVEDOR,
+    ref: cobranca.ref
+  });
+  if (cobranca.status === "recusado") {
+    fail(cobranca.mensagem ?? "O pagamento n\xE3o foi aprovado.", 402, "payment_rejected");
+  }
+  const anotados = Array.isArray(req.qp.data.pedidos) ? req.qp.data.pedidos : [];
+  req.qp.data.pedidos = [...anotados.filter((x) => x !== orderId), orderId].slice(-20);
+  await req.qp.save();
   await q.run("UPDATE abandoned_carts SET status = 'recovered' WHERE customer_email = ? AND status = 'open'", [email]);
-  fireWebhooks("order.created", { orderId, total: quote.total, email });
+  fireWebhooks("order.created", { orderId, total: quote.total, email, status: cobranca.status });
+  if (ambiente(cred) === "teste") {
+    console.log(`[queops] pedido ${orderId} cobrado em AMBIENTE DE TESTE \u2014 nenhum dinheiro se moveu.`);
+  }
   jsonOk(res, {
     order: {
       id: orderId,
@@ -2541,10 +2924,57 @@ publicRoutes.post("/orders", h(async (req, res) => {
       shipping: quote.shipping,
       discount: quote.discount,
       payment,
-      deliveryEta: dateBR(etaDays)
+      deliveryEta: dateBR(etaDays),
+      // O que a tela precisa para não afirmar "pago" quando ainda não está:
+      //   'aprovado'   → dinheiro confirmado
+      //   'aguardando' → Pix emitido (vem o QR) ou cartão em análise
+      paymentStatus: cobranca.status,
+      pix: cobranca.pix ?? null,
+      ambiente: ambiente(cred)
     }
   }, 201);
 }));
+publicRoutes.get("/orders/:id/status", h(async (req, res) => {
+  const id = String(req.params.id ?? "").slice(0, 20);
+  const linha = await q.one(
+    "SELECT id, status, payment, payment_ref, customer_id, total FROM orders WHERE id = ?",
+    [id]
+  );
+  const naSessao = (Array.isArray(req.qp.data.pedidos) ? req.qp.data.pedidos : []).includes(id);
+  const clienteId = currentCustomerId(req);
+  const eDono = linha !== null && clienteId !== null && Number(linha.customer_id) === clienteId;
+  if (linha === null || !naSessao && !eDono) {
+    fail("Pedido n\xE3o encontrado.", 404, "not_found");
+  }
+  let status = String(linha.status);
+  const ref = linha.payment_ref === null ? "" : String(linha.payment_ref);
+  if (status === "pending" && ref !== "") {
+    const cred = await credenciais();
+    if (cred !== null) {
+      const real = await consultarPedido(ref, cred);
+      if (real !== null) {
+        await aplicarPagamento({
+          orderId: id,
+          status: real.status,
+          detalhe: real.detalhe,
+          provedor: PROVEDOR,
+          ref
+        });
+        const depois = await q.one("SELECT status FROM orders WHERE id = ?", [id]);
+        if (depois !== null) status = String(depois.status);
+      }
+    }
+  }
+  jsonOk(res, {
+    id,
+    // 'pending' | 'paid' | 'canceled' | … — o mesmo vocabulário do painel.
+    status,
+    pago: status === "paid",
+    cancelado: status === "canceled"
+  });
+}));
+var INSTALLMENTS_MAX = 6;
+var PIX_EXPIRA_MINUTOS = 30;
 var EmptyCart = class extends Error {
   static {
     __name(this, "EmptyCart");
@@ -2697,6 +3127,108 @@ v1Routes.get("/customers", h(async (req, res) => {
   });
 }));
 
+// server/src/routes/webhooks.ts
+var import_express5 = require("express");
+var import_mercadopago3 = require("mercadopago");
+init_db();
+init_http();
+var webhookRoutes = (0, import_express5.Router)();
+var TOLERANCIA_SEGUNDOS = 300;
+function tempoDentroDaJanela(ts, agora = Date.now()) {
+  if (!/^\d+$/.test(ts)) return false;
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const emMs = n > 1e11 ? n : n * 1e3;
+  return Math.abs(agora - emMs) / 1e3 <= TOLERANCIA_SEGUNDOS;
+}
+__name(tempoDentroDaJanela, "tempoDentroDaJanela");
+function carimboDaAssinatura(xSignature) {
+  const bruto = Array.isArray(xSignature) ? xSignature[0] : xSignature;
+  const m = /(?:^|,)\s*ts\s*=\s*([^,\s]+)/.exec(String(bruto ?? ""));
+  return m ? m[1] : "";
+}
+__name(carimboDaAssinatura, "carimboDaAssinatura");
+function conferirAssinatura(req, cred, dataId) {
+  if (cred.webhookSecret === "") {
+    return { ok: false, motivo: "webhookSecret n\xE3o cadastrado em Painel \u2192 Integra\xE7\xF5es" };
+  }
+  try {
+    import_mercadopago3.WebhookSignatureValidator.validate({
+      xSignature: req.headers["x-signature"],
+      xRequestId: req.headers["x-request-id"],
+      dataId,
+      secret: cred.webhookSecret
+    });
+  } catch (e) {
+    if (e instanceof import_mercadopago3.InvalidWebhookSignatureError) {
+      return { ok: false, motivo: e.reason };
+    }
+    return { ok: false, motivo: e instanceof Error ? e.message : String(e) };
+  }
+  const ts = carimboDaAssinatura(req.headers["x-signature"]);
+  if (!tempoDentroDaJanela(ts)) {
+    return { ok: false, motivo: `carimbo fora da janela de ${TOLERANCIA_SEGUNDOS}s (ts=${ts})` };
+  }
+  return { ok: true };
+}
+__name(conferirAssinatura, "conferirAssinatura");
+webhookRoutes.post("/mercadopago", h(async (req, res) => {
+  const corpo = req.body ?? {};
+  const idQuery = queryStr(req, "data.id", "", 64) || queryStr(req, "id", "", 64);
+  const idCorpo = corpo.data?.id === void 0 || corpo.data?.id === null ? "" : String(corpo.data.id);
+  const dataId = idQuery || idCorpo;
+  const cred = await credenciais();
+  if (cred === null) {
+    console.error("[queops] webhook do Mercado Pago recebido sem credenciais cadastradas");
+    res.status(200).json({ ok: false, ignorado: "sem credenciais" });
+    return;
+  }
+  const assinatura = conferirAssinatura(req, cred, idQuery);
+  if (assinatura.ok === false) {
+    console.error(
+      "[queops] webhook do Mercado Pago com assinatura inv\xE1lida:",
+      assinatura.motivo,
+      "\xB7 x-request-id:",
+      String(req.headers["x-request-id"] ?? "\u2014")
+    );
+    res.status(401).json({ error: { code: "invalid_signature", message: "Assinatura inv\xE1lida." } });
+    return;
+  }
+  const tipo = String(corpo.type ?? corpo.action ?? "");
+  if (dataId === "") {
+    res.status(200).json({ ok: true, ignorado: "sem data.id" });
+    return;
+  }
+  const real = await consultarPedido(dataId, cred);
+  if (real === null) {
+    res.status(500).json({ error: { code: "lookup_failed", message: "N\xE3o foi poss\xEDvel consultar o pagamento." } });
+    return;
+  }
+  let orderId = real.orderId;
+  if (orderId === "") {
+    const linha = await q.one("SELECT id FROM orders WHERE payment_ref = ?", [dataId]);
+    orderId = linha ? String(linha.id) : "";
+  }
+  if (orderId === "") {
+    console.error("[queops] webhook do Mercado Pago sem pedido correspondente:", dataId, tipo);
+    res.status(200).json({ ok: true, ignorado: "pedido n\xE3o encontrado" });
+    return;
+  }
+  const aplicado = await aplicarPagamento({
+    orderId,
+    status: real.status,
+    detalhe: real.detalhe,
+    provedor: PROVEDOR,
+    ref: dataId
+  });
+  console.log(
+    `[queops] webhook ${PROVEDOR}: pedido ${orderId} \u2192 ${real.status} (${real.detalhe})`,
+    aplicado.mudou ? "\xB7 aplicado" : "\xB7 sem mudan\xE7a",
+    aplicado.estoqueDevolvido ? "\xB7 estoque devolvido" : ""
+  );
+  res.status(200).json({ ok: true });
+}));
+
 // server/src/session.ts
 var import_node_crypto4 = require("node:crypto");
 init_config();
@@ -2829,22 +3361,8 @@ async function sessionMiddleware(req, res, next) {
 __name(sessionMiddleware, "sessionMiddleware");
 
 // server/src/app.ts
-var CSP_LOJA = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' https: data:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-  "upgrade-insecure-requests"
-].join("; ");
-var CSP_API = "default-src 'none'; frame-ancestors 'none'";
 function createApp() {
-  const app = (0, import_express5.default)();
+  const app = (0, import_express6.default)();
   app.disable("x-powered-by");
   if (config.trustProxy) app.set("trust proxy", true);
   app.use((0, import_compression.default)());
@@ -2870,8 +3388,8 @@ function createApp() {
     }
     next();
   });
-  const api = import_express5.default.Router();
-  api.use(import_express5.default.json({ limit: "1mb" }));
+  const api = import_express6.default.Router();
+  api.use(import_express6.default.json({ limit: "1mb" }));
   api.use((err, _req, res, next) => {
     if (err instanceof SyntaxError) {
       jsonOk(res, { error: { code: "invalid_json", message: "Corpo da requisi\xE7\xE3o n\xE3o \xE9 um JSON v\xE1lido." } }, 400);
@@ -2881,9 +3399,11 @@ function createApp() {
   });
   api.use(sessionMiddleware);
   api.use((req, _res, next) => {
-    if (!req.path.startsWith("/v1/")) requireCsrf(req);
+    const servidorAServidor = req.path.startsWith("/v1/") || req.path.startsWith("/webhooks/");
+    if (!servidorAServidor) requireCsrf(req);
     next();
   });
+  api.use("/webhooks", webhookRoutes);
   api.use("/v1", v1Routes);
   api.use("/admin", adminRoutes);
   api.use("/account", accountRoutes);
@@ -2892,10 +3412,10 @@ function createApp() {
     next(new ApiError("Endpoint n\xE3o encontrado.", 404, "not_found"));
   });
   app.use("/api", api);
-  const publicDir = import_node_path2.default.resolve(process.cwd(), config.publicDir);
-  const indexHtml = import_node_path2.default.join(publicDir, "index.html");
+  const publicDir = import_node_path3.default.resolve(process.cwd(), config.publicDir);
+  const indexHtml = import_node_path3.default.join(publicDir, "index.html");
   app.use(
-    import_express5.default.static(publicDir, {
+    import_express6.default.static(publicDir, {
       index: false,
       // o fallback abaixo é que decide quem recebe o index.html
       etag: true,
@@ -2922,7 +3442,7 @@ function createApp() {
       next();
       return;
     }
-    if (!(0, import_node_fs2.existsSync)(indexHtml)) {
+    if (!(0, import_node_fs3.existsSync)(indexHtml)) {
       res.status(500).type("text/plain").send(
         `Front-end n\xE3o encontrado. Rode \`npm run build\` e confirme que a pasta "${config.publicDir}" est\xE1 ao lado do servidor.`
       );

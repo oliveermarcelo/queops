@@ -153,6 +153,18 @@ CREATE TABLE IF NOT EXISTS products (
 
 -- ---------------------------------------------------------------------
 -- Pedidos
+--
+-- Colunas de pagamento:
+--   payment_provider  quem processou ('mercadopago')
+--   payment_ref       id da cobrança no provedor. ÚNICO de propósito: é por ele
+--                     que o webhook encontra o pedido, e um mesmo pagamento não
+--                     pode acabar ligado a dois pedidos.
+--   payment_detail    o motivo detalhado do provedor (ex.: cc_rejected_high_risk),
+--                     que é o que explica para a lojista por que a compra falhou
+--   paid_at           quando o dinheiro foi confirmado — só se preenche uma vez
+--   stock_restored    trava: o estoque de um pedido cancelado volta UMA vez.
+--                     Sem isso, dois avisos do provedor para o mesmo pedido
+--                     devolveriam a peça duas vezes e o estoque inflaria sozinho.
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS orders (
   id              VARCHAR(24)   NOT NULL,     -- QP-000123
@@ -177,6 +189,11 @@ CREATE TABLE IF NOT EXISTS orders (
   ship_city       VARCHAR(120)  NOT NULL DEFAULT '',
   ship_state      CHAR(2)       NOT NULL DEFAULT 'SP',
   delivery_eta    DATE          NULL,
+  payment_provider VARCHAR(30)  NOT NULL DEFAULT '',
+  payment_ref     VARCHAR(64)   NULL,
+  payment_detail  VARCHAR(60)   NOT NULL DEFAULT '',
+  paid_at         DATETIME      NULL,
+  stock_restored  TINYINT(1)    NOT NULL DEFAULT 0,
   -- Rastreio dos Correios: código do objeto (AA123456789BR) e o último status
   -- consultado, guardado para a conta do cliente não bater na API a cada visita.
   tracking_code   VARCHAR(40)   NOT NULL DEFAULT '',
@@ -188,7 +205,8 @@ CREATE TABLE IF NOT EXISTS orders (
   KEY idx_order_customer (customer_id),
   KEY idx_order_created (created_at),
   KEY idx_order_status (status),
-  KEY idx_order_email (customer_email)
+  KEY idx_order_email (customer_email),
+  UNIQUE KEY uq_order_payment_ref (payment_ref)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS order_items (
