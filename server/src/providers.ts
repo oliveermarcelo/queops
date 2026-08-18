@@ -346,8 +346,16 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
         };
       }
 
+      /*
+       * O CÓDIGO aparece junto do nome, e não é detalhe.
+       *
+       * "PAC" pode ser 03298 (contrato) ou 04510 (balcão), e a diferença de
+       * preço entre os dois passa de 30%. Sem o código na tela, dois testes com
+       * valores diferentes parecem instabilidade dos Correios — quando são
+       * tabelas diferentes.
+       */
       const amostra = boas
-        .map((c) => `${c.nome} R$ ${c.preco.toFixed(2).replace('.', ',')}`)
+        .map((c) => `${c.nome} (${c.servico}) R$ ${c.preco.toFixed(2).replace('.', ',')}`)
         .join(' · ');
       const parciais = cotacoes.length - boas.length;
       return {

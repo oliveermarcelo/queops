@@ -147,15 +147,14 @@ function explicar(r: HttpCallResult, onde: 'auth' | 'cotacao' | 'rastreio' = 'au
     if (detalhe !== '') return detalhe;
     if (onde === 'cotacao') {
       /*
-       * Os Correios recusaram sem dizer o motivo. O caso mais comum de longe:
-       * códigos 03xxx são de CONTRATO (Sedex/PAC contrato) e só cotam quando o
-       * contrato e a DR vão junto na requisição. Os equivalentes de balcão —
-       * 04014 (Sedex) e 04510 (PAC) — cotam sem contrato nenhum.
+       * Os Correios recusaram sem dizer o motivo — e, sem motivo, o melhor que
+       * podemos fazer é apontar o que costuma variar: o código do serviço. Os
+       * 03xxx são de contrato (só cotam se o cartão de postagem tiver esse
+       * serviço contratado); os 04xxx são de balcão e cotam para qualquer um.
        */
-      return 'Cotação recusada pelos Correios, sem detalhe. Se estiver usando códigos de '
-        + 'contrato (03220, 03298), preencha também "Código do contrato" e "Código da DR" — '
-        + 'ou troque em "Serviços a cotar" pelos códigos de balcão: 04014 (Sedex) e '
-        + '04510 (PAC).';
+      return 'Cotação recusada pelos Correios, sem detalhe. Confira em "Serviços a cotar" '
+        + 'se os códigos pertencem ao seu contrato — os de balcão (04510 PAC, 04014 Sedex) '
+        + 'cotam sem contrato e servem para testar.';
     }
     return 'Requisição recusada. Confira o número do cartão de postagem.';
   }

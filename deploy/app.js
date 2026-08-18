@@ -827,7 +827,7 @@ function explicar(r, onde = "auth") {
     const detalhe = detalheDoErro(r.body);
     if (detalhe !== "") return detalhe;
     if (onde === "cotacao") {
-      return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Se estiver usando c\xF3digos de contrato (03220, 03298), preencha tamb\xE9m "C\xF3digo do contrato" e "C\xF3digo da DR" \u2014 ou troque em "Servi\xE7os a cotar" pelos c\xF3digos de balc\xE3o: 04014 (Sedex) e 04510 (PAC).';
+      return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Confira em "Servi\xE7os a cotar" se os c\xF3digos pertencem ao seu contrato \u2014 os de balc\xE3o (04510 PAC, 04014 Sedex) cotam sem contrato e servem para testar.';
     }
     return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
   }
@@ -1194,7 +1194,7 @@ async function providerTest(id, f) {
           message: `Autenticou, mas nenhum servi\xE7o cotou \u2014 ${detalhe}`
         };
       }
-      const amostra = boas.map((c) => `${c.nome} R$ ${c.preco.toFixed(2).replace(".", ",")}`).join(" \xB7 ");
+      const amostra = boas.map((c) => `${c.nome} (${c.servico}) R$ ${c.preco.toFixed(2).replace(".", ",")}`).join(" \xB7 ");
       const parciais = cotacoes.length - boas.length;
       return {
         ok: true,

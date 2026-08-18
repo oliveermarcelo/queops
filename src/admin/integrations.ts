@@ -119,20 +119,23 @@ export const PROVIDERS: ProviderMeta[] = [
       {
         key: 'contract',
         label: 'Código do contrato',
-        placeholder: 'Opcional — só se usar códigos de contrato (03xxx)',
-        help: 'Se preencher aqui, preencha também a DR: os Correios exigem os dois juntos.',
+        placeholder: 'Opcional',
+        help: 'Normalmente desnecessário: o contrato já vem pelo cartão de postagem. Se preencher, preencha também a DR — os Correios exigem os dois juntos.',
       },
       {
         key: 'dr',
         label: 'Código da DR (regional)',
-        placeholder: 'Obrigatório quando o contrato é informado',
-        help: 'Vem no seu contrato dos Correios, junto do número. Sem ele, a cotação por contrato é recusada.',
+        placeholder: 'Só se preencher o contrato acima',
+        help: 'Vem no seu contrato dos Correios, junto do número.',
       },
       {
         key: 'services',
         label: 'Serviços a cotar',
-        placeholder: '04510,04014 (PAC e Sedex de balcão)',
-        help: 'Códigos 04510 (PAC) e 04014 (Sedex) cotam sem contrato. Os de contrato — 03298 e 03220 — exigem contrato + DR preenchidos acima.',
+        placeholder: 'Em branco = 03298, 03220 (PAC e Sedex de contrato)',
+        help: 'Deixe em branco para usar os códigos de CONTRATO (03298 PAC, 03220 Sedex) — '
+          + 'são os mais baratos quando o cartão de postagem tem contrato. Os de balcão '
+          + '(04510 PAC, 04014 Sedex) cotam sem contrato, mas custam mais. Cotando vários, '
+          + 'a loja cobra o mais barato.',
       },
       { key: 'originCep', label: 'CEP de origem', placeholder: 'De onde as encomendas saem' },
     ],
