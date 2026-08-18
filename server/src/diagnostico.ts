@@ -174,6 +174,38 @@ async function main(): Promise<void> {
         + 'rode: node migrate.js --admin-email=… --admin-pass=…');
     }
 
+    /*
+     * COLUNAS, e não só tabelas.
+     *
+     * Uma atualização que acrescenta coluna não quebra nada na subida: o
+     * servidor liga, a loja abre, o catálogo aparece. O erro só surge no momento
+     * de usar a coluna nova — no meio de um pagamento, para um cliente de
+     * verdade. A tabela existir não é sinal de banco em dia.
+     */
+    if (existentes.has('orders')) {
+      const colunas = new Set(
+        (await q.all('SHOW COLUMNS FROM orders')).map((r) => String(r.Field)),
+      );
+      const exigidas: [string, string][] = [
+        ['payment_provider', 'pagamento'], ['payment_ref', 'pagamento'],
+        ['payment_detail', 'pagamento'], ['paid_at', 'pagamento'],
+        ['stock_restored', 'pagamento'],
+        ['tracking_code', 'rastreio'], ['tracking_status', 'rastreio'],
+        ['tracking_at', 'rastreio'],
+      ];
+      const ausentes = exigidas.filter(([c]) => !colunas.has(c));
+      if (ausentes.length === 0) {
+        ok('Colunas de pagamento e rastreio', 'todas presentes');
+      } else {
+        const areas = [...new Set(ausentes.map(([, area]) => area))].join(' e ');
+        erro(
+          'Banco desatualizado',
+          `faltam ${ausentes.length} colunas em orders (${ausentes.map(([c]) => c).join(', ')}). `
+          + `Sem elas, ${areas} falha no meio da compra. Rode: node migrate.js`,
+        );
+      }
+    }
+
     if (existentes.has('products')) {
       const n = Number((await q.one('SELECT COUNT(*) AS n FROM products'))?.n ?? 0);
       const ativos = Number((await q.one('SELECT COUNT(*) AS n FROM products WHERE active = 1'))?.n ?? 0);

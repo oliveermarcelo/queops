@@ -353,8 +353,22 @@ publicRoutes.post('/orders', h(async (req, res) => {
      * Não conseguimos cobrar. O pedido já está gravado e o estoque já baixou,
      * mas ninguém pagou — então o pedido é desfeito e a peça volta à prateleira.
      * Deixar o pedido pendente seguraria mercadoria que continua à venda.
+     *
+     * A limpeza vai dentro do try DELA: se ela falhar, o erro que sobe tem de
+     * continuar sendo o da COBRANÇA. Já aconteceu exatamente o contrário — um
+     * banco sem a migração fazia o cancelamento estourar e o cliente lia "Erro
+     * interno" no lugar do motivo real, que estava logo ali. Erro de faxina
+     * escondendo erro de causa é o pior tipo de rastro.
      */
-    await cancelarSemCobranca(orderId, 'gateway_unavailable');
+    try {
+      await cancelarSemCobranca(orderId, 'gateway_unavailable');
+    } catch (falhaNaLimpeza) {
+      console.error(
+        `[queops] pedido ${orderId}: a cobrança falhou E o cancelamento também.`,
+        'O pedido ficou pendente com o estoque baixado — confira em Painel → Pedidos.',
+        falhaNaLimpeza,
+      );
+    }
     throw e;
   }
 

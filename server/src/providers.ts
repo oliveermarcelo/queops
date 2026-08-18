@@ -303,16 +303,58 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
       return { ok: r.ok, message: r.ok ? 'ERP respondeu OK.' : `Falha (HTTP ${r.status}). ${r.error}` };
 
     case 'correios': {
-      const { credsFrom, autenticar } = await import('./correios.ts');
+      /*
+       * O teste COTA, não só autentica.
+       *
+       * Autenticar prova que usuário e código de acesso estão certos — e mais
+       * nada. Cartão de postagem errado, serviço fora do contrato ou CEP de
+       * origem em branco passam pela autenticação e só falham na hora de cotar.
+       * O painel dizia "Conectada", o checkout caía no valor fixo da tabela em
+       * silêncio, e o motivo ficava num log de servidor que ninguém lê.
+       *
+       * Agora o teste faz o mesmo caminho do checkout: pede preço para uma
+       * encomenda de 500 g. Se não sair preço, a integração é reportada como
+       * NÃO conectada — porque, para quem vende, é isso que ela é.
+       */
+      const { credsFrom, autenticar, cotarTodos } = await import('./correios.ts');
       const creds = credsFrom(f as Record<string, unknown>);
+
       const { erro } = await autenticar(creds);
       if (erro) return { ok: false, message: erro };
-      // Autenticou, mas sem CEP de origem nenhuma cotação sai — melhor avisar
-      // agora do que o cliente descobrir no checkout.
+
       if ((creds.originCep ?? '').length !== 8) {
-        return { ok: true, message: 'Correios conectados. Falta o CEP de origem para cotar frete.' };
+        return {
+          ok: false,
+          message: 'Usuário e código de acesso conferem, mas falta o CEP de origem — sem ele '
+            + 'nenhuma cotação sai, e o frete continua saindo pela tabela fixa. Preencha '
+            + '"CEP de origem" e salve.',
+        };
       }
-      return { ok: true, message: 'Correios conectados (API CWS).' };
+
+      // Av. Paulista: destino real, para o teste exercitar o caminho inteiro.
+      const cotacoes = await cotarTodos(creds, '01310100', 500);
+      const boas = cotacoes.filter((c) => c.erro === '' && c.preco > 0);
+
+      if (boas.length === 0) {
+        const detalhe = cotacoes
+          .map((c) => `${c.nome}: ${c.erro || 'sem preço'}`)
+          .join(' · ')
+          .slice(0, 400);
+        return {
+          ok: false,
+          message: `Autenticou, mas nenhum serviço cotou — ${detalhe}`,
+        };
+      }
+
+      const amostra = boas
+        .map((c) => `${c.nome} R$ ${c.preco.toFixed(2).replace('.', ',')}`)
+        .join(' · ');
+      const parciais = cotacoes.length - boas.length;
+      return {
+        ok: true,
+        message: `Correios cotando: ${amostra} (500 g para São Paulo).`
+          + (parciais > 0 ? ` ${parciais} serviço(s) não cotaram.` : ''),
+      };
     }
 
     default:

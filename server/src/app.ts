@@ -195,6 +195,32 @@ export function createApp(): express.Express {
     }
 
     console.error('[queops]', err);
+
+    /*
+     * BANCO DESATUALIZADO TEM MENSAGEM PRÓPRIA.
+     *
+     * Coluna ou tabela que o código espera e o banco não tem significa uma coisa
+     * só: a migração não rodou depois da atualização. Em produção isso caía no
+     * "Erro interno. Tente novamente em instantes." — que manda esperar por algo
+     * que nunca vai melhorar sozinho, e esconde uma correção de um comando.
+     *
+     * Dizer o nome do problema não expõe nada: nem senha, nem dado de cliente,
+     * nem estrutura útil para quem estivesse atacando. Esconder, por outro lado,
+     * custa horas de quem instalou.
+     */
+    const codigoSql = (err as { code?: string } | null)?.code ?? '';
+    if (codigoSql === 'ER_BAD_FIELD_ERROR' || codigoSql === 'ER_NO_SUCH_TABLE') {
+      const aviso = 'O banco de dados está desatualizado em relação ao código. '
+        + 'Rode a migração (`node migrate.js` na pasta da aplicação, ou `npm run migrar`) '
+        + 'e tente de novo.';
+      if (isApi) {
+        jsonOk(res, { error: { code: 'schema_outdated', message: aviso } }, 500);
+      } else {
+        res.status(500).type('text/plain').send(aviso);
+      }
+      return;
+    }
+
     const message = config.isProd
       ? 'Erro interno. Tente novamente em instantes.'
       : err instanceof Error

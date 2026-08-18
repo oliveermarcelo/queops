@@ -1140,14 +1140,31 @@ async function providerTest(id, f) {
       });
       return { ok: r.ok, message: r.ok ? "ERP respondeu OK." : `Falha (HTTP ${r.status}). ${r.error}` };
     case "correios": {
-      const { credsFrom: credsFrom2, autenticar: autenticar2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+      const { credsFrom: credsFrom2, autenticar: autenticar2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
       const creds = credsFrom2(f);
       const { erro } = await autenticar2(creds);
       if (erro) return { ok: false, message: erro };
       if ((creds.originCep ?? "").length !== 8) {
-        return { ok: true, message: "Correios conectados. Falta o CEP de origem para cotar frete." };
+        return {
+          ok: false,
+          message: 'Usu\xE1rio e c\xF3digo de acesso conferem, mas falta o CEP de origem \u2014 sem ele nenhuma cota\xE7\xE3o sai, e o frete continua saindo pela tabela fixa. Preencha "CEP de origem" e salve.'
+        };
       }
-      return { ok: true, message: "Correios conectados (API CWS)." };
+      const cotacoes = await cotarTodos2(creds, "01310100", 500);
+      const boas = cotacoes.filter((c) => c.erro === "" && c.preco > 0);
+      if (boas.length === 0) {
+        const detalhe = cotacoes.map((c) => `${c.nome}: ${c.erro || "sem pre\xE7o"}`).join(" \xB7 ").slice(0, 400);
+        return {
+          ok: false,
+          message: `Autenticou, mas nenhum servi\xE7o cotou \u2014 ${detalhe}`
+        };
+      }
+      const amostra = boas.map((c) => `${c.nome} R$ ${c.preco.toFixed(2).replace(".", ",")}`).join(" \xB7 ");
+      const parciais = cotacoes.length - boas.length;
+      return {
+        ok: true,
+        message: `Correios cotando: ${amostra} (500 g para S\xE3o Paulo).` + (parciais > 0 ? ` ${parciais} servi\xE7o(s) n\xE3o cotaram.` : "")
+      };
     }
     default:
       return { ok: true, message: "Credenciais salvas com seguran\xE7a no servidor." };
@@ -2894,7 +2911,15 @@ publicRoutes.post("/orders", h(async (req, res) => {
       expiraEmMinutos: PIX_EXPIRA_MINUTOS
     }, cred);
   } catch (e) {
-    await cancelarSemCobranca(orderId, "gateway_unavailable");
+    try {
+      await cancelarSemCobranca(orderId, "gateway_unavailable");
+    } catch (falhaNaLimpeza) {
+      console.error(
+        `[queops] pedido ${orderId}: a cobran\xE7a falhou E o cancelamento tamb\xE9m.`,
+        "O pedido ficou pendente com o estoque baixado \u2014 confira em Painel \u2192 Pedidos.",
+        falhaNaLimpeza
+      );
+    }
     throw e;
   }
   await aplicarPagamento({
@@ -3462,6 +3487,16 @@ function createApp() {
       return;
     }
     console.error("[queops]", err);
+    const codigoSql = err?.code ?? "";
+    if (codigoSql === "ER_BAD_FIELD_ERROR" || codigoSql === "ER_NO_SUCH_TABLE") {
+      const aviso = "O banco de dados est\xE1 desatualizado em rela\xE7\xE3o ao c\xF3digo. Rode a migra\xE7\xE3o (`node migrate.js` na pasta da aplica\xE7\xE3o, ou `npm run migrar`) e tente de novo.";
+      if (isApi) {
+        jsonOk(res, { error: { code: "schema_outdated", message: aviso } }, 500);
+      } else {
+        res.status(500).type("text/plain").send(aviso);
+      }
+      return;
+    }
     const message = config.isProd ? "Erro interno. Tente novamente em instantes." : err instanceof Error ? err.message : String(err);
     if (isApi) {
       jsonOk(res, { error: { code: "internal_error", message } }, 500);

@@ -410,6 +410,31 @@ async function main() {
     } else {
       erro("Tabelas", `faltam ${faltando.length} (${faltando.slice(0, 4).join(", ")}\u2026) \u2014 rode: node migrate.js --admin-email=\u2026 --admin-pass=\u2026`);
     }
+    if (existentes.has("orders")) {
+      const colunas = new Set(
+        (await q2.all("SHOW COLUMNS FROM orders")).map((r) => String(r.Field))
+      );
+      const exigidas = [
+        ["payment_provider", "pagamento"],
+        ["payment_ref", "pagamento"],
+        ["payment_detail", "pagamento"],
+        ["paid_at", "pagamento"],
+        ["stock_restored", "pagamento"],
+        ["tracking_code", "rastreio"],
+        ["tracking_status", "rastreio"],
+        ["tracking_at", "rastreio"]
+      ];
+      const ausentes = exigidas.filter(([c]) => !colunas.has(c));
+      if (ausentes.length === 0) {
+        ok("Colunas de pagamento e rastreio", "todas presentes");
+      } else {
+        const areas = [...new Set(ausentes.map(([, area]) => area))].join(" e ");
+        erro(
+          "Banco desatualizado",
+          `faltam ${ausentes.length} colunas em orders (${ausentes.map(([c]) => c).join(", ")}). Sem elas, ${areas} falha no meio da compra. Rode: node migrate.js`
+        );
+      }
+    }
     if (existentes.has("products")) {
       const n = Number((await q2.one("SELECT COUNT(*) AS n FROM products"))?.n ?? 0);
       const ativos = Number((await q2.one("SELECT COUNT(*) AS n FROM products WHERE active = 1"))?.n ?? 0);
