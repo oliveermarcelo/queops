@@ -151,6 +151,17 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
 
+  /*
+   * Muda a cada salvar/testar, para as seções que consultam o servidor
+   * recarregarem.
+   *
+   * A lista de transportadoras do Melhor Envio depende do CEP de origem já estar
+   * SALVO. Buscando só ao abrir o cartão, ela ficava presa no "preencha o CEP de
+   * origem" mesmo depois de o CEP ter sido salvo — e a lista, que é o ponto todo
+   * daquela seção, nunca aparecia.
+   */
+  const [versaoServidor, setVersaoServidor] = useState(0);
+
   const configured = cfg?.configured ?? [];
   const fieldValue = (key: string) => draft[key] ?? cfg?.fields?.[key] ?? '';
 
@@ -166,6 +177,7 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
       await updateIntegration(provider.id, { fields: draft, enabled: cfg?.enabled ?? false });
       setDraft({});
       setDirty(false);
+      setVersaoServidor((v) => v + 1);
       setResult({ ok: true, message: 'Credenciais salvas no servidor (cifradas).' });
     } finally {
       setBusy(false);
@@ -190,6 +202,7 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
         setDirty(false);
       }
       setResult(await testIntegration(provider.id));
+      setVersaoServidor((v) => v + 1);
     } catch (err) {
       setResult({ ok: false, message: err instanceof Error ? err.message : 'Falha no teste.' });
     } finally {
@@ -312,6 +325,8 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
               <TransportadorasMelhorEnvio
                 valor={fieldValue('services')}
                 onChange={(novo) => setField('services', novo)}
+                recarregar={versaoServidor}
+                correiosProprio={state.integrations.correios?.enabled === true}
               />
             )}
 

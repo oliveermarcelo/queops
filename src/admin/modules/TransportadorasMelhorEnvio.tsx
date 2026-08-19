@@ -38,11 +38,28 @@ interface Props {
   /** Ids marcados, como o campo `services` guarda ("1,2,18"). */
   valor: string;
   onChange: (novo: string) => void;
+  /**
+   * Muda a cada salvar/testar no cartão, para buscar a lista de novo.
+   *
+   * A cotação depende do CEP de origem já estar SALVO no servidor. Buscando só
+   * ao abrir, a seção ficava presa no aviso "preencha o CEP de origem" mesmo
+   * depois de o CEP ter sido salvo.
+   */
+  recarregar?: number;
+  /** A loja tem contrato próprio dos Correios ligado? Muda o aviso da lista. */
+  correiosProprio?: boolean;
+}
+
+/** O serviço é Correios revendido pelo Melhor Envio? */
+function ehCorreios(o: Opcao): boolean {
+  return /correios/i.test(o.transportadora) || /correios/i.test(o.nome);
 }
 
 const brl = (n: number): string => n.toFixed(2).replace('.', ',');
 
-export default function TransportadorasMelhorEnvio({ valor, onChange }: Props) {
+export default function TransportadorasMelhorEnvio({
+  valor, onChange, recarregar = 0, correiosProprio = false,
+}: Props) {
   const [opcoes, setOpcoes] = useState<Opcao[] | null>(null);
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(false);
@@ -75,11 +92,11 @@ export default function TransportadorasMelhorEnvio({ valor, onChange }: Props) {
     }
   }, [valor, onChange]);
 
-  // Busca uma vez ao abrir a seção.
+  // Ao abrir a seção e a cada salvar/testar no cartão.
   useEffect(() => {
     void buscar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [recarregar]);
 
   const alternar = (servico: string): void => {
     const novo = new Set(marcados);
@@ -139,7 +156,14 @@ export default function TransportadorasMelhorEnvio({ valor, onChange }: Props) {
                   onChange={() => alternar(o.servico)}
                   className="w-4 h-4 accent-[#3a5634]"
                 />
-                <span className="font-semibold text-gray-800 flex-1">{o.nome}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="font-semibold text-gray-800">{o.nome}</span>
+                  {correiosProprio && ehCorreios(o) && (
+                    <span className="block text-[10px] text-amber-700">
+                      já cotado pelo seu contrato dos Correios — ali costuma sair mais barato
+                    </span>
+                  )}
+                </span>
                 <span className="text-gray-500">
                   R$ {brl(o.preco)}
                   {o.prazoDias > 0 ? ` · ${o.prazoDias} dia${o.prazoDias > 1 ? 's' : ''}` : ''}
