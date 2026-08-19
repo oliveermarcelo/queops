@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { detalheDoErro, mapearOpcoes } from '../src/melhorenvio.ts';
+import { comCepNoRecado, detalheDoErro, mapearOpcoes } from '../src/melhorenvio.ts';
 
 test('cotação normal vira opção da loja', () => {
   const [o] = mapearOpcoes([{
@@ -123,4 +123,28 @@ test('validação recusada mostra o CAMPO, não o genérico', () => {
   assert.match(texto, /products\.0\.id/);
   assert.match(texto, /30 caracteres/);
   assert.doesNotMatch(texto, /given data was invalid/);
+});
+
+/**
+ * Recusa de CEP tem de dizer QUAIS CEPs foram usados.
+ *
+ * "O campo cep_destino está invalido" parece erro de credencial e manda
+ * conferir o token. Na prática costuma ser o CEP genérico de cidade (-000), que
+ * os Correios aceitam e o Melhor Envio não — situação que só se distingue vendo
+ * os números na mensagem.
+ */
+test('erro de CEP mostra origem, destino e a pista do CEP genérico', () => {
+  const texto = comCepNoRecado(
+    'postal_code: O campo cep_destino está invalido',
+    '18043970',
+    '44700000',
+  );
+  assert.match(texto, /18043-970/);
+  assert.match(texto, /44700-000/);
+  assert.match(texto, /CEP de rua/);
+});
+
+test('erro que não é de CEP passa intacto', () => {
+  const original = 'products.0.weight: campo obrigatório';
+  assert.equal(comCepNoRecado(original, '18043970', '44700000'), original);
 });

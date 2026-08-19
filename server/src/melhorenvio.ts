@@ -148,6 +148,27 @@ export function detalheDoErro(body: string): string {
   }
 }
 
+/** 44700000 → 44700-000, para a mensagem ficar legível. */
+function comMascara(cep: string): string {
+  return cep.length === 8 ? `${cep.slice(0, 5)}-${cep.slice(5)}` : cep;
+}
+
+/**
+ * Quando a recusa é sobre CEP, a mensagem passa a dizer QUAIS CEPs foram usados.
+ *
+ * "O campo cep_destino está invalido" parece erro de configuração, e manda
+ * conferir token e credencial. Mas o CEP pode ser recusado só por não existir na
+ * base do Melhor Envio — é comum com o CEP genérico de cidade (terminado em
+ * -000), que os Correios aceitam e eles não. Sem os números na mensagem, não há
+ * como distinguir "integração errada" de "este CEP não serve".
+ */
+export function comCepNoRecado(detalhe: string, origem: string, destino: string): string {
+  if (!/cep|postal/i.test(detalhe)) return detalhe;
+  return `${detalhe} (origem ${comMascara(origem)} → destino ${comMascara(destino)}). `
+    + 'CEP genérico de cidade (terminado em -000) costuma ser recusado pelo Melhor Envio, '
+    + 'mesmo sendo aceito pelos Correios: teste com um CEP de rua.';
+}
+
 /**
  * Cota o carrinho.
  *
@@ -223,7 +244,9 @@ export async function cotar(
     const detalhe = detalheDoErro(r.body);
     return {
       opcoes: [],
-      erro: detalhe !== '' ? detalhe : `Melhor Envio respondeu HTTP ${r.status}. ${r.error}`.trim(),
+      erro: detalhe !== ''
+        ? comCepNoRecado(detalhe, c.originCep, destino)
+        : `Melhor Envio respondeu HTTP ${r.status}. ${r.error}`.trim(),
     };
   }
 

@@ -757,6 +757,7 @@ var init_store = __esm({
 var melhorenvio_exports = {};
 __export(melhorenvio_exports, {
   amostraDeServicos: () => amostraDeServicos,
+  comCepNoRecado: () => comCepNoRecado,
   cotar: () => cotar,
   credsFrom: () => credsFrom,
   detalheDoErro: () => detalheDoErro,
@@ -805,6 +806,13 @@ function detalheDoErro(body2) {
   } catch {
     return limpo.length <= 300 ? limpo : "";
   }
+}
+function comMascara(cep) {
+  return cep.length === 8 ? `${cep.slice(0, 5)}-${cep.slice(5)}` : cep;
+}
+function comCepNoRecado(detalhe, origem, destino) {
+  if (!/cep|postal/i.test(detalhe)) return detalhe;
+  return `${detalhe} (origem ${comMascara(origem)} \u2192 destino ${comMascara(destino)}). CEP gen\xE9rico de cidade (terminado em -000) costuma ser recusado pelo Melhor Envio, mesmo sendo aceito pelos Correios: teste com um CEP de rua.`;
 }
 async function cotar(c, cepDestino, itens, apenasServicos = []) {
   const destino = String(cepDestino ?? "").replace(/\D/g, "");
@@ -861,7 +869,7 @@ async function cotar(c, cepDestino, itens, apenasServicos = []) {
     const detalhe = detalheDoErro(r.body);
     return {
       opcoes: [],
-      erro: detalhe !== "" ? detalhe : `Melhor Envio respondeu HTTP ${r.status}. ${r.error}`.trim()
+      erro: detalhe !== "" ? comCepNoRecado(detalhe, c.originCep, destino) : `Melhor Envio respondeu HTTP ${r.status}. ${r.error}`.trim()
     };
   }
   let lista;
@@ -911,6 +919,8 @@ var init_melhorenvio = __esm({
     MIN_PESO_GRAMAS = 300;
     __name(numero, "numero");
     __name(detalheDoErro, "detalheDoErro");
+    __name(comMascara, "comMascara");
+    __name(comCepNoRecado, "comCepNoRecado");
     __name(cotar, "cotar");
     __name(mapearOpcoes, "mapearOpcoes");
     __name(amostraDeServicos, "amostraDeServicos");
