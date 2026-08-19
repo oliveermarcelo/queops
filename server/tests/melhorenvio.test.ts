@@ -107,3 +107,20 @@ test('corpo vazio não vira mensagem', () => {
   assert.equal(detalheDoErro(''), '');
   assert.equal(detalheDoErro('   '), '');
 });
+
+/**
+ * O caso real: o Melhor Envio recusou uma cotação com
+ * `{"message":"The given data was invalid.","errors":{...}}`. Preferindo
+ * `message`, a loja mostrava a frase genérica e escondia o único dado útil —
+ * qual campo estava errado.
+ */
+test('validação recusada mostra o CAMPO, não o genérico', () => {
+  const corpo = JSON.stringify({
+    message: 'The given data was invalid.',
+    errors: { 'products.0.id': ['O campo id não pode ser maior que 30 caracteres.'] },
+  });
+  const texto = detalheDoErro(corpo);
+  assert.match(texto, /products\.0\.id/);
+  assert.match(texto, /30 caracteres/);
+  assert.doesNotMatch(texto, /given data was invalid/);
+});

@@ -1113,8 +1113,11 @@ export default function CheckoutPage({
                 {/* Bastidor: só chega para quem está logado no painel. */}
                 {quote?.shippingNote && (
                   <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-normal m-0">
-                    <strong>Só você vê isto (painel):</strong> frete da tabela fixa, não dos
-                    Correios — {quote.shippingNote}
+                    <strong>Só você vê isto (painel):</strong>{' '}
+                    {opcoesFrete.length > 0
+                      ? 'faltou algum provedor nesta cotação —'
+                      : 'frete da tabela fixa, não das transportadoras —'}{' '}
+                    {quote.shippingNote}
                   </p>
                 )}
                 <div className="flex justify-between items-baseline pt-3.5 border-t border-dashed border-gray-200">

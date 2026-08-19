@@ -526,11 +526,22 @@ export default function ProductDetailPage({
                         </ul>
                       )}
 
-                      {/* Só chega para administradores; o cliente nunca vê. */}
+                      {/*
+                        Só chega para administradores; o cliente nunca vê.
+
+                        O texto muda conforme ALGUMA transportadora ter cotado ou
+                        não: dizer "este valor veio da tabela de frete" quando os
+                        Correios cotaram e só o Melhor Envio falhou é afirmar o
+                        contrário do que aconteceu — e manda investigar a coisa
+                        errada.
+                      */}
                       {shippingResult.shippingNote && (
                         <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-normal mt-1 mb-0">
-                          <strong>Só você vê isto (painel):</strong> este valor veio da tabela de
-                          frete, não dos Correios — {shippingResult.shippingNote}
+                          <strong>Só você vê isto (painel):</strong>{' '}
+                          {(shippingResult.shippingOptions?.length ?? 0) > 0
+                            ? 'estas opções não incluem todos os provedores —'
+                            : 'este valor veio da tabela de frete, não das transportadoras —'}{' '}
+                          {shippingResult.shippingNote}
                         </p>
                       )}
                       <p className="text-[11px] text-gray-500 leading-normal pt-1">

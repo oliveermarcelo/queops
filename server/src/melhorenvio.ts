@@ -121,7 +121,16 @@ export function detalheDoErro(body: string): string {
   if (limpo === '') return '';
   try {
     const d = JSON.parse(limpo) as Record<string, unknown>;
-    const e = d.error ?? d.message ?? d.errors ?? d.msg;
+    /*
+     * `errors` vem ANTES de `message`, de propósito.
+     *
+     * Numa validação recusada o Melhor Envio manda os dois: `message` com o
+     * genérico "The given data was invalid." e `errors` com o campo que causou
+     * ("products.0.id: deve ter no máximo 30 caracteres"). Preferindo `message`,
+     * a única informação útil era descartada — e sobrava uma mensagem que não
+     * diz o que corrigir.
+     */
+    const e = d.errors ?? d.error ?? d.message ?? d.msg;
     if (typeof e === 'string' && e.trim() !== '') return e.trim().slice(0, 300);
     if (Array.isArray(e)) return e.map(String).join(' · ').slice(0, 300);
     if (e !== null && typeof e === 'object') {
@@ -164,8 +173,17 @@ export async function cotar(
   const corpo: Record<string, unknown> = {
     from: { postal_code: c.originCep },
     to: { postal_code: destino },
-    products: itens.map((i) => ({
-      id: i.id,
+    products: itens.map((i, indice) => ({
+      /*
+       * Id curto e sequencial, não o nosso slug.
+       *
+       * O Melhor Envio só devolve este campo de volta — ele não significa nada
+       * para eles. Mandar o slug do produto
+       * ("adesivo-grafico-radiestesia-9-circulos-g-6-5cm-1040", 51 caracteres)
+       * arriscava o limite de tamanho do campo e derrubava a cotação inteira com
+       * "The given data was invalid.", que não diz qual campo é.
+       */
+      id: String(indice + 1),
       width: MIN_LARGURA,
       height: MIN_ALTURA,
       length: MIN_COMPRIMENTO,

@@ -790,7 +790,7 @@ function detalheDoErro(body2) {
   if (limpo === "") return "";
   try {
     const d = JSON.parse(limpo);
-    const e = d.error ?? d.message ?? d.errors ?? d.msg;
+    const e = d.errors ?? d.error ?? d.message ?? d.msg;
     if (typeof e === "string" && e.trim() !== "") return e.trim().slice(0, 300);
     if (Array.isArray(e)) return e.map(String).join(" \xB7 ").slice(0, 300);
     if (e !== null && typeof e === "object") {
@@ -815,8 +815,17 @@ async function cotar(c, cepDestino, itens, apenasServicos = []) {
   const corpo = {
     from: { postal_code: c.originCep },
     to: { postal_code: destino },
-    products: itens.map((i) => ({
-      id: i.id,
+    products: itens.map((i, indice) => ({
+      /*
+       * Id curto e sequencial, não o nosso slug.
+       *
+       * O Melhor Envio só devolve este campo de volta — ele não significa nada
+       * para eles. Mandar o slug do produto
+       * ("adesivo-grafico-radiestesia-9-circulos-g-6-5cm-1040", 51 caracteres)
+       * arriscava o limite de tamanho do campo e derrubava a cotação inteira com
+       * "The given data was invalid.", que não diz qual campo é.
+       */
+      id: String(indice + 1),
       width: MIN_LARGURA,
       height: MIN_ALTURA,
       length: MIN_COMPRIMENTO,
