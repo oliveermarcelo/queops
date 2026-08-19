@@ -284,10 +284,31 @@ export async function cotar(
 
   const corpo = { idLote: '1', parametrosProduto: [produto] };
 
+  /*
+   * O PRAZO TEM CORPO PRÓPRIO — `parametrosPrazo`, não `parametrosProduto`.
+   *
+   * Mandar o mesmo corpo para os dois endpoints parecia economia e custava o
+   * prazo: a API de prazo recusava a requisição, o erro era ignorado (prazo é
+   * secundário, não pode derrubar a cotação) e o resultado saía com "0 dias".
+   * Na tela, as opções dos Correios apareciam sem prazo enquanto as do Melhor
+   * Envio mostravam os dias — e nada indicava o motivo.
+   *
+   * Este corpo leva só o que o manual pede; contrato e DR não entram aqui.
+   */
+  const corpoPrazo = {
+    idLote: '1',
+    parametrosPrazo: [{
+      coProduto: servico,
+      nuRequisicao: '1',
+      cepOrigem: origem,
+      cepDestino: destino,
+    }],
+  };
+
   const auth = { Authorization: 'Bearer ' + token };
   const [preco, prazo] = await Promise.all([
     httpCall('POST', `${BASE}/preco/v1/nacional`, auth, corpo),
-    httpCall('POST', `${BASE}/prazo/v1/nacional`, auth, corpo),
+    httpCall('POST', `${BASE}/prazo/v1/nacional`, auth, corpoPrazo),
   ]);
 
   if (preco.status === 401) {
@@ -313,10 +334,26 @@ export async function cotar(
     if (!item) return { ...vazio, erro: 'Correios não devolveram preço.' };
     if (item.txErro) return { ...vazio, erro: String(item.txErro) };
 
+    /*
+     * Prazo é secundário: preço sem prazo ainda vende, prazo sem preço não. Por
+     * isso a falha aqui não derruba a cotação — mas VAI para o log, porque foi
+     * justamente o silêncio que deixou "0 dias" passar despercebido.
+     */
     let dias = 0;
     if (prazo.ok) {
       const q = JSON.parse(prazo.body) as Array<Record<string, unknown>>;
       dias = Number(q?.[0]?.prazoEntrega ?? 0) || 0;
+      if (dias === 0) {
+        console.warn(
+          `[queops] Correios não devolveram prazo para ${servico}:`,
+          String(prazo.body ?? '').slice(0, 300),
+        );
+      }
+    } else {
+      console.warn(
+        `[queops] falha ao consultar o prazo de ${servico} (HTTP ${prazo.status}):`,
+        String(prazo.body ?? '').slice(0, 300),
+      );
     }
 
     return {

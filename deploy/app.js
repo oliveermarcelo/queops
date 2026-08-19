@@ -1072,10 +1072,19 @@ async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
     produto.nuDR = dr;
   }
   const corpo = { idLote: "1", parametrosProduto: [produto] };
+  const corpoPrazo = {
+    idLote: "1",
+    parametrosPrazo: [{
+      coProduto: servico,
+      nuRequisicao: "1",
+      cepOrigem: origem,
+      cepDestino: destino
+    }]
+  };
   const auth = { Authorization: "Bearer " + token };
   const [preco, prazo] = await Promise.all([
     httpCall("POST", `${BASE}/preco/v1/nacional`, auth, corpo),
-    httpCall("POST", `${BASE}/prazo/v1/nacional`, auth, corpo)
+    httpCall("POST", `${BASE}/prazo/v1/nacional`, auth, corpoPrazo)
   ]);
   if (preco.status === 401) {
     esquecerToken(c);
@@ -1097,6 +1106,17 @@ async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
     if (prazo.ok) {
       const q2 = JSON.parse(prazo.body);
       dias = Number(q2?.[0]?.prazoEntrega ?? 0) || 0;
+      if (dias === 0) {
+        console.warn(
+          `[queops] Correios n\xE3o devolveram prazo para ${servico}:`,
+          String(prazo.body ?? "").slice(0, 300)
+        );
+      }
+    } else {
+      console.warn(
+        `[queops] falha ao consultar o prazo de ${servico} (HTTP ${prazo.status}):`,
+        String(prazo.body ?? "").slice(0, 300)
+      );
     }
     return {
       servico,
