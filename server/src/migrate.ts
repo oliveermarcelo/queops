@@ -19,27 +19,11 @@ import { configProblems } from './config.ts';
 import { closePool, q, transaction } from './db.ts';
 import { round2 } from './http.ts';
 import {
+  addMissingColumns, addMissingIndexes, dbDir, splitStatements,
+} from './schema.ts';
+import {
   configSet, DEFAULT_RECOVERY, DEFAULT_SETTINGS, DEFAULT_SHIPPING, INTEGRATION_IDS,
 } from './store.ts';
-
-/** Onde ficam schema.sql e catalog.json, tanto em dev quanto no pacote. */
-function dbDir(): string {
-  const candidatos = [
-    path.resolve(process.cwd(), 'server/db'),
-    path.resolve(process.cwd(), 'db'),
-  ];
-  for (const c of candidatos) {
-    try {
-      readFileSync(path.join(c, 'schema.sql'));
-      return c;
-    } catch {
-      /* tenta o próximo */
-    }
-  }
-  throw new Error(
-    'schema.sql não encontrado. Rode a migração da raiz do projeto (onde está a pasta server/db ou db).',
-  );
-}
 
 const say = (m: string): void => console.log(m);
 
@@ -50,109 +34,6 @@ function parseArgs(argv: string[]): Record<string, string> {
     if (m) out[m[1]] = m[2] ?? '1';
   }
   return out;
-}
-
-/**
- * Divide o schema em comandos.
- *
- * Os comentários `--` são removidos ANTES de dividir no `;`: um bloco que
- * começa com "-- ..." continua sendo um CREATE TABLE válido logo abaixo, e
- * descartá-lo inteiro deixaria tabelas faltando (e chaves estrangeiras
- * quebradas). Foi exatamente esse o bug que sumiu com a tabela `customers` na
- * primeira instalação.
- */
-function splitStatements(sql: string): { statements: string[]; noComments: string } {
-  const noComments = sql.replace(/^[ \t]*--.*$/gm, '');
-  const statements = noComments
-    .split(';')
-    .map((s) => s.trim())
-    .filter((s) => s !== '');
-  return { statements, noComments };
-}
-
-const TIPOS_SQL =
-  'VARCHAR|VARBINARY|BINARY|CHAR|TINYTEXT|TEXT|MEDIUMTEXT|LONGTEXT|TINYINT|SMALLINT'
-  + '|MEDIUMINT|BIGINT|INT|DECIMAL|NUMERIC|FLOAT|DOUBLE|DATETIME|TIMESTAMP|DATE|TIME'
-  + '|YEAR|ENUM|SET|JSON|BLOB|MEDIUMBLOB|LONGBLOB|BOOLEAN|BOOL';
-
-/**
- * `CREATE TABLE IF NOT EXISTS` cria tabelas novas, mas ignora colunas novas em
- * tabelas que já existem — um deploy futuro que adicionasse uma coluna falharia
- * em silêncio até alguém abrir a tela que a usa. Aqui comparamos o schema.sql
- * com o banco e emitimos os ALTER que faltarem.
- */
-async function addMissingColumns(noComments: string): Promise<number> {
-  let adicionadas = 0;
-  const re = /CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\)\s*ENGINE=/g;
-
-  for (const [, tabela, corpo] of noComments.matchAll(re)) {
-    // Só conta como coluna a linha cujo segundo token é um tipo SQL. Índices,
-    // chaves e a continuação de um FOREIGN KEY ("REFERENCES ...") ficam de fora
-    // — sem isso, "REFERENCES" viraria uma coluna e o ALTER falharia.
-    const declaradas = new Map<string, string>();
-    for (const linhaBruta of corpo.split('\n')) {
-      const linha = linhaBruta.trim();
-      if (linha === '') continue;
-      const m = new RegExp(`^\`?(\\w+)\`?\\s+((?:${TIPOS_SQL})\\b.*?),?$`, 'i').exec(linha);
-      if (m) declaradas.set(m[1], m[2].trim().replace(/,$/, ''));
-    }
-
-    const existentes = (await q.all(`SHOW COLUMNS FROM \`${tabela}\``)).map((r) => String(r.Field));
-    let anterior: string | null = null;
-    for (const [coluna, definicao] of declaradas) {
-      if (!existentes.includes(coluna)) {
-        const posicao = anterior === null ? 'FIRST' : `AFTER \`${anterior}\``;
-        await q.run(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${definicao} ${posicao}`);
-        say(`  + coluna ${tabela}.${coluna}`);
-        adicionadas++;
-      }
-      anterior = coluna;
-    }
-  }
-  return adicionadas;
-}
-
-/**
- * Índices que precisam existir além dos criados junto da tabela.
- *
- * O `addMissingColumns` acima resolve colunas novas, mas não índices: num banco
- * que já existe, o `CREATE TABLE IF NOT EXISTS` não roda e a chave nova nunca
- * apareceria. Como índice esquecido não quebra nada na hora — só deixa a
- * consulta lenta, ou permite a duplicata que ele deveria barrar —, o erro passa
- * despercebido até o dia em que dói.
- */
-const INDICES: { tabela: string; nome: string; definicao: string }[] = [
-  {
-    tabela: 'orders',
-    nome: 'uq_order_payment_ref',
-    // Único: é por ele que o webhook do provedor encontra o pedido, e o mesmo
-    // pagamento não pode acabar vinculado a dois pedidos diferentes.
-    definicao: 'UNIQUE KEY uq_order_payment_ref (payment_ref)',
-  },
-];
-
-async function addMissingIndexes(): Promise<number> {
-  let criados = 0;
-  for (const { tabela, nome, definicao } of INDICES) {
-    const existe = await q.one(
-      `SELECT 1 AS ok FROM information_schema.statistics
-        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
-        LIMIT 1`,
-      [tabela, nome],
-    );
-    if (existe) continue;
-    try {
-      await q.run(`ALTER TABLE \`${tabela}\` ADD ${definicao}`);
-      say(`  + índice ${tabela}.${nome}`);
-      criados++;
-    } catch (e) {
-      // Duplicata pré-existente impede a chave única. Avisar é melhor do que
-      // abortar a migração inteira por causa de um índice.
-      const err = e as { code?: string; message?: string };
-      say(`  ! não consegui criar ${tabela}.${nome}: ${err.code ?? ''} ${err.message ?? ''}`.trimEnd());
-    }
-  }
-  return criados;
 }
 
 interface CatalogProduct {
@@ -403,10 +284,10 @@ async function main(): Promise<void> {
   }
   say(`Tabelas criadas/verificadas: ${statements.length} comandos.`);
 
-  const adicionadas = await addMissingColumns(noComments);
+  const adicionadas = await addMissingColumns(noComments, say);
   say(adicionadas === 0 ? 'Nenhuma coluna nova a adicionar.' : `Colunas adicionadas: ${adicionadas}.`);
 
-  const indices = await addMissingIndexes();
+  const indices = await addMissingIndexes(say);
   say(indices === 0 ? 'Nenhum índice novo a adicionar.' : `Índices adicionados: ${indices}.`);
 
   // ------------------------------------------------------------ catálogo ----

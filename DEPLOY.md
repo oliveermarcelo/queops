@@ -199,6 +199,13 @@ O que ele faz: cria as 20 tabelas, importa as 10 categorias e os produtos de
 
 Rodar de novo é seguro: ele não duplica nada.
 
+> **Atualizações futuras não dependem de você lembrar disto.** Na subida, o
+> servidor acrescenta sozinho as colunas e índices novos que o código espera —
+> só isso, nada é apagado nem recarregado. É o `AUTO_MIGRAR` (ver
+> `.env.example`). O `migrate.js` continua necessário na PRIMEIRA instalação,
+> porque é ele que cria as tabelas, carrega o catálogo e cadastra o
+> administrador.
+
 > **Não use `--demo` em produção**: cria 140 pedidos fictícios.
 
 **Sem SSH?** Importe `db/schema.sql` pelo phpMyAdmin (hPanel → Bancos de Dados →

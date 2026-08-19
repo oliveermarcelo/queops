@@ -32,6 +32,43 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  /*
+   * ESTRUTURA DO BANCO EM DIA, NA SUBIDA.
+   *
+   * Só a parte aditiva: coluna e índice que o código espera e o banco não tem
+   * (ver schema.ts). Não cria tabela, não carrega catálogo, não toca em dado
+   * nenhum — o `migrate.js` continua sendo quem instala e carrega.
+   *
+   * Existe porque o custo de esquecer é alto e silencioso: uma atualização que
+   * acrescenta coluna não quebra a subida — a loja abre, o catálogo aparece — e
+   * falha no meio de um pagamento, para um cliente de verdade. Foi o que
+   * aconteceu: `stock_restored` não existia, o checkout devolvia erro, e a
+   * correção ficou pendente de alguém lembrar de rodar um comando.
+   *
+   * Falhar aqui NÃO impede a loja de subir. Se o usuário do MySQL não tiver
+   * permissão de ALTER, a mensagem fica no log e a loja continua no ar — a API
+   * já responde `schema_outdated`, com o comando, quando falta coluna.
+   *
+   * Para desligar: AUTO_MIGRAR=false.
+   */
+  if (process.env.AUTO_MIGRAR !== 'false') {
+    try {
+      const { sincronizarEstrutura } = await import('./schema.ts');
+      const { colunas, indices } = await sincronizarEstrutura((m) => console.log('[queops]' + m));
+      if (colunas > 0 || indices > 0) {
+        console.log(`[queops] banco atualizado na subida: ${colunas} coluna(s), ${indices} índice(s).`);
+      }
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      console.error(
+        '[queops] não consegui conferir a estrutura do banco:',
+        err.code ?? '',
+        err.message ?? e,
+      );
+      console.error('[queops] rode `node migrate.js` se o checkout reclamar de banco desatualizado.');
+    }
+  }
+
   const app = createApp();
   const server = app.listen(config.port, config.host, () => {
     console.log(`[queops] no ar em http://${config.host}:${config.port} (${config.env})`);

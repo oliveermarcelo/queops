@@ -1298,6 +1298,125 @@ var init_providers = __esm({
   }
 });
 
+// server/src/schema.ts
+var schema_exports = {};
+__export(schema_exports, {
+  addMissingColumns: () => addMissingColumns,
+  addMissingIndexes: () => addMissingIndexes,
+  dbDir: () => dbDir,
+  sincronizarEstrutura: () => sincronizarEstrutura,
+  splitStatements: () => splitStatements
+});
+function dbDir() {
+  const candidatos2 = [
+    import_node_path4.default.resolve(process.cwd(), "server/db"),
+    import_node_path4.default.resolve(process.cwd(), "db")
+  ];
+  for (const c of candidatos2) {
+    try {
+      (0, import_node_fs4.readFileSync)(import_node_path4.default.join(c, "schema.sql"));
+      return c;
+    } catch {
+    }
+  }
+  throw new Error(
+    "schema.sql n\xE3o encontrado. Rode a migra\xE7\xE3o da raiz do projeto (onde est\xE1 a pasta server/db ou db)."
+  );
+}
+function splitStatements(sql) {
+  const noComments = sql.replace(/^[ \t]*--.*$/gm, "");
+  const statements = noComments.split(";").map((s) => s.trim()).filter((s) => s !== "");
+  return { statements, noComments };
+}
+function tabelaAusente(e) {
+  return e?.code === "ER_NO_SUCH_TABLE";
+}
+async function addMissingColumns(noComments, say) {
+  let adicionadas = 0;
+  const re = /CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\)\s*ENGINE=/g;
+  for (const [, tabela, corpo] of noComments.matchAll(re)) {
+    const declaradas = /* @__PURE__ */ new Map();
+    for (const linhaBruta of corpo.split("\n")) {
+      const linha = linhaBruta.trim();
+      if (linha === "") continue;
+      const m = new RegExp(`^\`?(\\w+)\`?\\s+((?:${TIPOS_SQL})\\b.*?),?$`, "i").exec(linha);
+      if (m) declaradas.set(m[1], m[2].trim().replace(/,$/, ""));
+    }
+    let existentes;
+    try {
+      existentes = (await q.all(`SHOW COLUMNS FROM \`${tabela}\``)).map((r) => String(r.Field));
+    } catch (e) {
+      if (tabelaAusente(e)) continue;
+      throw e;
+    }
+    let anterior = null;
+    for (const [coluna, definicao] of declaradas) {
+      if (!existentes.includes(coluna)) {
+        const posicao = anterior === null ? "FIRST" : `AFTER \`${anterior}\``;
+        await q.run(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${definicao} ${posicao}`);
+        say(`  + coluna ${tabela}.${coluna}`);
+        adicionadas++;
+      }
+      anterior = coluna;
+    }
+  }
+  return adicionadas;
+}
+async function addMissingIndexes(say) {
+  let criados = 0;
+  for (const { tabela, nome, definicao } of INDICES) {
+    const existe = await q.one(
+      `SELECT 1 AS ok FROM information_schema.statistics
+        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
+        LIMIT 1`,
+      [tabela, nome]
+    );
+    if (existe !== null) continue;
+    try {
+      await q.run(`ALTER TABLE \`${tabela}\` ADD ${definicao}`);
+      say(`  + \xEDndice ${tabela}.${nome}`);
+      criados++;
+    } catch (e) {
+      if (tabelaAusente(e)) continue;
+      const err = e;
+      say(`  ! n\xE3o consegui criar ${tabela}.${nome}: ${err.code ?? ""} ${err.message ?? ""}`.trimEnd());
+    }
+  }
+  return criados;
+}
+async function sincronizarEstrutura(say) {
+  const sql = (0, import_node_fs4.readFileSync)(import_node_path4.default.join(dbDir(), "schema.sql"), "utf8");
+  const { noComments } = splitStatements(sql);
+  const colunas = await addMissingColumns(noComments, say);
+  const indices = await addMissingIndexes(say);
+  return { colunas, indices };
+}
+var import_node_fs4, import_node_path4, TIPOS_SQL, INDICES;
+var init_schema = __esm({
+  "server/src/schema.ts"() {
+    "use strict";
+    import_node_fs4 = require("node:fs");
+    import_node_path4 = __toESM(require("node:path"), 1);
+    init_db();
+    __name(dbDir, "dbDir");
+    __name(splitStatements, "splitStatements");
+    TIPOS_SQL = "VARCHAR|VARBINARY|BINARY|CHAR|TINYTEXT|TEXT|MEDIUMTEXT|LONGTEXT|TINYINT|SMALLINT|MEDIUMINT|BIGINT|INT|DECIMAL|NUMERIC|FLOAT|DOUBLE|DATETIME|TIMESTAMP|DATE|TIME|YEAR|ENUM|SET|JSON|BLOB|MEDIUMBLOB|LONGBLOB|BOOLEAN|BOOL";
+    __name(tabelaAusente, "tabelaAusente");
+    __name(addMissingColumns, "addMissingColumns");
+    INDICES = [
+      {
+        tabela: "orders",
+        nome: "uq_order_payment_ref",
+        // Único: é por ele que o webhook do provedor encontra o pedido, e o mesmo
+        // pagamento não pode acabar vinculado a dois pedidos diferentes.
+        definicao: "UNIQUE KEY uq_order_payment_ref (payment_ref)"
+      }
+    ];
+    __name(addMissingIndexes, "addMissingIndexes");
+    __name(sincronizarEstrutura, "sincronizarEstrutura");
+  }
+});
+
 // server/src/app.ts
 var import_node_fs3 = require("node:fs");
 var import_node_path3 = __toESM(require("node:path"), 1);
@@ -3574,6 +3693,23 @@ async function main() {
     console.error("Confira DB_HOST, DB_NAME, DB_USER e DB_PASS. Na Hostinger, o host \xE9 localhost");
     console.error("e o nome do banco/usu\xE1rio leva o prefixo da conta (ex.: u123456789_queops).");
     process.exit(1);
+  }
+  if (process.env.AUTO_MIGRAR !== "false") {
+    try {
+      const { sincronizarEstrutura: sincronizarEstrutura2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const { colunas, indices } = await sincronizarEstrutura2((m) => console.log("[queops]" + m));
+      if (colunas > 0 || indices > 0) {
+        console.log(`[queops] banco atualizado na subida: ${colunas} coluna(s), ${indices} \xEDndice(s).`);
+      }
+    } catch (e) {
+      const err = e;
+      console.error(
+        "[queops] n\xE3o consegui conferir a estrutura do banco:",
+        err.code ?? "",
+        err.message ?? e
+      );
+      console.error("[queops] rode `node migrate.js` se o checkout reclamar de banco desatualizado.");
+    }
   }
   const app = createApp();
   const server = app.listen(config.port, config.host, () => {

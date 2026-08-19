@@ -24,8 +24,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // server/src/migrate.ts
-var import_node_fs3 = require("node:fs");
-var import_node_path3 = __toESM(require("node:path"), 1);
+var import_node_fs4 = require("node:fs");
+var import_node_path4 = __toESM(require("node:path"), 1);
 
 // server/src/auth.ts
 var import_node_crypto = require("node:crypto");
@@ -262,6 +262,102 @@ function hashPassword(plain) {
 __name(hashPassword, "hashPassword");
 var DUMMY_HASH = import_bcryptjs.default.hashSync("senha-que-nao-existe-" + (0, import_node_crypto.randomBytes)(16).toString("hex"), ROUNDS_SENHA);
 
+// server/src/schema.ts
+var import_node_fs3 = require("node:fs");
+var import_node_path3 = __toESM(require("node:path"), 1);
+function dbDir() {
+  const candidatos2 = [
+    import_node_path3.default.resolve(process.cwd(), "server/db"),
+    import_node_path3.default.resolve(process.cwd(), "db")
+  ];
+  for (const c of candidatos2) {
+    try {
+      (0, import_node_fs3.readFileSync)(import_node_path3.default.join(c, "schema.sql"));
+      return c;
+    } catch {
+    }
+  }
+  throw new Error(
+    "schema.sql n\xE3o encontrado. Rode a migra\xE7\xE3o da raiz do projeto (onde est\xE1 a pasta server/db ou db)."
+  );
+}
+__name(dbDir, "dbDir");
+function splitStatements(sql) {
+  const noComments = sql.replace(/^[ \t]*--.*$/gm, "");
+  const statements = noComments.split(";").map((s) => s.trim()).filter((s) => s !== "");
+  return { statements, noComments };
+}
+__name(splitStatements, "splitStatements");
+var TIPOS_SQL = "VARCHAR|VARBINARY|BINARY|CHAR|TINYTEXT|TEXT|MEDIUMTEXT|LONGTEXT|TINYINT|SMALLINT|MEDIUMINT|BIGINT|INT|DECIMAL|NUMERIC|FLOAT|DOUBLE|DATETIME|TIMESTAMP|DATE|TIME|YEAR|ENUM|SET|JSON|BLOB|MEDIUMBLOB|LONGBLOB|BOOLEAN|BOOL";
+function tabelaAusente(e) {
+  return e?.code === "ER_NO_SUCH_TABLE";
+}
+__name(tabelaAusente, "tabelaAusente");
+async function addMissingColumns(noComments, say2) {
+  let adicionadas = 0;
+  const re = /CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\)\s*ENGINE=/g;
+  for (const [, tabela, corpo] of noComments.matchAll(re)) {
+    const declaradas = /* @__PURE__ */ new Map();
+    for (const linhaBruta of corpo.split("\n")) {
+      const linha = linhaBruta.trim();
+      if (linha === "") continue;
+      const m = new RegExp(`^\`?(\\w+)\`?\\s+((?:${TIPOS_SQL})\\b.*?),?$`, "i").exec(linha);
+      if (m) declaradas.set(m[1], m[2].trim().replace(/,$/, ""));
+    }
+    let existentes;
+    try {
+      existentes = (await q.all(`SHOW COLUMNS FROM \`${tabela}\``)).map((r) => String(r.Field));
+    } catch (e) {
+      if (tabelaAusente(e)) continue;
+      throw e;
+    }
+    let anterior = null;
+    for (const [coluna, definicao] of declaradas) {
+      if (!existentes.includes(coluna)) {
+        const posicao = anterior === null ? "FIRST" : `AFTER \`${anterior}\``;
+        await q.run(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${definicao} ${posicao}`);
+        say2(`  + coluna ${tabela}.${coluna}`);
+        adicionadas++;
+      }
+      anterior = coluna;
+    }
+  }
+  return adicionadas;
+}
+__name(addMissingColumns, "addMissingColumns");
+var INDICES = [
+  {
+    tabela: "orders",
+    nome: "uq_order_payment_ref",
+    // Único: é por ele que o webhook do provedor encontra o pedido, e o mesmo
+    // pagamento não pode acabar vinculado a dois pedidos diferentes.
+    definicao: "UNIQUE KEY uq_order_payment_ref (payment_ref)"
+  }
+];
+async function addMissingIndexes(say2) {
+  let criados = 0;
+  for (const { tabela, nome, definicao } of INDICES) {
+    const existe = await q.one(
+      `SELECT 1 AS ok FROM information_schema.statistics
+        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
+        LIMIT 1`,
+      [tabela, nome]
+    );
+    if (existe !== null) continue;
+    try {
+      await q.run(`ALTER TABLE \`${tabela}\` ADD ${definicao}`);
+      say2(`  + \xEDndice ${tabela}.${nome}`);
+      criados++;
+    } catch (e) {
+      if (tabelaAusente(e)) continue;
+      const err = e;
+      say2(`  ! n\xE3o consegui criar ${tabela}.${nome}: ${err.code ?? ""} ${err.message ?? ""}`.trimEnd());
+    }
+  }
+  return criados;
+}
+__name(addMissingIndexes, "addMissingIndexes");
+
 // server/src/store.ts
 var DEFAULT_SETTINGS = {
   name: "Qu\xE9ops Pir\xE2mides",
@@ -322,23 +418,6 @@ async function configSet(key, value, exec = q) {
 __name(configSet, "configSet");
 
 // server/src/migrate.ts
-function dbDir() {
-  const candidatos2 = [
-    import_node_path3.default.resolve(process.cwd(), "server/db"),
-    import_node_path3.default.resolve(process.cwd(), "db")
-  ];
-  for (const c of candidatos2) {
-    try {
-      (0, import_node_fs3.readFileSync)(import_node_path3.default.join(c, "schema.sql"));
-      return c;
-    } catch {
-    }
-  }
-  throw new Error(
-    "schema.sql n\xE3o encontrado. Rode a migra\xE7\xE3o da raiz do projeto (onde est\xE1 a pasta server/db ou db)."
-  );
-}
-__name(dbDir, "dbDir");
 var say = /* @__PURE__ */ __name((m) => console.log(m), "say");
 function parseArgs(argv) {
   const out = {};
@@ -349,74 +428,10 @@ function parseArgs(argv) {
   return out;
 }
 __name(parseArgs, "parseArgs");
-function splitStatements(sql) {
-  const noComments = sql.replace(/^[ \t]*--.*$/gm, "");
-  const statements = noComments.split(";").map((s) => s.trim()).filter((s) => s !== "");
-  return { statements, noComments };
-}
-__name(splitStatements, "splitStatements");
-var TIPOS_SQL = "VARCHAR|VARBINARY|BINARY|CHAR|TINYTEXT|TEXT|MEDIUMTEXT|LONGTEXT|TINYINT|SMALLINT|MEDIUMINT|BIGINT|INT|DECIMAL|NUMERIC|FLOAT|DOUBLE|DATETIME|TIMESTAMP|DATE|TIME|YEAR|ENUM|SET|JSON|BLOB|MEDIUMBLOB|LONGBLOB|BOOLEAN|BOOL";
-async function addMissingColumns(noComments) {
-  let adicionadas = 0;
-  const re = /CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\)\s*ENGINE=/g;
-  for (const [, tabela, corpo] of noComments.matchAll(re)) {
-    const declaradas = /* @__PURE__ */ new Map();
-    for (const linhaBruta of corpo.split("\n")) {
-      const linha = linhaBruta.trim();
-      if (linha === "") continue;
-      const m = new RegExp(`^\`?(\\w+)\`?\\s+((?:${TIPOS_SQL})\\b.*?),?$`, "i").exec(linha);
-      if (m) declaradas.set(m[1], m[2].trim().replace(/,$/, ""));
-    }
-    const existentes = (await q.all(`SHOW COLUMNS FROM \`${tabela}\``)).map((r) => String(r.Field));
-    let anterior = null;
-    for (const [coluna, definicao] of declaradas) {
-      if (!existentes.includes(coluna)) {
-        const posicao = anterior === null ? "FIRST" : `AFTER \`${anterior}\``;
-        await q.run(`ALTER TABLE \`${tabela}\` ADD COLUMN \`${coluna}\` ${definicao} ${posicao}`);
-        say(`  + coluna ${tabela}.${coluna}`);
-        adicionadas++;
-      }
-      anterior = coluna;
-    }
-  }
-  return adicionadas;
-}
-__name(addMissingColumns, "addMissingColumns");
-var INDICES = [
-  {
-    tabela: "orders",
-    nome: "uq_order_payment_ref",
-    // Único: é por ele que o webhook do provedor encontra o pedido, e o mesmo
-    // pagamento não pode acabar vinculado a dois pedidos diferentes.
-    definicao: "UNIQUE KEY uq_order_payment_ref (payment_ref)"
-  }
-];
-async function addMissingIndexes() {
-  let criados = 0;
-  for (const { tabela, nome, definicao } of INDICES) {
-    const existe = await q.one(
-      `SELECT 1 AS ok FROM information_schema.statistics
-        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
-        LIMIT 1`,
-      [tabela, nome]
-    );
-    if (existe) continue;
-    try {
-      await q.run(`ALTER TABLE \`${tabela}\` ADD ${definicao}`);
-      say(`  + \xEDndice ${tabela}.${nome}`);
-      criados++;
-    } catch (e) {
-      const err = e;
-      say(`  ! n\xE3o consegui criar ${tabela}.${nome}: ${err.code ?? ""} ${err.message ?? ""}`.trimEnd());
-    }
-  }
-  return criados;
-}
-__name(addMissingIndexes, "addMissingIndexes");
 async function importCatalog(dir) {
   let catalog;
   try {
-    catalog = JSON.parse((0, import_node_fs3.readFileSync)(import_node_path3.default.join(dir, "catalog.json"), "utf8"));
+    catalog = JSON.parse((0, import_node_fs4.readFileSync)(import_node_path4.default.join(dir, "catalog.json"), "utf8"));
   } catch {
     say("catalog.json ausente \u2014 pulei a carga do cat\xE1logo.");
     return;
@@ -609,15 +624,15 @@ async function main() {
   }
   const opts = parseArgs(process.argv.slice(2));
   const dir = dbDir();
-  const sql = (0, import_node_fs3.readFileSync)(import_node_path3.default.join(dir, "schema.sql"), "utf8");
+  const sql = (0, import_node_fs4.readFileSync)(import_node_path4.default.join(dir, "schema.sql"), "utf8");
   const { statements, noComments } = splitStatements(sql);
   for (const stmt of statements) {
     await q.run(stmt);
   }
   say(`Tabelas criadas/verificadas: ${statements.length} comandos.`);
-  const adicionadas = await addMissingColumns(noComments);
+  const adicionadas = await addMissingColumns(noComments, say);
   say(adicionadas === 0 ? "Nenhuma coluna nova a adicionar." : `Colunas adicionadas: ${adicionadas}.`);
-  const indices = await addMissingIndexes();
+  const indices = await addMissingIndexes(say);
   say(indices === 0 ? "Nenhum \xEDndice novo a adicionar." : `\xCDndices adicionados: ${indices}.`);
   await importCatalog(dir);
   const padroes = [
