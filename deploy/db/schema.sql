@@ -189,6 +189,10 @@ CREATE TABLE IF NOT EXISTS orders (
   ship_city       VARCHAR(120)  NOT NULL DEFAULT '',
   ship_state      CHAR(2)       NOT NULL DEFAULT 'SP',
   delivery_eta    DATE          NULL,
+  -- Transportadora e modalidade escolhidas pelo cliente ("Jadlog · .Package").
+  -- Fica gravado porque é o que a lojista precisa saber para despachar — o
+  -- valor do frete sozinho não diz por onde a encomenda vai.
+  shipping_service VARCHAR(120) NOT NULL DEFAULT '',
   payment_provider VARCHAR(30)  NOT NULL DEFAULT '',
   payment_ref     VARCHAR(64)   NULL,
   payment_detail  VARCHAR(60)   NOT NULL DEFAULT '',

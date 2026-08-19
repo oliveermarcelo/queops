@@ -49,7 +49,7 @@ async function novaSessao() {
   return { cookie, csrf: corpo.csrfToken ?? '' };
 }
 
-async function criarPedido(sessao, produtoId) {
+async function criarPedido(sessao, produtoId, extra = {}) {
   const r = await fetch(`${BASE}/api/orders`, {
     method: 'POST',
     headers: {
@@ -68,6 +68,7 @@ async function criarPedido(sessao, produtoId) {
         cep: '01310-100', street: 'Av. Paulista', number: '1000',
         neighborhood: 'Bela Vista', city: 'São Paulo', state: 'SP',
       },
+      ...extra,
     }),
   });
   return { status: r.status, corpo: await r.json().catch(() => ({})) };
@@ -149,6 +150,21 @@ try {
   checar('o pedido gravado ficou cancelado', 'canceled', pedido ? String(pedido.status) : '(nenhum)');
   checar('nunca marcado como pago', null, pedido ? pedido.paid_at : 'sem pedido');
   checar('e o estoque voltou para a prateleira', ESTOQUE, await estoque());
+  // ---- 3. Opção de entrega que não existe ----
+  /*
+   * O navegador manda o ID da opção de frete escolhida. Se ele mandar um id que
+   * não está na cotação — transportadora que saiu do ar, ou alguém tentando
+   * escolher um frete inventado —, o pedido tem de ser RECUSADO, nunca corrigido
+   * em silêncio para outra opção: cobrar um frete que o cliente não escolheu é
+   * exatamente o que gera contestação.
+   */
+  sessao = await novaSessao();
+  r = await criarPedido(sessao, PRODUTO, { shipping: 'melhorenvio:99999' });
+  checar('opção de entrega inexistente é recusada', 409, r.status);
+  checar('com o código que a tela entende', 'shipping_option_gone', r.corpo?.error?.code);
+  checar('e nada é gravado por causa dela', 0, (await q.all(
+    "SELECT id FROM orders WHERE customer_email = 'teste-cobranca@example.com' AND status = 'pending'",
+  )).length);
 } finally {
   await limpar();
   await restaurarIntegracao();

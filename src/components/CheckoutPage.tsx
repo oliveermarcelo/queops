@@ -35,12 +35,26 @@ interface CheckoutPageProps {
   onProfileSaved?: (account: CustomerAccount) => void;
 }
 
+/** Uma opção de entrega cotada pelo servidor (Correios ou Melhor Envio). */
+interface OpcaoDeFrete {
+  id: string;
+  label: string;
+  carrier: string;
+  price: number;
+  days: number;
+  source: 'correios' | 'melhorenvio';
+}
+
 interface Quote {
   subtotal: number;
   shipping: number;
   shippingLabel: string;
   /** Por que os Correios não cotaram. O servidor só manda para o painel. */
   shippingNote?: string;
+  /** Opções de entrega cotadas. Vazio = frete pelas regras do painel. */
+  shippingOptions?: OpcaoDeFrete[];
+  /** Qual opção está valendo no total atual. */
+  shippingChoice?: string;
   couponCode: string | null;
   couponDiscount: number;
   couponError: string | null;
@@ -213,6 +227,14 @@ export default function CheckoutPage({
   const [couponInput, setCouponInput] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState('');
 
+  /**
+   * Opção de entrega escolhida (`correios:03220`, `melhorenvio:2`).
+   *
+   * Vazio = a mais barata, que é o que o servidor usa por omissão. O navegador
+   * manda só este id: o preço vem sempre da cotação do servidor.
+   */
+  const [freteEscolhido, setFreteEscolhido] = useState('');
+
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -242,6 +264,7 @@ export default function CheckoutPage({
         // Sem escolha feita, nenhuma forma de pagamento: assim o desconto do
         // Pix não entra num total que a pessoa ainda não decidiu.
         payment: pagamentoEscolhido ? paymentMethod : '',
+        shipping: freteEscolhido,
       });
       // Ignora respostas de requisições antigas que chegaram fora de ordem.
       if (id === requestId.current) setQuote(result);
@@ -252,7 +275,7 @@ export default function CheckoutPage({
     } finally {
       if (id === requestId.current) setQuoting(false);
     }
-  }, [items, stateCode, cep, appliedCoupon, paymentMethod, pagamentoEscolhido]);
+  }, [items, stateCode, cep, appliedCoupon, paymentMethod, pagamentoEscolhido, freteEscolhido]);
 
   useEffect(() => {
     const t = setTimeout(refreshQuote, 300);
@@ -300,6 +323,23 @@ export default function CheckoutPage({
    */
   const temCep = cep.replace(/\D/g, '').length === 8;
   const freteConhecido = temCotacao && temCep;
+
+  const opcoesFrete = quote?.shippingOptions ?? [];
+
+  /*
+   * A opção escolhida deixou de existir?
+   *
+   * Trocar o CEP muda a lista: a transportadora que atendia São Paulo pode não
+   * atender a Bahia. Manter o id antigo faria o servidor recusar o pedido no
+   * final ("opção não disponível"), o pior momento para descobrir. Ao perceber
+   * que a escolha saiu da lista, voltamos para a mais barata.
+   */
+  useEffect(() => {
+    if (freteEscolhido === '') return;
+    if (opcoesFrete.length === 0) return;
+    if (!opcoesFrete.some((o) => o.id === freteEscolhido)) setFreteEscolhido('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote]);
 
   /*
    * Enquanto o frete é desconhecido, o total mostrado NÃO o inclui.
@@ -396,6 +436,7 @@ export default function CheckoutPage({
         cpf,
         payment: paymentMethod,
         coupon: appliedCoupon,
+        shipping: freteEscolhido,
         address: { cep, street, number, complement, neighborhood, city, state: stateCode },
         card: cartao === undefined ? undefined : {
           token: cartao.token,
@@ -432,6 +473,16 @@ export default function CheckoutPage({
        */
       if (err instanceof ApiError && (err.code === 'payment_rejected' || err.code === 'missing_card_token')) {
         setTentativaCartao((t) => t + 1);
+      }
+      /*
+       * A transportadora escolhida saiu do ar entre a escolha e o clique. Volta
+       * para a etapa da entrega com a escolha limpa: a pessoa vê a lista nova e
+       * decide de novo, em vez de ser cobrada por uma opção que não escolheu.
+       */
+      if (err instanceof ApiError && err.code === 'shipping_option_gone') {
+        setFreteEscolhido('');
+        setStep(2);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       }
       throw err;
     } finally {
@@ -746,6 +797,59 @@ export default function CheckoutPage({
                           </select>
                         </div>
                       </div>
+
+                      {/*
+                        OPÇÕES DE ENTREGA.
+                        Só aparecem quando alguma transportadora cotou de verdade
+                        (Correios ou Melhor Envio). Sem cotação, o frete sai das
+                        regras do painel e não há o que escolher — mostrar uma
+                        lista de um item só seria escolha de fachada.
+                      */}
+                      {opcoesFrete.length > 0 && (
+                        <fieldset className="mt-8 border-0 p-0 m-0">
+                          <legend className="text-sm font-extrabold text-gray-900 mb-1 p-0">
+                            Como você prefere receber?
+                          </legend>
+                          <p className="text-xs text-gray-400 mt-0 mb-4">
+                            Prazos em dias úteis, contados após a confirmação do pagamento.
+                          </p>
+                          <div className="space-y-2.5">
+                            {opcoesFrete.map((o) => {
+                              const ativo = (quote?.shippingChoice ?? '') === o.id;
+                              return (
+                                <button
+                                  type="button"
+                                  key={o.id}
+                                  aria-pressed={ativo}
+                                  onClick={() => setFreteEscolhido(o.id)}
+                                  disabled={quoting}
+                                  className={`w-full flex items-center gap-3 text-left p-3.5 rounded-2xl border-2 transition-all disabled:opacity-60 ${
+                                    ativo ? 'border-primary-blue bg-primary-blue/[0.03] shadow-sm' : 'border-gray-200 hover:border-gray-300'
+                                  }`}
+                                >
+                                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${ativo ? 'bg-primary-blue text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                    <Truck size={18} aria-hidden="true" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-bold text-gray-900 text-sm truncate">{o.label}</p>
+                                    <p className="text-xs text-gray-400 mt-0.5">
+                                      {o.days > 0
+                                        ? `até ${o.days} ${o.days === 1 ? 'dia útil' : 'dias úteis'}`
+                                        : 'prazo a confirmar'}
+                                    </p>
+                                  </div>
+                                  <span className={`text-sm font-extrabold flex-shrink-0 ${o.price === 0 ? 'text-emerald-600' : 'text-gray-900'}`}>
+                                    {o.price === 0 ? 'Grátis' : `R$ ${brlNumber(o.price)}`}
+                                  </span>
+                                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${ativo ? 'border-primary-blue' : 'border-gray-300'}`}>
+                                    {ativo && <div className="w-2.5 h-2.5 rounded-full bg-primary-blue" />}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </fieldset>
+                      )}
                     </div>
                   )}
 

@@ -90,6 +90,40 @@ vez, à mão, com as credenciais **de teste**.
 
 Fontes das tabelas: [Cartões de teste — Mercado Pago Developers](https://www.mercadopago.com.br/developers/pt/docs/your-integrations/test/cards).
 
+## Frete: Correios e Melhor Envio
+
+```bash
+npm run teste     # inclui correios.test.ts e melhorenvio.test.ts
+```
+
+Os testes cobrem o que dá para provar sem rede: a leitura da resposta e a
+tradução dos erros. É de propósito — é ali que um campo renomeado pela API
+viraria **frete R$ 0,00** e um serviço com erro viraria opção "grátis" no
+checkout. Nenhum dos dois quebra nada visivelmente; apenas cobra errado.
+
+A conversa com as APIs só se prova com credencial de verdade, e o painel foi
+feito para isso: **Integrações → Testar conexão** faz a MESMA chamada do
+checkout e mostra o preço que saiu (com o código do serviço) ou o motivo exato
+da recusa. No Melhor Envio, a lista de transportadoras vem dessa cotação de
+amostra — o que aparece marcável ali é o que o cliente vai ver.
+
+Roteiro manual, depois de cadastrar as credenciais:
+
+1. Integrações → Correios → **Testar conexão**: deve responder com preço e
+   código (ex.: `Sedex (03220) R$ 11,15`).
+2. Integrações → Melhor Envio → **Testar conexão** e depois marcar as
+   transportadoras na lista. Salvar.
+3. Checkout com um CEP real: a etapa **Entrega** passa a mostrar "Como você
+   prefere receber?" com as opções cotadas, da mais barata para a mais cara.
+4. Escolher uma opção mais cara e conferir que o total do resumo acompanha.
+5. Fechar o pedido e conferir em Painel → Pedidos que a transportadora escolhida
+   ficou gravada.
+
+> Uma trava vale um teste próprio, e ele é automático (`npm run teste:cobranca`):
+> mandar um id de frete que não está na cotação devolve **409** e não grava
+> pedido. O navegador escolhe entre as opções; o preço é sempre o que o servidor
+> cotou.
+
 ## Ponta a ponta (Playwright)
 
 Precisam da loja no ar. Com o build pronto:

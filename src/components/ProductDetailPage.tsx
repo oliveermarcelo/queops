@@ -39,6 +39,8 @@ interface ShippingEstimate {
    * Correios recusou a cotação.
    */
   shippingNote?: string;
+  /** Transportadoras cotadas. Aqui só para mostrar — a escolha é no checkout. */
+  shippingOptions?: { id: string; label: string; price: number; days: number }[];
 }
 
 export default function ProductDetailPage({
@@ -504,6 +506,26 @@ export default function ProductDetailPage({
                           {shippingResult.deliveryDays} dias úteis
                         </span>
                       </div>
+                      {/*
+                        As transportadoras cotadas, quando há mais de uma. Aqui é
+                        só informação — a escolha acontece no checkout, onde ela
+                        vale para o pedido. Mostrar antes ajuda a decidir a compra
+                        ("chega em 1 dia por R$ 39?"), que é o que esta página faz.
+                      */}
+                      {(shippingResult.shippingOptions?.length ?? 0) > 1 && (
+                        <ul className="list-none p-0 m-0 pt-1 space-y-1">
+                          {shippingResult.shippingOptions!.map((o) => (
+                            <li key={o.id} className="flex justify-between text-[12px] text-gray-500">
+                              <span className="truncate pr-2">{o.label}</span>
+                              <span className="flex-shrink-0">
+                                {o.price === 0 ? 'Grátis' : `R$ ${brlNumber(o.price)}`}
+                                {o.days > 0 ? ` · ${o.days} ${o.days === 1 ? 'dia' : 'dias'}` : ''}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
                       {/* Só chega para administradores; o cliente nunca vê. */}
                       {shippingResult.shippingNote && (
                         <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-normal mt-1 mb-0">

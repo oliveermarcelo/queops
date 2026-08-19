@@ -14,6 +14,7 @@ import { IntegrationId } from '../types';
 import { PROVIDERS, ProviderMeta, ProviderCategory, SECRET_FIELD_KEYS } from '../integrations';
 import { sendWhatsAppTest } from '../store';
 import ApiSection from './ApiSection';
+import TransportadorasMelhorEnvio from './TransportadorasMelhorEnvio';
 
 const PROVIDER_ICON: Record<IntegrationId, React.ComponentType<{ size?: number }>> = {
   uno: Database,
@@ -301,6 +302,18 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
               As credenciais ficam cifradas no banco e nunca voltam para o navegador — por isso os
               campos de senha aparecem vazios mesmo depois de salvos.
             </p>
+
+            {/*
+              O Melhor Envio tem uma escolha que não cabe num campo de texto: QUAIS
+              transportadoras o cliente pode ver. A lista vem da conta da lojista,
+              por cotação de amostra, e o que ela marcar é o que aparece no checkout.
+            */}
+            {provider.id === 'melhorenvio' && (
+              <TransportadorasMelhorEnvio
+                valor={fieldValue('services')}
+                onChange={(novo) => setField('services', novo)}
+              />
+            )}
 
             {isWhatsApp && (
               <div className="flex gap-2 pt-1">

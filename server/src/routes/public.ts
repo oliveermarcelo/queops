@@ -18,7 +18,9 @@ import {
   type CobrancaCartao, type CobrancaPix,
 } from '../payments/mercadopago.ts';
 import { aplicarPagamento, cancelarSemCobranca } from '../payments/pedidos.ts';
-import { deliveryDaysFor, normalizeCep, quoteCart } from '../pricing.ts';
+import {
+  deliveryDaysFor, normalizeCep, quoteCart, type ShippingResult,
+} from '../pricing.ts';
 import { fireWebhooks } from '../providers.ts';
 import { fetchProducts, getSettings, productRowToApi, publicSettings } from '../store.ts';
 import { h } from './helpers.ts';
@@ -112,6 +114,10 @@ publicRoutes.post('/checkout/quote', h(async (req, res) => {
     bodyStr(b, 'cep', '', 12),
     bodyStr(b, 'coupon', '', 40),
     bodyStr(b, 'payment', 'card', 10),
+    q,
+    // Opção de entrega que o cliente marcou. O preço dela é sempre o que o
+    // servidor cotou, nunca o que veio do navegador.
+    { escolha: bodyStr(b, 'shipping', '', 40) },
   );
 
   /*
@@ -200,6 +206,44 @@ publicRoutes.post('/orders', h(async (req, res) => {
   const sessionCustomerId = currentCustomerId(req);
   const etaDays = deliveryDaysFor(uf);
 
+  /*
+   * O FRETE É COTADO ANTES DE ABRIR A TRANSAÇÃO.
+   *
+   * Cotar transportadora é chamada de rede, com segundos de latência. Feita
+   * dentro da transação, ela seguraria as linhas de produto travadas por todo
+   * esse tempo — e um dia ruim dos Correios viraria fila de espera na loja
+   * inteira. Aqui fora, o preço é obtido primeiro e entra na transação já
+   * resolvido (`freteFixado`), que continua sendo número calculado pelo
+   * servidor: o navegador manda o ID da opção, nunca o valor.
+   */
+  const escolhaFrete = bodyStr(b, 'shipping', '', 40);
+  const previa = await quoteCart(
+    b.items, uf, cep, bodyStr(b, 'coupon', '', 40), payment, q, { escolha: escolhaFrete },
+  );
+
+  /*
+   * Escolheu uma opção que não existe mais? Recusar, não corrigir em silêncio.
+   *
+   * Entre ver a lista e clicar em finalizar, uma transportadora pode parar de
+   * cotar. Trocar por outra sem avisar cobraria um valor que o cliente não
+   * escolheu — e é justamente o tipo de surpresa que gera contestação.
+   */
+  if (escolhaFrete !== '' && previa.shippingChoice !== escolhaFrete) {
+    fail(
+      'A opção de entrega que você escolheu não está mais disponível. Confira as opções e '
+      + 'escolha de novo.',
+      409,
+      'shipping_option_gone',
+    );
+  }
+
+  const freteFixado = {
+    cost: previa.shipping,
+    label: previa.shippingLabel,
+    reason: (previa.shippingReason ?? 'default') as ShippingResult['reason'],
+    option: previa.shippingChoice ?? '',
+  };
+
   let gravado: { orderId: string; quote: Awaited<ReturnType<typeof quoteCart>> };
 
   try {
@@ -207,7 +251,7 @@ publicRoutes.post('/orders', h(async (req, res) => {
       /*
        * O total é recalculado DENTRO da transação — o valor que veio do
        * navegador é ignorado, e o preço lido é o mesmo que a baixa de estoque
-       * logo abaixo enxerga.
+       * logo abaixo enxerga. Só o frete vem pronto de fora, pelo motivo acima.
        */
       const quote = await quoteCart(
         b.items,
@@ -216,6 +260,7 @@ publicRoutes.post('/orders', h(async (req, res) => {
         bodyStr(b, 'coupon', '', 40),
         payment,
         tx,
+        { freteFixado },
       );
       if (quote.items.length === 0) {
         throw new EmptyCart();
@@ -253,8 +298,8 @@ publicRoutes.post('/orders', h(async (req, res) => {
             id, customer_id, customer_name, customer_email, customer_phone, customer_cpf,
             subtotal, shipping_cost, discount, total, coupon_code, status, payment, channel,
             ship_cep, ship_street, ship_number, ship_complement, ship_neighborhood, ship_city, ship_state,
-            delivery_eta
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            delivery_eta, shipping_service
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id, customerId, name, email, phone, cpf,
           quote.subtotal, quote.shipping, quote.discount, quote.total,
@@ -263,6 +308,9 @@ publicRoutes.post('/orders', h(async (req, res) => {
           bodyStr(endereco, 'complement', '', 120), bodyStr(endereco, 'neighborhood', '', 120),
           bodyStr(endereco, 'city', '', 120), uf,
           dateSP(etaDays),
+          // Por onde a encomenda vai: sem isto, a lojista tem o valor do frete
+          // e nenhuma pista de qual transportadora o cliente escolheu.
+          quote.shippingLabel.slice(0, 120),
         ],
       );
 
@@ -428,6 +476,8 @@ publicRoutes.post('/orders', h(async (req, res) => {
       discount: quote.discount,
       payment,
       deliveryEta: dateBR(etaDays),
+      /** "Jadlog · .Package — até 5 dias úteis": o que o cliente escolheu. */
+      shippingLabel: quote.shippingLabel,
       // O que a tela precisa para não afirmar "pago" quando ainda não está:
       //   'aprovado'   → dinheiro confirmado
       //   'aguardando' → Pix emitido (vem o QR) ou cartão em análise

@@ -280,14 +280,56 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
       };
 
     case 'melhorenvio': {
-      const base = str(f, 'sandbox') === 'sandbox'
-        ? 'https://sandbox.melhorenvio.com.br'
-        : 'https://melhorenvio.com.br';
-      r = await httpCall('GET', base + '/api/v2/me', {
-        Authorization: 'Bearer ' + str(f, 'token'),
-        Accept: 'application/json',
-      });
-      return { ok: r.ok, message: r.ok ? 'Melhor Envio conectado.' : `Falha (HTTP ${r.status}).` };
+      /*
+       * O teste COTA, como no dos Correios.
+       *
+       * Validar o token só prova que ele é válido — e "Conectada" com token
+       * válido e nenhuma transportadora cotando foi exatamente o que fez a
+       * integração parecer pronta enquanto não fazia nada. Aqui a mesma chamada
+       * do checkout é feita, e o que ela devolver é o que a lojista vê.
+       */
+      const { credsFrom: meCreds, amostraDeServicos } = await import('./melhorenvio.ts');
+      const creds = meCreds(f as Record<string, unknown>);
+
+      if (creds.originCep.length !== 8) {
+        return {
+          ok: false,
+          message: 'Falta o CEP de origem — sem ele o Melhor Envio não cota nada. '
+            + 'Preencha "CEP de origem" e salve.',
+        };
+      }
+
+      const { opcoes, erro } = await amostraDeServicos(creds);
+      if (erro !== '') return { ok: false, message: erro };
+
+      const cotaram = opcoes.filter((o) => o.erro === '' && o.preco > 0);
+      if (cotaram.length === 0) {
+        const motivos = opcoes
+          .map((o) => `${o.nome}: ${o.erro || 'sem preço'}`)
+          .join(' · ')
+          .slice(0, 400);
+        return {
+          ok: false,
+          message: motivos === ''
+            ? 'A conta não devolveu nenhuma transportadora. Confira em Melhor Envio se há '
+              + 'transportadoras habilitadas no seu plano.'
+            : `Nenhuma transportadora cotou — ${motivos}`,
+        };
+      }
+
+      const amostra = cotaram
+        .slice(0, 4)
+        .map((o) => `${o.nome} R$ ${o.preco.toFixed(2).replace('.', ',')}`)
+        .join(' · ');
+      const selecionados = creds.services.trim() === '' ? 0 : creds.services.split(',').length;
+      return {
+        ok: true,
+        message: `${cotaram.length} transportadora(s) cotando: ${amostra}`
+          + `${cotaram.length > 4 ? '…' : ''} (500 g para São Paulo).`
+          + (selecionados === 0
+            ? ' Escolha abaixo quais o cliente pode ver.'
+            : ` ${selecionados} liberada(s) para o cliente.`),
+      };
     }
 
     case 'uno':

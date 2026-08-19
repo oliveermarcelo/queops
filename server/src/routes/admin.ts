@@ -333,6 +333,39 @@ adminRoutes.post('/integrations/:id/test', h(async (req, res) => {
   jsonOk(res, result);
 }));
 
+/**
+ * GET /api/admin/melhorenvio/servicos — transportadoras que a conta oferece.
+ *
+ * A lista sai de uma COTAÇÃO de amostra, não de um catálogo: é a mesma chamada
+ * que o checkout faz, então o que aparece aqui é o que o cliente vai ver. Um
+ * catálogo listaria serviço que, na prática, não cota para a rota — e a lojista
+ * marcaria uma transportadora que nunca apareceria na loja.
+ *
+ * Os serviços que falharam vêm junto, com o motivo, em vez de sumirem: "a Loggi
+ * não aparece" é uma pergunta pior do que "Loggi: não atende este CEP".
+ */
+adminRoutes.get('/melhorenvio/servicos', h(async (req, res) => {
+  await requireAdmin(req);
+  const { credsFrom, amostraDeServicos, servicosSelecionados } = await import('../melhorenvio.ts');
+  const creds = credsFrom(await integrationSecrets('melhorenvio'));
+
+  if (creds.token === '') {
+    jsonOk(res, { opcoes: [], selecionados: [], erro: 'Cadastre o token do Melhor Envio e salve.' });
+    return;
+  }
+  if (creds.originCep.length !== 8) {
+    jsonOk(res, {
+      opcoes: [],
+      selecionados: [],
+      erro: 'Preencha o CEP de origem e salve: sem ele o Melhor Envio não cota nada.',
+    });
+    return;
+  }
+
+  const { opcoes, erro } = await amostraDeServicos(creds);
+  jsonOk(res, { opcoes, selecionados: servicosSelecionados(creds), erro });
+}));
+
 // POST /api/admin/whatsapp/test — envia uma mensagem de teste pelo provedor ativo
 adminRoutes.post('/whatsapp/test', h(async (req, res) => {
   await requireAdmin(req);

@@ -753,6 +753,161 @@ var init_store = __esm({
   }
 });
 
+// server/src/melhorenvio.ts
+var melhorenvio_exports = {};
+__export(melhorenvio_exports, {
+  amostraDeServicos: () => amostraDeServicos,
+  cotar: () => cotar,
+  credsFrom: () => credsFrom,
+  detalheDoErro: () => detalheDoErro,
+  mapearOpcoes: () => mapearOpcoes,
+  servicosSelecionados: () => servicosSelecionados
+});
+function credsFrom(f) {
+  const s = /* @__PURE__ */ __name((k) => {
+    const v = f[k];
+    return v === null || v === void 0 || typeof v === "object" ? "" : String(v).trim();
+  }, "s");
+  return {
+    token: s("token"),
+    sandbox: s("sandbox").toLowerCase(),
+    originCep: s("originCep").replace(/\D/g, ""),
+    services: s("services")
+  };
+}
+function base(c) {
+  return c.sandbox === "sandbox" ? "https://sandbox.melhorenvio.com.br" : "https://melhorenvio.com.br";
+}
+function servicosSelecionados(c) {
+  return c.services.split(/[,;\s]+/).map((x) => x.replace(/\D/g, "")).filter((x) => x !== "");
+}
+function numero(v) {
+  const n = Number(String(v ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+function detalheDoErro(body2) {
+  const limpo = String(body2 ?? "").trim();
+  if (limpo === "") return "";
+  try {
+    const d = JSON.parse(limpo);
+    const e = d.error ?? d.message ?? d.errors ?? d.msg;
+    if (typeof e === "string" && e.trim() !== "") return e.trim().slice(0, 300);
+    if (Array.isArray(e)) return e.map(String).join(" \xB7 ").slice(0, 300);
+    if (e !== null && typeof e === "object") {
+      const partes = [];
+      for (const [campo, msgs] of Object.entries(e)) {
+        const texto = Array.isArray(msgs) ? msgs.map(String).join(", ") : String(msgs);
+        partes.push(`${campo}: ${texto}`);
+      }
+      if (partes.length > 0) return partes.join(" \xB7 ").slice(0, 300);
+    }
+    return limpo.slice(0, 300);
+  } catch {
+    return limpo.length <= 300 ? limpo : "";
+  }
+}
+async function cotar(c, cepDestino, itens, apenasServicos = []) {
+  const destino = String(cepDestino ?? "").replace(/\D/g, "");
+  if (c.token === "") return { opcoes: [], erro: "Token do Melhor Envio n\xE3o cadastrado." };
+  if (c.originCep.length !== 8) return { opcoes: [], erro: "CEP de origem n\xE3o configurado no painel." };
+  if (destino.length !== 8) return { opcoes: [], erro: "CEP de destino inv\xE1lido." };
+  if (itens.length === 0) return { opcoes: [], erro: "Carrinho vazio." };
+  const corpo = {
+    from: { postal_code: c.originCep },
+    to: { postal_code: destino },
+    products: itens.map((i) => ({
+      id: i.id,
+      width: MIN_LARGURA,
+      height: MIN_ALTURA,
+      length: MIN_COMPRIMENTO,
+      // A API espera QUILOS; o resto do sistema trabalha em gramas.
+      weight: Math.max(MIN_PESO_GRAMAS, Math.round(i.pesoGramas)) / 1e3,
+      insurance_value: Number(i.precoUnitario.toFixed(2)),
+      quantity: Math.max(1, Math.round(i.quantidade))
+    })),
+    options: { receipt: false, own_hand: false }
+  };
+  if (apenasServicos.length > 0) corpo.services = apenasServicos.join(",");
+  const r = await httpCall(
+    "POST",
+    `${base(c)}/api/v2/me/shipment/calculate`,
+    {
+      Authorization: "Bearer " + c.token,
+      Accept: "application/json",
+      "User-Agent": USER_AGENT
+    },
+    corpo
+  );
+  if (!r.ok) {
+    console.error(
+      `[queops] Melhor Envio recusou a cota\xE7\xE3o (HTTP ${r.status}):`,
+      String(r.body ?? "").slice(0, 600)
+    );
+    if (r.status === 401 || r.status === 403) {
+      return {
+        opcoes: [],
+        erro: "Token recusado pelo Melhor Envio. Gere um novo em Melhor Envio \u2192 Configura\xE7\xF5es \u2192 Tokens e confira se o ambiente (production/sandbox) confere."
+      };
+    }
+    const detalhe = detalheDoErro(r.body);
+    return {
+      opcoes: [],
+      erro: detalhe !== "" ? detalhe : `Melhor Envio respondeu HTTP ${r.status}. ${r.error}`.trim()
+    };
+  }
+  let lista;
+  try {
+    lista = JSON.parse(r.body);
+  } catch {
+    return { opcoes: [], erro: "Resposta inesperada do Melhor Envio." };
+  }
+  if (!Array.isArray(lista)) {
+    return { opcoes: [], erro: detalheDoErro(r.body) || "Resposta inesperada do Melhor Envio." };
+  }
+  return { opcoes: mapearOpcoes(lista), erro: "" };
+}
+function mapearOpcoes(lista) {
+  return lista.map((bruto) => {
+    const item = bruto ?? {};
+    const empresa = item.company ?? {};
+    const transportadora = String(empresa.name ?? "").trim();
+    const modalidade = String(item.name ?? "").trim();
+    const preco = numero(item.custom_price ?? item.price);
+    const erroItem = typeof item.error === "string" ? item.error.trim() : "";
+    return {
+      servico: String(item.id ?? ""),
+      nome: transportadora === "" ? modalidade : `${transportadora} \xB7 ${modalidade}`,
+      transportadora,
+      preco: erroItem === "" ? preco : 0,
+      prazoDias: Math.round(numero(item.delivery_time)),
+      erro: erroItem !== "" ? erroItem : preco > 0 ? "" : "sem pre\xE7o"
+    };
+  });
+}
+async function amostraDeServicos(c) {
+  return cotar(c, "01310100", [{ id: "amostra", pesoGramas: 500, precoUnitario: 100, quantidade: 1 }]);
+}
+var USER_AGENT, MIN_COMPRIMENTO, MIN_LARGURA, MIN_ALTURA, MIN_PESO_GRAMAS;
+var init_melhorenvio = __esm({
+  "server/src/melhorenvio.ts"() {
+    "use strict";
+    init_providers();
+    USER_AGENT = "Queops Piramides (contato@queopspiramides.com.br)";
+    __name(credsFrom, "credsFrom");
+    __name(base, "base");
+    __name(servicosSelecionados, "servicosSelecionados");
+    MIN_COMPRIMENTO = 16;
+    MIN_LARGURA = 11;
+    MIN_ALTURA = 2;
+    MIN_PESO_GRAMAS = 300;
+    __name(numero, "numero");
+    __name(detalheDoErro, "detalheDoErro");
+    __name(cotar, "cotar");
+    __name(mapearOpcoes, "mapearOpcoes");
+    __name(amostraDeServicos, "amostraDeServicos");
+  }
+});
+
 // server/src/correios.ts
 var correios_exports = {};
 __export(correios_exports, {
@@ -760,9 +915,9 @@ __export(correios_exports, {
   SERVICO_SEDEX: () => SERVICO_SEDEX,
   _internos: () => _internos,
   autenticar: () => autenticar,
-  cotar: () => cotar,
+  cotar: () => cotar2,
   cotarTodos: () => cotarTodos,
-  credsFrom: () => credsFrom,
+  credsFrom: () => credsFrom2,
   esquecerToken: () => esquecerToken,
   nomeDoServico: () => nomeDoServico,
   rastrear: () => rastrear,
@@ -771,7 +926,7 @@ __export(correios_exports, {
 function nomeDoServico(codigo) {
   return NOMES[codigo] ?? `Correios ${codigo}`;
 }
-function credsFrom(f) {
+function credsFrom2(f) {
   const s = /* @__PURE__ */ __name((k) => String(f[k] ?? "").trim(), "s");
   return {
     user: s("user"),
@@ -824,7 +979,7 @@ function explicar(r, onde = "auth") {
     return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
   }
   if (r.status === 400) {
-    const detalhe = detalheDoErro(r.body);
+    const detalhe = detalheDoErro2(r.body);
     if (detalhe !== "") return detalhe;
     if (onde === "cotacao") {
       return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Confira em "Servi\xE7os a cotar" se os c\xF3digos pertencem ao seu contrato \u2014 os de balc\xE3o (04510 PAC, 04014 Sedex) cotam sem contrato e servem para testar.';
@@ -834,7 +989,7 @@ function explicar(r, onde = "auth") {
   if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
   return `Correios responderam HTTP ${r.status}.`;
 }
-function detalheDoErro(body2) {
+function detalheDoErro2(body2) {
   const limpo = String(body2 ?? "").trim();
   if (limpo === "") return "";
   try {
@@ -871,7 +1026,7 @@ function moeda(v) {
   const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }
-async function cotar(c, servico, cepDestino, pesoGramas, dim = {}) {
+async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
   const vazio = { servico, nome: nomeDoServico(servico), preco: 0, prazoDias: 0, erro: "" };
   const { token, erro } = await autenticar(c);
   if (erro) return { ...vazio, erro };
@@ -937,7 +1092,7 @@ async function cotar(c, servico, cepDestino, pesoGramas, dim = {}) {
 }
 async function cotarTodos(c, cepDestino, pesoGramas, dim) {
   const servicos = servicesOf(c);
-  const todas = await Promise.all(servicos.map((s) => cotar(c, s, cepDestino, pesoGramas, dim)));
+  const todas = await Promise.all(servicos.map((s) => cotar2(c, s, cepDestino, pesoGramas, dim)));
   const boas = todas.filter((x) => x.erro === "" && x.preco > 0);
   return boas.length > 0 ? boas.sort((a, b) => a.preco - b.preco) : todas;
 }
@@ -997,16 +1152,16 @@ var init_correios = __esm({
       "04014": "Sedex"
     };
     __name(nomeDoServico, "nomeDoServico");
-    __name(credsFrom, "credsFrom");
+    __name(credsFrom2, "credsFrom");
     __name(servicesOf, "servicesOf");
     cache = /* @__PURE__ */ new Map();
     __name(autenticar, "autenticar");
     __name(esquecerToken, "esquecerToken");
     __name(explicar, "explicar");
-    __name(detalheDoErro, "detalheDoErro");
-    _internos = { detalheDoErro };
+    __name(detalheDoErro2, "detalheDoErro");
+    _internos = { detalheDoErro: detalheDoErro2 };
     __name(moeda, "moeda");
-    __name(cotar, "cotar");
+    __name(cotar2, "cotar");
     __name(cotarTodos, "cotarTodos");
     __name(rastrear, "rastrear");
   }
@@ -1157,12 +1312,30 @@ async function providerTest(id, f) {
         message: r.ok ? "Pagar.me conectado." : `Falha (HTTP ${r.status}). Confira a API Key.`
       };
     case "melhorenvio": {
-      const base = str(f, "sandbox") === "sandbox" ? "https://sandbox.melhorenvio.com.br" : "https://melhorenvio.com.br";
-      r = await httpCall("GET", base + "/api/v2/me", {
-        Authorization: "Bearer " + str(f, "token"),
-        Accept: "application/json"
-      });
-      return { ok: r.ok, message: r.ok ? "Melhor Envio conectado." : `Falha (HTTP ${r.status}).` };
+      const { credsFrom: meCreds, amostraDeServicos: amostraDeServicos2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
+      const creds = meCreds(f);
+      if (creds.originCep.length !== 8) {
+        return {
+          ok: false,
+          message: 'Falta o CEP de origem \u2014 sem ele o Melhor Envio n\xE3o cota nada. Preencha "CEP de origem" e salve.'
+        };
+      }
+      const { opcoes, erro } = await amostraDeServicos2(creds);
+      if (erro !== "") return { ok: false, message: erro };
+      const cotaram = opcoes.filter((o) => o.erro === "" && o.preco > 0);
+      if (cotaram.length === 0) {
+        const motivos = opcoes.map((o) => `${o.nome}: ${o.erro || "sem pre\xE7o"}`).join(" \xB7 ").slice(0, 400);
+        return {
+          ok: false,
+          message: motivos === "" ? "A conta n\xE3o devolveu nenhuma transportadora. Confira em Melhor Envio se h\xE1 transportadoras habilitadas no seu plano." : `Nenhuma transportadora cotou \u2014 ${motivos}`
+        };
+      }
+      const amostra = cotaram.slice(0, 4).map((o) => `${o.nome} R$ ${o.preco.toFixed(2).replace(".", ",")}`).join(" \xB7 ");
+      const selecionados = creds.services.trim() === "" ? 0 : creds.services.split(",").length;
+      return {
+        ok: true,
+        message: `${cotaram.length} transportadora(s) cotando: ${amostra}${cotaram.length > 4 ? "\u2026" : ""} (500 g para S\xE3o Paulo).` + (selecionados === 0 ? " Escolha abaixo quais o cliente pode ver." : ` ${selecionados} liberada(s) para o cliente.`)
+      };
     }
     case "uno":
       r = await httpCall("GET", "https://api.unoerp.com/v1/ping", {
@@ -1175,8 +1348,8 @@ async function providerTest(id, f) {
       });
       return { ok: r.ok, message: r.ok ? "ERP respondeu OK." : `Falha (HTTP ${r.status}). ${r.error}` };
     case "correios": {
-      const { credsFrom: credsFrom2, autenticar: autenticar2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
-      const creds = credsFrom2(f);
+      const { credsFrom: credsFrom3, autenticar: autenticar2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+      const creds = credsFrom3(f);
       const { erro } = await autenticar2(creds);
       if (erro) return { ok: false, message: erro };
       if ((creds.originCep ?? "").length !== 8) {
@@ -2126,6 +2299,25 @@ adminRoutes.post("/integrations/:id/test", h(async (req, res) => {
   );
   jsonOk(res, result);
 }));
+adminRoutes.get("/melhorenvio/servicos", h(async (req, res) => {
+  await requireAdmin(req);
+  const { credsFrom: credsFrom3, amostraDeServicos: amostraDeServicos2, servicosSelecionados: servicosSelecionados2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
+  const creds = credsFrom3(await integrationSecrets("melhorenvio"));
+  if (creds.token === "") {
+    jsonOk(res, { opcoes: [], selecionados: [], erro: "Cadastre o token do Melhor Envio e salve." });
+    return;
+  }
+  if (creds.originCep.length !== 8) {
+    jsonOk(res, {
+      opcoes: [],
+      selecionados: [],
+      erro: "Preencha o CEP de origem e salve: sem ele o Melhor Envio n\xE3o cota nada."
+    });
+    return;
+  }
+  const { opcoes, erro } = await amostraDeServicos2(creds);
+  jsonOk(res, { opcoes, selecionados: servicosSelecionados2(creds), erro });
+}));
 adminRoutes.post("/whatsapp/test", h(async (req, res) => {
   await requireAdmin(req);
   const phone = digits(bodyStr(body(req), "phone", "", 20));
@@ -2152,8 +2344,8 @@ adminRoutes.get("/orders/:id/tracking", h(async (req, res) => {
   if (!row) fail("Pedido n\xE3o encontrado.", 404, "not_found");
   const code = String(row.tracking_code ?? "");
   if (code === "") jsonOk(res, { trackingCode: "", eventos: [], erro: "Pedido sem c\xF3digo de rastreio." });
-  const { credsFrom: credsFrom2, rastrear: rastrear2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
-  const { eventos, erro } = await rastrear2(credsFrom2(await integrationSecrets("correios")), code);
+  const { credsFrom: credsFrom3, rastrear: rastrear2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+  const { eventos, erro } = await rastrear2(credsFrom3(await integrationSecrets("correios")), code);
   if (erro === "" && eventos.length > 0) {
     await q.run(
       "UPDATE orders SET tracking_status = ?, tracking_at = NOW() WHERE id = ?",
@@ -2663,7 +2855,7 @@ function pesoDoCarrinho(items, found) {
   return Math.max(300, Math.round(total));
 }
 __name(pesoDoCarrinho, "pesoDoCarrinho");
-async function cotarNosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
+async function opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
   const pulou = /* @__PURE__ */ __name((motivo) => {
     console.warn(`[queops] frete: Correios n\xE3o consultados \u2014 ${motivo}`);
     diagnostico.motivo = motivo;
@@ -2677,8 +2869,8 @@ async function cotarNosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
     );
     if (!row) return pulou("integra\xE7\xE3o desligada em Painel \u2192 Integra\xE7\xF5es");
     const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
-    const { credsFrom: credsFrom2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
-    const creds = credsFrom2(await integrationSecrets2("correios", exec));
+    const { credsFrom: credsFrom3, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+    const creds = credsFrom3(await integrationSecrets2("correios", exec));
     if (creds.user === "" || creds.accessCode === "") {
       return pulou("usu\xE1rio ou c\xF3digo de acesso n\xE3o cadastrados");
     }
@@ -2686,18 +2878,81 @@ async function cotarNosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
       return pulou("CEP de origem n\xE3o configurado no painel");
     }
     const cotacoes = await cotarTodos2(creds, cep, pesoGramas);
-    const melhor = cotacoes.find((c) => c.erro === "" && c.preco > 0);
-    if (!melhor) {
+    const boas = cotacoes.filter((c) => c.erro === "" && c.preco > 0);
+    if (boas.length === 0) {
       const erros = cotacoes.map((c) => `${c.nome}: ${c.erro || "sem pre\xE7o"}`).join(" \xB7 ");
       return pulou(`nenhum servi\xE7o cotou (${erros})`);
     }
-    const prazo = melhor.prazoDias > 0 ? ` \u2014 at\xE9 ${melhor.prazoDias} dias \xFAteis` : "";
-    return { cost: round2(melhor.preco), label: `${melhor.nome}${prazo}` };
+    return boas.map((c) => ({
+      id: `correios:${c.servico}`,
+      label: c.nome,
+      carrier: "Correios",
+      price: round2(c.preco),
+      days: c.prazoDias,
+      source: "correios"
+    }));
   } catch (e) {
     return pulou(e instanceof Error ? e.message : String(e));
   }
 }
-__name(cotarNosCorreios, "cotarNosCorreios");
+__name(opcoesDosCorreios, "opcoesDosCorreios");
+async function opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico) {
+  const pulou = /* @__PURE__ */ __name((motivo) => {
+    console.warn(`[queops] frete: Melhor Envio n\xE3o consultado \u2014 ${motivo}`);
+    diagnostico.motivo = diagnostico.motivo === "" ? `Melhor Envio: ${motivo}` : `${diagnostico.motivo} \xB7 Melhor Envio: ${motivo}`;
+    return null;
+  }, "pulou");
+  if (ship.reason.startsWith("free_")) return null;
+  if (normalizeCep(cep) === "") return null;
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'melhorenvio' AND enabled = 1"
+    );
+    if (!row) return null;
+    const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
+    const { credsFrom: credsFrom3, cotar: cotar3, servicosSelecionados: servicosSelecionados2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
+    const creds = credsFrom3(await integrationSecrets2("melhorenvio", exec));
+    if (creds.token === "") return pulou("token n\xE3o cadastrado");
+    if (creds.originCep.length !== 8) return pulou("CEP de origem n\xE3o configurado");
+    const selecionados = servicosSelecionados2(creds);
+    if (selecionados.length === 0) {
+      return pulou("nenhuma transportadora marcada em Painel \u2192 Integra\xE7\xF5es");
+    }
+    const paraCotar = itens.map((i) => ({
+      id: i.productId,
+      pesoGramas: pesoEmGramas(String(produtos.get(i.productId)?.weight ?? "")),
+      precoUnitario: i.unitPrice,
+      quantidade: i.quantity
+    }));
+    const { opcoes, erro } = await cotar3(creds, cep, paraCotar, selecionados);
+    if (erro !== "") return pulou(erro);
+    const boas = opcoes.filter((o) => o.erro === "" && o.preco > 0);
+    if (boas.length === 0) {
+      const motivos = opcoes.map((o) => `${o.nome}: ${o.erro || "sem pre\xE7o"}`).join(" \xB7 ");
+      return pulou(motivos === "" ? "nenhuma transportadora cotou" : `nenhuma cotou (${motivos})`);
+    }
+    return boas.map((o) => ({
+      id: `melhorenvio:${o.servico}`,
+      label: o.nome,
+      carrier: o.transportadora === "" ? "Melhor Envio" : o.transportadora,
+      price: round2(o.preco),
+      days: o.prazoDias,
+      source: "melhorenvio"
+    }));
+  } catch (e) {
+    return pulou(e instanceof Error ? e.message : String(e));
+  }
+}
+__name(opcoesDoMelhorEnvio, "opcoesDoMelhorEnvio");
+async function cotarTransportadoras(ship, cep, pesoGramas, itens, produtos, exec, diagnostico) {
+  const [correios, melhorEnvio] = await Promise.all([
+    opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico),
+    opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico)
+  ]);
+  const todas = [...correios ?? [], ...melhorEnvio ?? []];
+  return todas.sort((a, b) => a.price - b.price);
+}
+__name(cotarTransportadoras, "cotarTransportadoras");
 function pesoEmGramas(texto, padrao = 500) {
   const m = texto.match(/([\d.,]+)\s*(kg|g|gramas?|quilos?)?/i);
   if (!m) return padrao;
@@ -2710,7 +2965,7 @@ function pesoEmGramas(texto, padrao = 500) {
   return Math.round(n);
 }
 __name(pesoEmGramas, "pesoEmGramas");
-async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
+async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opcoes = {}) {
   let uf = String(ufIn ?? "").trim().toUpperCase();
   if (uf === "") uf = ufFromCep(cep);
   const wanted = /* @__PURE__ */ new Map();
@@ -2777,13 +3032,33 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
   }
   subtotal = round2(subtotal);
   const ship = calculateShipping(await getShipping(exec), subtotal, uf, cep);
-  const pesoTotal = pesoDoCarrinho(items, found);
   const diagnosticoFrete = { motivo: "" };
-  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec, diagnosticoFrete);
-  if (cotado !== null) {
-    ship.cost = cotado.cost;
-    ship.label = cotado.label;
-    ship.reason = "correios";
+  let shippingOptions = [];
+  let shippingChoice = "";
+  if (opcoes.freteFixado !== void 0) {
+    ship.cost = round2(opcoes.freteFixado.cost);
+    ship.label = opcoes.freteFixado.label;
+    ship.reason = opcoes.freteFixado.reason;
+    shippingChoice = opcoes.freteFixado.option;
+  } else {
+    const pesoTotal = pesoDoCarrinho(items, found);
+    shippingOptions = await cotarTransportadoras(
+      ship,
+      cep,
+      pesoTotal,
+      items,
+      found,
+      exec,
+      diagnosticoFrete
+    );
+    if (shippingOptions.length > 0) {
+      const pedida = shippingOptions.find((o) => o.id === (opcoes.escolha ?? ""));
+      const usada = pedida ?? shippingOptions[0];
+      ship.cost = usada.price;
+      ship.label = usada.days > 0 ? `${usada.label} \u2014 at\xE9 ${usada.days} ${usada.days === 1 ? "dia \xFAtil" : "dias \xFAteis"}` : usada.label;
+      ship.reason = usada.source;
+      shippingChoice = usada.id;
+    }
   }
   const [coupon, couponError] = await resolveCoupon(couponCode, subtotal, exec);
   let couponDiscount = 0;
@@ -2802,6 +3077,8 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q) {
     shipping: ship.cost,
     shippingLabel: ship.label,
     shippingReason: ship.reason,
+    shippingOptions,
+    shippingChoice,
     /*
      * Por que os Correios não entraram nesta cotação. Vazio quando entraram
      * (ou quando o frete grátis do painel tinha precedência, que é regra e não
@@ -2887,7 +3164,11 @@ publicRoutes.post("/checkout/quote", h(async (req, res) => {
     bodyStr(b, "state", "", 2),
     bodyStr(b, "cep", "", 12),
     bodyStr(b, "coupon", "", 40),
-    bodyStr(b, "payment", "card", 10)
+    bodyStr(b, "payment", "card", 10),
+    q,
+    // Opção de entrega que o cliente marcou. O preço dela é sempre o que o
+    // servidor cotou, nunca o que veio do navegador.
+    { escolha: bodyStr(b, "shipping", "", 40) }
   );
   const { shippingNote, ...publico } = cotacao;
   const admin = await currentAdmin(req);
@@ -2940,6 +3221,29 @@ publicRoutes.post("/orders", h(async (req, res) => {
   }
   const sessionCustomerId = currentCustomerId(req);
   const etaDays = deliveryDaysFor(uf);
+  const escolhaFrete = bodyStr(b, "shipping", "", 40);
+  const previa = await quoteCart(
+    b.items,
+    uf,
+    cep,
+    bodyStr(b, "coupon", "", 40),
+    payment,
+    q,
+    { escolha: escolhaFrete }
+  );
+  if (escolhaFrete !== "" && previa.shippingChoice !== escolhaFrete) {
+    fail(
+      "A op\xE7\xE3o de entrega que voc\xEA escolheu n\xE3o est\xE1 mais dispon\xEDvel. Confira as op\xE7\xF5es e escolha de novo.",
+      409,
+      "shipping_option_gone"
+    );
+  }
+  const freteFixado = {
+    cost: previa.shipping,
+    label: previa.shippingLabel,
+    reason: previa.shippingReason ?? "default",
+    option: previa.shippingChoice ?? ""
+  };
   let gravado;
   try {
     gravado = await transaction(async (tx) => {
@@ -2949,7 +3253,8 @@ publicRoutes.post("/orders", h(async (req, res) => {
         cep,
         bodyStr(b, "coupon", "", 40),
         payment,
-        tx
+        tx,
+        { freteFixado }
       );
       if (quote2.items.length === 0) {
         throw new EmptyCart();
@@ -2973,8 +3278,8 @@ publicRoutes.post("/orders", h(async (req, res) => {
             id, customer_id, customer_name, customer_email, customer_phone, customer_cpf,
             subtotal, shipping_cost, discount, total, coupon_code, status, payment, channel,
             ship_cep, ship_street, ship_number, ship_complement, ship_neighborhood, ship_city, ship_state,
-            delivery_eta
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            delivery_eta, shipping_service
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           customerId,
@@ -2997,7 +3302,10 @@ publicRoutes.post("/orders", h(async (req, res) => {
           bodyStr(endereco, "neighborhood", "", 120),
           bodyStr(endereco, "city", "", 120),
           uf,
-          dateSP(etaDays)
+          dateSP(etaDays),
+          // Por onde a encomenda vai: sem isto, a lojista tem o valor do frete
+          // e nenhuma pista de qual transportadora o cliente escolheu.
+          quote2.shippingLabel.slice(0, 120)
         ]
       );
       for (const it of quote2.items) {
@@ -3115,6 +3423,8 @@ publicRoutes.post("/orders", h(async (req, res) => {
       discount: quote.discount,
       payment,
       deliveryEta: dateBR(etaDays),
+      /** "Jadlog · .Package — até 5 dias úteis": o que o cliente escolheu. */
+      shippingLabel: quote.shippingLabel,
       // O que a tela precisa para não afirmar "pago" quando ainda não está:
       //   'aprovado'   → dinheiro confirmado
       //   'aguardando' → Pix emitido (vem o QR) ou cartão em análise

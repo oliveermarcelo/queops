@@ -75,7 +75,8 @@ export interface ShippingResult {
     | 'cep_range'
     | 'per_state'
     | 'default'
-    | 'correios';
+    | 'correios'
+    | 'melhorenvio';
   label: string;
 }
 
@@ -201,14 +202,36 @@ export interface QuoteItem {
   image: string;
 }
 
+/**
+ * Uma opção de entrega que o cliente pode escolher.
+ *
+ * `id` é o que volta do navegador na hora de fechar o pedido — e o servidor
+ * cota de novo por ele, em vez de aceitar o preço que vier junto.
+ */
+export interface OpcaoDeFrete {
+  /** 'correios:03220' · 'melhorenvio:2' — provedor e serviço. */
+  id: string;
+  /** "Jadlog · .Package" — o que o cliente lê. */
+  label: string;
+  /** "Jadlog", "Correios" — para agrupar/exibir. */
+  carrier: string;
+  price: number;
+  days: number;
+  source: 'correios' | 'melhorenvio';
+}
+
 export interface Quote {
   items: QuoteItem[];
   subtotal: number;
   shipping: number;
   shippingLabel: string;
   shippingReason?: string;
-  /** Motivo de os Correios não terem cotado. Só chega ao painel. */
+  /** Motivo de os Correios/Melhor Envio não terem cotado. Só chega ao painel. */
   shippingNote?: string;
+  /** Opções de entrega cotadas. Vazio = o frete saiu das regras do painel. */
+  shippingOptions?: OpcaoDeFrete[];
+  /** Qual das opções está valendo neste total. */
+  shippingChoice?: string;
   couponCode: string | null;
   couponDiscount: number;
   couponError: string | null;
@@ -248,20 +271,20 @@ function pesoDoCarrinho(
 }
 
 /**
- * Preço dos Correios para este carrinho, ou `null` para manter o das regras.
+ * Opções dos Correios para este carrinho, ou `null` para manter o das regras.
  *
  * Devolve `null` — em vez de lançar — em todo caminho que não produz preço
  * confiável: integração desligada, frete já gratuito, credencial incompleta,
  * API fora do ar. Frete é caminho de venda: na dúvida, o valor configurado no
  * painel prevalece e a loja continua vendendo.
  */
-async function cotarNosCorreios(
+async function opcoesDosCorreios(
   ship: ShippingResult,
   cep: string,
   pesoGramas: number,
   exec: Q,
   diagnostico: { motivo: string },
-): Promise<{ cost: number; label: string } | null> {
+): Promise<OpcaoDeFrete[] | null> {
   /*
    * Cada saída registra o motivo — no log E no objeto de diagnóstico.
    *
@@ -305,18 +328,121 @@ async function cotarNosCorreios(
     }
 
     const cotacoes = await cotarTodos(creds, cep, pesoGramas);
-    const melhor = cotacoes.find((c) => c.erro === '' && c.preco > 0);
-    if (!melhor) {
+    const boas = cotacoes.filter((c) => c.erro === '' && c.preco > 0);
+    if (boas.length === 0) {
       const erros = cotacoes.map((c) => `${c.nome}: ${c.erro || 'sem preço'}`).join(' · ');
       return pulou(`nenhum serviço cotou (${erros})`);
     }
 
-    const prazo = melhor.prazoDias > 0 ? ` — até ${melhor.prazoDias} dias úteis` : '';
-    return { cost: round2(melhor.preco), label: `${melhor.nome}${prazo}` };
+    return boas.map((c) => ({
+      id: `correios:${c.servico}`,
+      label: c.nome,
+      carrier: 'Correios',
+      price: round2(c.preco),
+      days: c.prazoDias,
+      source: 'correios' as const,
+    }));
   } catch (e) {
     // Correios instáveis não podem derrubar o checkout.
     return pulou(e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * Opções do Melhor Envio (Jadlog, Azul, Loggi, LATAM…).
+ *
+ * Só entram os serviços que a lojista marcou no painel: a conta oferece mais do
+ * que ela quer vender, e transportadora que ela não usa aparecendo no checkout é
+ * pedido que ela não consegue despachar. Nada marcado = nada aqui, e o painel
+ * avisa isso na tela de integrações.
+ */
+async function opcoesDoMelhorEnvio(
+  ship: ShippingResult,
+  cep: string,
+  itens: QuoteItem[],
+  produtos: Map<string, Record<string, unknown>>,
+  exec: Q,
+  diagnostico: { motivo: string },
+): Promise<OpcaoDeFrete[] | null> {
+  const pulou = (motivo: string): null => {
+    console.warn(`[queops] frete: Melhor Envio não consultado — ${motivo}`);
+    // Não sobrescreve um motivo dos Correios já registrado: os dois somam.
+    diagnostico.motivo = diagnostico.motivo === ''
+      ? `Melhor Envio: ${motivo}`
+      : `${diagnostico.motivo} · Melhor Envio: ${motivo}`;
+    return null;
+  };
+
+  if (ship.reason.startsWith('free_')) return null;
+  if (normalizeCep(cep) === '') return null; // já reportado pelos Correios
+
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'melhorenvio' AND enabled = 1",
+    );
+    if (!row) return null; // desligado é escolha, não falha: nem vale log.
+
+    const { integrationSecrets } = await import('./store.ts');
+    const { credsFrom, cotar, servicosSelecionados } = await import('./melhorenvio.ts');
+    const creds = credsFrom(await integrationSecrets('melhorenvio', exec));
+    if (creds.token === '') return pulou('token não cadastrado');
+    if (creds.originCep.length !== 8) return pulou('CEP de origem não configurado');
+
+    const selecionados = servicosSelecionados(creds);
+    if (selecionados.length === 0) {
+      return pulou('nenhuma transportadora marcada em Painel → Integrações');
+    }
+
+    const paraCotar = itens.map((i) => ({
+      id: i.productId,
+      pesoGramas: pesoEmGramas(String(produtos.get(i.productId)?.weight ?? '')),
+      precoUnitario: i.unitPrice,
+      quantidade: i.quantity,
+    }));
+
+    const { opcoes, erro } = await cotar(creds, cep, paraCotar, selecionados);
+    if (erro !== '') return pulou(erro);
+
+    const boas = opcoes.filter((o) => o.erro === '' && o.preco > 0);
+    if (boas.length === 0) {
+      const motivos = opcoes.map((o) => `${o.nome}: ${o.erro || 'sem preço'}`).join(' · ');
+      return pulou(motivos === '' ? 'nenhuma transportadora cotou' : `nenhuma cotou (${motivos})`);
+    }
+
+    return boas.map((o) => ({
+      id: `melhorenvio:${o.servico}`,
+      label: o.nome,
+      carrier: o.transportadora === '' ? 'Melhor Envio' : o.transportadora,
+      price: round2(o.preco),
+      days: o.prazoDias,
+      source: 'melhorenvio' as const,
+    }));
+  } catch (e) {
+    return pulou(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** Junta o que as transportadoras cotaram, da mais barata para a mais cara. */
+async function cotarTransportadoras(
+  ship: ShippingResult,
+  cep: string,
+  pesoGramas: number,
+  itens: QuoteItem[],
+  produtos: Map<string, Record<string, unknown>>,
+  exec: Q,
+  diagnostico: { motivo: string },
+): Promise<OpcaoDeFrete[]> {
+  /*
+   * Os dois provedores em paralelo: são chamadas de rede independentes, e
+   * esperar uma para começar a outra dobraria o tempo do checkout sem motivo.
+   */
+  const [correios, melhorEnvio] = await Promise.all([
+    opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico),
+    opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico),
+  ]);
+
+  const todas = [...(correios ?? []), ...(melhorEnvio ?? [])];
+  return todas.sort((a, b) => a.price - b.price);
 }
 
 /** "1,2 kg" → 1200 · "800 g" → 800 · "0.5" → 500 (assume kg) · "" → padrão. */
@@ -344,6 +470,19 @@ export function pesoEmGramas(texto: string, padrao = 500): number {
  * `exec` permite rodar dentro da transação do pedido, para que o preço lido
  * seja o mesmo que a baixa de estoque enxerga.
  */
+export interface OpcoesCotacao {
+  /** Id da opção de frete que o cliente escolheu (`shippingOptions[].id`). */
+  escolha?: string;
+  /**
+   * Frete já resolvido, para NÃO consultar transportadora de novo.
+   *
+   * É como o `POST /orders` mantém rede fora da transação: o valor é cotado
+   * antes de abrir a transação e entra aqui já pronto. Continua sendo um número
+   * calculado pelo servidor — nunca o que o navegador mandou.
+   */
+  freteFixado?: { cost: number; label: string; reason: ShippingResult['reason']; option: string };
+}
+
 export async function quoteCart(
   rawItems: unknown,
   ufIn: string,
@@ -351,6 +490,7 @@ export async function quoteCart(
   couponCode: string,
   payment: string,
   exec: Q = q,
+  opcoes: OpcoesCotacao = {},
 ): Promise<Quote> {
   // Sem UF informada (ex.: simulador da página do produto), deduz pelo CEP.
   let uf = String(ufIn ?? '').trim().toUpperCase();
@@ -422,23 +562,45 @@ export async function quoteCart(
   const ship = calculateShipping(await getShipping(exec), subtotal, uf, cep);
 
   /*
-   * Cotação nos Correios, quando a integração está ligada.
+   * Cotação nas transportadoras (Correios e Melhor Envio), quando ligadas.
    *
    * As regras do painel têm precedência: se alguma delas deu frete grátis
-   * (`free_*`), o grátis vale e nem consultamos a API — cotar aqui só
+   * (`free_*`), o grátis vale e nem consultamos as APIs — cotar aqui só
    * substituiria uma promoção configurada por um preço cheio.
    *
-   * Nos demais casos o preço da API entra no lugar do valor fixo. Se a
-   * cotação falhar (API fora do ar, CEP fora de área, credencial vencida), o
-   * valor calculado pelas regras permanece: a loja continua vendendo.
+   * Cotou: as opções vão para a tela e o cliente escolhe. A escolhida define o
+   * total; sem escolha, vale a mais barata. Não cotou (API fora do ar, CEP fora
+   * de área, credencial vencida): o valor das regras permanece e a loja continua
+   * vendendo.
+   *
+   * `freteFixado` é o caminho de quem já cotou e não quer cotar de novo — ver
+   * `OpcoesCotacao`. É assim que a criação do pedido mantém chamada de rede
+   * fora da transação do banco.
    */
-  const pesoTotal = pesoDoCarrinho(items, found);
   const diagnosticoFrete = { motivo: '' };
-  const cotado = await cotarNosCorreios(ship, cep, pesoTotal, exec, diagnosticoFrete);
-  if (cotado !== null) {
-    ship.cost = cotado.cost;
-    ship.label = cotado.label;
-    ship.reason = 'correios';
+  let shippingOptions: OpcaoDeFrete[] = [];
+  let shippingChoice = '';
+
+  if (opcoes.freteFixado !== undefined) {
+    ship.cost = round2(opcoes.freteFixado.cost);
+    ship.label = opcoes.freteFixado.label;
+    ship.reason = opcoes.freteFixado.reason;
+    shippingChoice = opcoes.freteFixado.option;
+  } else {
+    const pesoTotal = pesoDoCarrinho(items, found);
+    shippingOptions = await cotarTransportadoras(
+      ship, cep, pesoTotal, items, found, exec, diagnosticoFrete,
+    );
+    if (shippingOptions.length > 0) {
+      const pedida = shippingOptions.find((o) => o.id === (opcoes.escolha ?? ''));
+      const usada = pedida ?? shippingOptions[0]; // já vem da mais barata
+      ship.cost = usada.price;
+      ship.label = usada.days > 0
+        ? `${usada.label} — até ${usada.days} ${usada.days === 1 ? 'dia útil' : 'dias úteis'}`
+        : usada.label;
+      ship.reason = usada.source;
+      shippingChoice = usada.id;
+    }
   }
 
   // ---- 3. Cupom -----------------------------------------------------------
@@ -468,6 +630,8 @@ export async function quoteCart(
     shipping: ship.cost,
     shippingLabel: ship.label,
     shippingReason: ship.reason,
+    shippingOptions,
+    shippingChoice,
     /*
      * Por que os Correios não entraram nesta cotação. Vazio quando entraram
      * (ou quando o frete grátis do painel tinha precedência, que é regra e não

@@ -144,11 +144,22 @@ export const PROVIDERS: ProviderMeta[] = [
     id: 'melhorenvio',
     name: 'Melhor Envio',
     category: 'logistics',
-    description: 'Compare e contrate fretes de várias transportadoras.',
+    description: 'Jadlog, Azul, Loggi, LATAM e outras — você escolhe quais o cliente vê.',
     docsUrl: 'https://docs.melhorenvio.com.br',
     fields: [
-      { key: 'token', label: 'Token de acesso', type: 'password' },
+      {
+        key: 'token',
+        label: 'Token de acesso',
+        type: 'password',
+        help: 'Melhor Envio → Configurações → Tokens. Precisa dos escopos de cotação (shipping-calculate).',
+      },
       { key: 'sandbox', label: 'Ambiente (production/sandbox)', placeholder: 'production' },
+      {
+        key: 'originCep',
+        label: 'CEP de origem',
+        placeholder: 'De onde as encomendas saem',
+        help: 'Obrigatório: sem ele o Melhor Envio não cota nada.',
+      },
     ],
   },
   {
