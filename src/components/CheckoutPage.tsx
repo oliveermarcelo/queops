@@ -170,6 +170,18 @@ export default function CheckoutPage({
 
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix'>('pix');
 
+  /**
+   * A pessoa já escolheu como pagar?
+   *
+   * O método começa em 'pix' porque alguém tem de estar marcado quando a etapa 3
+   * abre. Só que a cotação usava esse palpite desde a primeira etapa, e o resumo
+   * mostrava "Desconto Pix − R$ 2,50" para quem ainda estava digitando o nome —
+   * um desconto que a pessoa não pediu, num total que mudaria sozinho se ela
+   * escolhesse cartão. Enquanto não houver escolha, a cotação vai sem forma de
+   * pagamento e o desconto não entra.
+   */
+  const [pagamentoEscolhido, setPagamentoEscolhido] = useState(false);
+
   /** Máximo de parcelas: o servidor manda o número, e é o mesmo que ele aceita. */
   const parcelasMax = configPagamento?.installmentsMax ?? INSTALLMENTS;
 
@@ -181,6 +193,15 @@ export default function CheckoutPage({
    * formulário novo gera um token novo.
    */
   const [tentativaCartao, setTentativaCartao] = useState(0);
+
+  /*
+   * Chegar à etapa 3 conta como escolha: lá as opções estão à vista e uma delas
+   * aparece marcada. Sem isto, quem seguisse com o Pix já pré-marcado (sem
+   * clicar) pagaria o preço cheio olhando a tela dizer "Pix".
+   */
+  useEffect(() => {
+    if (step === 3) setPagamentoEscolhido(true);
+  }, [step]);
 
   // Se o método escolhido deixar de estar disponível, cai no primeiro válido.
   useEffect(() => {
@@ -218,7 +239,9 @@ export default function CheckoutPage({
         state: stateCode,
         cep,
         coupon: appliedCoupon,
-        payment: paymentMethod,
+        // Sem escolha feita, nenhuma forma de pagamento: assim o desconto do
+        // Pix não entra num total que a pessoa ainda não decidiu.
+        payment: pagamentoEscolhido ? paymentMethod : '',
       });
       // Ignora respostas de requisições antigas que chegaram fora de ordem.
       if (id === requestId.current) setQuote(result);
@@ -229,7 +252,7 @@ export default function CheckoutPage({
     } finally {
       if (id === requestId.current) setQuoting(false);
     }
-  }, [items, stateCode, cep, appliedCoupon, paymentMethod]);
+  }, [items, stateCode, cep, appliedCoupon, paymentMethod, pagamentoEscolhido]);
 
   useEffect(() => {
     const t = setTimeout(refreshQuote, 300);
@@ -265,6 +288,31 @@ export default function CheckoutPage({
   const subtotal = quote?.subtotal ?? cartItems.reduce((a, i) => a + i.product.price * i.quantity, 0);
   const shippingCost = quote?.shipping ?? 0;
   const grandTotal = quote?.total ?? subtotal;
+
+  /*
+   * Frete só existe depois do CEP.
+   *
+   * Sem CEP o servidor cai na regra padrão, e o resumo anunciava
+   * "Frete · Entrega padrão — Grátis" na etapa de identificação. Duas coisas
+   * erradas de uma vez: uma modalidade que ninguém escolheu e um preço que pode
+   * subir depois. Quem lê "Grátis" e depois vê frete no total desconfia da loja
+   * — e com razão.
+   */
+  const temCep = cep.replace(/\D/g, '').length === 8;
+  const freteConhecido = temCotacao && temCep;
+
+  /*
+   * Enquanto o frete é desconhecido, o total mostrado NÃO o inclui.
+   *
+   * O servidor sempre devolve um frete — sem CEP ele cai na regra padrão. Somar
+   * esse valor num total enquanto a linha do frete diz "informe o CEP" produzia
+   * a pior combinação possível: subtotal R$ 2,00, frete "informe o CEP", total
+   * R$ 16,90. Os R$ 14,90 apareciam do nada. Melhor mostrar só o que já se sabe
+   * e dizer que o frete entra depois.
+   */
+  const totalExibido = freteConhecido
+    ? grandTotal
+    : Math.max(0, Math.round((grandTotal - shippingCost) * 100) / 100);
 
   const ALL_PAYMENTS = [
     { id: 'pix' as const, icon: QrCode, title: 'Pix', desc: 'Aprovação na hora', tag: quote?.pixDiscountPct ? `${brlNumber(quote.pixDiscountPct).replace(',00', '')}% OFF` : '' },
@@ -715,7 +763,10 @@ export default function CheckoutPage({
                               type="button"
                               key={pm.id}
                               aria-pressed={active}
-                              onClick={() => setPaymentMethod(pm.id)}
+                              onClick={() => {
+                                setPaymentMethod(pm.id);
+                                setPagamentoEscolhido(true);
+                              }}
                               className={`w-full flex items-center gap-4 text-left p-4 rounded-2xl border-2 transition-all ${
                                 active ? 'border-primary-blue bg-primary-blue/[0.03] shadow-sm' : 'border-gray-200 hover:border-gray-300'
                               }`}
@@ -795,7 +846,13 @@ export default function CheckoutPage({
                 </motion.div>
               </AnimatePresence>
 
-              {(errorMsg || quote?.issues?.length) && (
+              {/*
+                Comparações explícitas, e não `errorMsg || quote?.issues?.length`.
+                Com a mensagem vazia e zero avisos, aquela expressão vale 0 — e
+                o React IMPRIME o zero na tela. Era o "0" solto que aparecia
+                embaixo do campo de e-mail.
+              */}
+              {(errorMsg !== '' || (quote?.issues?.length ?? 0) > 0) && (
                 <div role="alert" className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium space-y-1">
                   {errorMsg && (
                     <div className="flex items-center gap-2">
@@ -938,13 +995,15 @@ export default function CheckoutPage({
                   </div>
                 )}
                 <div className="flex justify-between text-gray-500">
-                  <span>Frete{temCotacao && quote.shippingLabel ? ` · ${quote.shippingLabel}` : ''}</span>
-                  <span className={temCotacao && shippingCost === 0 ? 'text-emerald-600 font-semibold' : ''}>
+                  <span>Frete{freteConhecido && quote.shippingLabel ? ` · ${quote.shippingLabel}` : ''}</span>
+                  <span className={freteConhecido && shippingCost === 0 ? 'text-emerald-600 font-semibold' : ''}>
                     {!temCotacao || quoting
                       ? 'calculando…'
-                      : shippingCost === 0
-                        ? 'Grátis'
-                        : `R$ ${brlNumber(shippingCost)}`}
+                      : !temCep
+                        ? 'informe o CEP'
+                        : shippingCost === 0
+                          ? 'Grátis'
+                          : `R$ ${brlNumber(shippingCost)}`}
                   </span>
                 </div>
                 {/* Bastidor: só chega para quem está logado no painel. */}
@@ -955,11 +1014,23 @@ export default function CheckoutPage({
                   </p>
                 )}
                 <div className="flex justify-between items-baseline pt-3.5 border-t border-dashed border-gray-200">
-                  <span className="font-bold text-gray-900">Total</span>
+                  {/*
+                    "Total parcial" enquanto o frete é desconhecido. Chamar de
+                    "Total" um número que ainda vai subir é o tipo de detalhe que
+                    faz a pessoa desistir na última tela.
+                  */}
+                  <span className="font-bold text-gray-900">
+                    {freteConhecido ? 'Total' : 'Total parcial'}
+                  </span>
                   <span className="text-2xl font-extrabold text-primary-blue">
-                    {temCotacao ? `R$ ${brlNumber(grandTotal)}` : '—'}
+                    {temCotacao ? `R$ ${brlNumber(totalExibido)}` : '—'}
                   </span>
                 </div>
+                {temCotacao && !temCep && (
+                  <p className="text-[11px] text-gray-400 m-0">
+                    O frete entra no total quando você informar o CEP, na próxima etapa.
+                  </p>
+                )}
               </div>
 
               <div className="px-6 pb-6">
