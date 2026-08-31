@@ -4,29 +4,35 @@
  */
 
 import React from 'react';
-import { Award, Leaf, Snowflake, HandHeart } from 'lucide-react';
+import { Factory, Ruler, ShieldCheck, Globe2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
+/**
+ * Os quatro argumentos da marca, na ordem em que convencem.
+ *
+ * Cada ícone corresponde ao que o texto afirma — fábrica, medida, garantia,
+ * mundo. Ícone genérico ao lado de promessa específica enfraquece as duas.
+ */
 const ITEMS = [
   {
-    icon: Award,
-    title: 'Tradição Artesanal',
+    icon: Factory,
+    title: 'Somos Fabricantes',
     description: 'Pirâmides de cobre desde 1996 e cristais lapidados desde 2019, com técnica própria.',
   },
   {
-    icon: Leaf,
-    title: 'Materiais Selecionados',
-    description: 'Cristais, cobre e madeiras escolhidos individualmente por procedência e qualidade.',
-  },
-  {
-    icon: Snowflake,
-    title: 'Geometria Sagrada',
+    icon: Ruler,
+    title: 'Medidas Exatas',
     description: 'Cada pirâmide segue a proporção exata da Grande Pirâmide de Quéops.',
   },
   {
-    icon: HandHeart,
-    title: 'Atendimento Próximo',
-    description: 'Cuidamos de cada pedido com atenção, da escolha da peça até a sua casa.',
+    icon: ShieldCheck,
+    title: 'Certificado de Garantia',
+    description: 'Asseguramos a qualidade e a garantia das nossas pirâmides.',
+  },
+  {
+    icon: Globe2,
+    title: 'Enviamos para todo o mundo',
+    description: 'Envio nacional e internacional, garantindo que as nossas peças cheguem a todos que precisam.',
   },
 ];
 
