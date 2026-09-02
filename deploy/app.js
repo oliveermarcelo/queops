@@ -609,6 +609,29 @@ function orderRowToApi(r, items) {
     status: r.status,
     payment: r.payment,
     channel: r.channel,
+    /*
+     * ENDEREÇO E TRANSPORTADORA — sem estes campos o ERP não emite nota nem
+     * etiqueta, e a integração para no primeiro pedido.
+     *
+     * O nome é `shippingAddress`, e não `shipping`: `shipping` já existe nesta
+     * resposta como o VALOR do frete, e trocar o tipo de um campo publicado
+     * quebraria quem já consome a API. Campo novo custa uma linha na
+     * documentação; campo que muda de número para objeto custa uma integração
+     * parada.
+     */
+    shippingAddress: {
+      cep: String(r.ship_cep ?? ""),
+      street: String(r.ship_street ?? ""),
+      number: String(r.ship_number ?? ""),
+      complement: String(r.ship_complement ?? ""),
+      neighborhood: String(r.ship_neighborhood ?? ""),
+      city: String(r.ship_city ?? ""),
+      state: String(r.ship_state ?? "")
+    },
+    /** "Jadlog · .Package — até 5 dias úteis": o que o cliente escolheu pagar. */
+    shippingService: String(r.shipping_service ?? ""),
+    /** Previsão de entrega calculada na compra (AAAA-MM-DD), ou null. */
+    deliveryEta: r.delivery_eta ? String(r.delivery_eta).slice(0, 10) : null,
     trackingCode: String(r.tracking_code ?? ""),
     trackingStatus: String(r.tracking_status ?? "")
   };

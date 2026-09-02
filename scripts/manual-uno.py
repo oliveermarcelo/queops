@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 2.0 — 31 de agosto de 2026'
+VERSAO = 'Versão 2.1 — 2 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -224,7 +224,7 @@ def construir(saida='Manual-Integracao-Queops-UNO-ERP.pdf'):
             ['<b>Enviar até 200 produtos</b> numa chamada', '<b>Pronto</b>', 'POST /products/batch'],
             ['<b>Trava por campo</b>: o que o painel edita o ERP não sobrescreve', '<b>Pronto</b>', 'seção 6'],
             ['Buscar só o que mudou desde X (sincronização incremental)', 'A construir', 'seção 7.1'],
-            ['Endereço de entrega e transportadora no pedido', 'A construir', 'seção 7.3'],
+            ['<b>Endereço de entrega e transportadora</b> no pedido', '<b>Pronto</b>', 'GET /orders'],
         ],
         [88 * mm, 27 * mm, 50 * mm],
         mono_cols=(2,),
@@ -511,6 +511,13 @@ GET /api/v1/orders?status=paid&since=2026-08-01T00:00:00Z
       "status": "paid",
       "payment": "pix",                      // "pix" | "card"
       "channel": "site",
+      "shippingAddress": {                   // para nota fiscal e etiqueta
+        "cep": "44823-478", "street": "Rua das Flores", "number": "250",
+        "complement": "Apto 42", "neighborhood": "Centro",
+        "city": "Jacobina", "state": "BA"
+      },
+      "shippingService": "Jadlog · .Package — até 5 dias úteis",
+      "deliveryEta": "2026-09-08",           // ou null
       "trackingCode": "",                    // preenchido pelo painel ou pelo ERP
       "trackingStatus": ""
     }
@@ -522,9 +529,17 @@ GET /api/v1/orders?status=paid&since=2026-08-01T00:00:00Z
         'Limite de 200 pedidos e ausência de paginação',
         'A resposta é cortada em <b>200 pedidos</b>, sem cursor. Enquanto o volume diário estiver '
         'abaixo disso, sincronizar com <font face="Courier">since</font> a cada 30 minutos resolve. '
-        'Acima disso, um ciclo pode perder pedido em silêncio — a seção 7.4 propõe a paginação. '
-        'O endereço de entrega também não vem nesta resposta (ver 7.5): hoje o ERP tem o cliente e '
-        'os itens, mas não para onde enviar.'))
+        'Acima disso, um ciclo pode perder pedido em silêncio — a seção 7.2 propõe a paginação.'))
+    add(Spacer(1, 6))
+    add(aviso(
+        'O endereço é "shippingAddress", e não "shipping"',
+        'A versão 2.0 deste manual propunha o objeto sob o nome '
+        '<font face="Courier">shipping</font>. Ele foi implementado como '
+        '<font face="Courier">shippingAddress</font> por um motivo: '
+        '<font face="Courier">shipping</font> já existe nesta resposta como o <b>valor</b> do frete '
+        '(número), e trocar o tipo de um campo publicado quebraria quem já consome a API. '
+        'Um campo novo custa uma linha de documentação; um campo que muda de número para objeto '
+        'custa uma integração parada. <b>Nenhum campo antigo mudou nesta versão.</b>'))
 
     add(PageBreak())
     for parte in endpoint('GET', '/orders/{id}', 'Um pedido com seus itens. É a chamada que o UNO deve fazer ao receber um webhook.'):
@@ -582,9 +597,16 @@ PATCH /api/v1/orders/QP-000142
 }
 """))
     add(Paragraph(
-        '<font face="Courier">totalSpent</font> soma os pedidos não cancelados. CPF e endereço não '
-        'são expostos aqui: são dados pessoais que a integração de ERP não precisa para faturar '
-        'catálogo, e cada campo pessoal a mais numa API é um risco a mais sem contrapartida.', P))
+        '<font face="Courier">totalSpent</font> soma os pedidos não cancelados.', P))
+    add(Spacer(1, 4))
+    add(aviso(
+        'CPF: decisão pendente do lado da loja',
+        'O CPF do comprador é gravado na compra, mas <b>não sai em nenhum endpoint</b> — nem aqui, '
+        'nem no pedido. Para emitir NF-e ao consumidor, o UNO vai precisar dele. Não foi exposto '
+        'por conta própria porque é dado pessoal: cada campo desses numa API amplia o estrago de '
+        'uma chave vazada, e a LGPD trata o assunto pelo princípio da necessidade. '
+        '<b>Se a emissão de nota exigir, avise que o campo é liberado no pedido</b> — a decisão é '
+        'do dono da loja, não do código.'))
 
     # ---------------------------------------------------- 5. webhooks ----
     add(PageBreak())
@@ -728,20 +750,7 @@ GET /api/v1/products?since=2026-08-30T00:00:00Z&includeInactive=1
 GET /api/v1/orders?limit=100&cursor=<opaco>
 → { "orders": [...], "nextCursor": "..." }      # ausente na última página
 """))
-    add(Paragraph('7.3 Endereço de entrega e transportadora no pedido', H3))
-    add(Paragraph(
-        'A loja já grava CEP, rua, número, bairro, cidade, UF e a transportadora que o cliente '
-        'escolheu, mas nada disso sai na API. Para emitir nota e etiqueta, o ERP precisa dos dois. '
-        '<b>É o item mais urgente desta lista.</b>', P))
-    add(bloco("""
-"shipping": {
-  "cep": "44823-478", "street": "...", "number": "...", "complement": "...",
-  "neighborhood": "...", "city": "...", "state": "BA",
-  "service": "Jadlog · .Package — até 5 dias úteis",     // escolha do cliente
-  "deliveryEta": "2026-09-08"
-}
-"""))
-    add(Paragraph('7.4 Cancelamento completo a partir do ERP', H3))
+    add(Paragraph('7.3 Cancelamento completo a partir do ERP', H3))
     add(Paragraph(
         'Mudar o status para <font face="Courier">canceled</font> pela rota atual só grava o status: '
         'não devolve estoque nem estorna. O endpoint abaixo faria a coisa completa.', P))
@@ -750,7 +759,7 @@ POST /api/v1/orders/{id}/cancel
 { "reason": "ruptura de estoque" }
 → devolve estoque (uma única vez) e registra o motivo
 """))
-    add(Paragraph('7.5 Assinatura e repetição dos webhooks', H3))
+    add(Paragraph('7.4 Assinatura e repetição dos webhooks', H3))
     add(Paragraph(
         'Assinatura HMAC-SHA256 do corpo com segredo compartilhado, no padrão que a loja já usa '
         'para o Mercado Pago, mais três tentativas com espera crescente.', P))
@@ -823,6 +832,8 @@ X-Queops-Signature: t=1787061681,v1=<hmac_sha256(segredo, "t.corpo")>
              'Webhook order.created chega na URL do UNO'],
             ['10', 'Buscar o pedido por GET /orders/{id} a partir do aviso',
              'Itens, valores e status conferem com a tela'],
+            ['10b', 'Conferir shippingAddress e shippingService nesse pedido',
+             'Endereço completo e transportadora escolhida pelo cliente'],
             ['11', 'PATCH /orders/{id} para shipped',
              'Painel mostra "enviado"; webhook order.status_changed dispara'],
             ['12', 'Desligar a URL do webhook e fazer outra compra',
