@@ -595,6 +595,16 @@ function orderRowToApi(r, items) {
     customerName: r.customer_name,
     customerEmail: r.customer_email,
     customerPhone: r.customer_phone,
+    /*
+     * CPF do comprador — liberado a pedido do dono da loja, para o ERP emitir
+     * NF-e ao consumidor.
+     *
+     * É dado pessoal, e isso tem consequência prática: a chave da API v1 passa a
+     * dar acesso a CPF de cliente. Quem tiver a chave tem os CPFs. Portanto ela
+     * pertence ao cofre do ERP, não a um arquivo de configuração compartilhado,
+     * e o corpo destas respostas não deve ir para log.
+     */
+    customerCpf: String(r.customer_cpf ?? ""),
     items: items.map((i) => ({
       productId: i.product_id,
       name: i.name,
@@ -2691,6 +2701,67 @@ __name(destravarCampos, "destravarCampos");
 init_http();
 init_providers();
 init_store();
+
+// server/src/usuarios.ts
+var FORMATO_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+function normalizarEmail(bruto) {
+  return bruto.trim().toLowerCase();
+}
+__name(normalizarEmail, "normalizarEmail");
+function emailValido(email) {
+  return email.length <= 190 && FORMATO_EMAIL.test(email);
+}
+__name(emailValido, "emailValido");
+var MINIMO_SENHA = 10;
+var SENHAS_OBVIAS = [
+  "senha123456",
+  "1234567890",
+  "senhasenha",
+  "queops1234",
+  "piramide123",
+  "admin12345",
+  "abcdefghij",
+  "0123456789",
+  "qwertyuiop"
+];
+function problemaNaSenha(senha, email = "") {
+  if (senha.length < MINIMO_SENHA) {
+    return `A senha precisa de pelo menos ${MINIMO_SENHA} caracteres.`;
+  }
+  if (senha.length > 200) {
+    return "A senha \xE9 longa demais (m\xE1ximo de 200 caracteres).";
+  }
+  if (senha.trim() === "") {
+    return "A senha n\xE3o pode ser s\xF3 espa\xE7os.";
+  }
+  const s = senha.toLowerCase();
+  if (SENHAS_OBVIAS.includes(s)) {
+    return "Essa senha \xE9 f\xE1cil de adivinhar. Use uma frase que s\xF3 voc\xEA saiba.";
+  }
+  const alvo = normalizarEmail(email);
+  if (alvo !== "" && (s === alvo || s === alvo.split("@")[0])) {
+    return "A senha n\xE3o pode ser o pr\xF3prio e-mail.";
+  }
+  return "";
+}
+__name(problemaNaSenha, "problemaNaSenha");
+function motivoParaNaoDesativar(p) {
+  if (p.alvoId === p.atorId) {
+    return "Voc\xEA n\xE3o pode desativar a sua pr\xF3pria conta. Pe\xE7a a outro usu\xE1rio do painel.";
+  }
+  if (p.ativasAgora <= 1) {
+    return "Esta \xE9 a \xFAltima conta ativa do painel. Desativ\xE1-la deixaria a loja sem acesso.";
+  }
+  return "";
+}
+__name(motivoParaNaoDesativar, "motivoParaNaoDesativar");
+function nomeValido(bruto) {
+  const nome = bruto.replace(/\s+/g, " ").trim();
+  return nome.length >= 2 && nome.length <= 120 ? nome : "";
+}
+__name(nomeValido, "nomeValido");
+
+// server/src/routes/admin.ts
 var adminRoutes = (0, import_express2.Router)();
 var STATUS_PEDIDO = ["pending", "paid", "shipped", "delivered", "canceled"];
 var rid = /* @__PURE__ */ __name((prefix, bytes) => prefix + (0, import_node_crypto3.randomBytes)(bytes).toString("hex"), "rid");
@@ -2709,7 +2780,7 @@ adminRoutes.get("/me", h(async (req, res) => {
   jsonOk(res, { admin: a ? { name: a.name, email: a.email } : null });
 }));
 adminRoutes.get("/state", h(async (req, res) => {
-  await requireAdmin(req);
+  const eu = await requireAdmin(req);
   const customers = (await q.all(
     `SELECT c.id, c.name, c.email, c.phone, c.created_at,
               COUNT(o.id) AS orders_count,
@@ -2806,7 +2877,8 @@ adminRoutes.get("/state", h(async (req, res) => {
       url: w.url,
       event: w.event,
       active: Boolean(w.active)
-    }))
+    })),
+    users: await listaDeUsuarios(eu.id)
   });
 }));
 adminRoutes.post("/products", h(async (req, res) => {
@@ -3091,6 +3163,134 @@ adminRoutes.post("/webhooks", h(async (req, res) => {
 adminRoutes.delete("/webhooks/:id", h(async (req, res) => {
   await requireAdmin(req);
   await q.run("DELETE FROM webhooks WHERE id = ?", [req.params.id]);
+  jsonOk(res, { ok: true });
+}));
+function usuarioParaApi(r, euId) {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    email: String(r.email),
+    active: Boolean(r.active),
+    lastLoginAt: iso(r.last_login_at),
+    createdAt: iso(r.created_at),
+    // Quem é você na lista. A tela usa isso para não oferecer botão que a rota
+    // vai recusar (desativar a si mesmo) — o servidor recusa de todo jeito.
+    isYou: Number(r.id) === euId
+  };
+}
+__name(usuarioParaApi, "usuarioParaApi");
+async function listaDeUsuarios(euId) {
+  const rows = await q.all(
+    `SELECT id, name, email, active, last_login_at, created_at
+       FROM admin_users ORDER BY active DESC, name ASC`
+  );
+  return rows.map((r) => usuarioParaApi(r, euId));
+}
+__name(listaDeUsuarios, "listaDeUsuarios");
+adminRoutes.get("/users", h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  jsonOk(res, { users: await listaDeUsuarios(eu.id) });
+}));
+adminRoutes.post("/users", h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  const b = body(req);
+  const nome = nomeValido(bodyStr(b, "name", "", 160));
+  if (nome === "") fail("Informe o nome da pessoa (pelo menos 2 letras).", 422, "invalid_name");
+  const email = normalizarEmail(bodyStr(b, "email", "", 190));
+  if (!emailValido(email)) fail("Informe um e-mail v\xE1lido.", 422, "invalid_email");
+  const senha = typeof b.password === "string" ? b.password : "";
+  const problema = problemaNaSenha(senha, email);
+  if (problema !== "") fail(problema, 422, "invalid_password");
+  const jaExiste = await q.one("SELECT id, active FROM admin_users WHERE email = ?", [email]);
+  if (jaExiste !== null) {
+    fail(
+      Boolean(jaExiste.active) ? "J\xE1 existe um usu\xE1rio com este e-mail." : "J\xE1 existe um usu\xE1rio com este e-mail, desativado. Reative-o em vez de criar outro.",
+      409,
+      "email_taken"
+    );
+  }
+  await q.run(
+    "INSERT INTO admin_users (name, email, password_hash, role, active) VALUES (?,?,?,?,1)",
+    [nome, email, await hashPassword(senha), "admin"]
+  );
+  const criado = await q.one("SELECT id FROM admin_users WHERE email = ?", [email]);
+  jsonOk(res, {
+    ok: true,
+    id: String(criado?.id ?? ""),
+    users: await listaDeUsuarios(eu.id)
+  }, 201);
+}));
+adminRoutes.patch("/users/:id", h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  const alvoId = Number(req.params.id);
+  if (!Number.isInteger(alvoId) || alvoId <= 0) fail("Usu\xE1rio n\xE3o encontrado.", 404, "not_found");
+  const alvo = await q.one("SELECT * FROM admin_users WHERE id = ?", [alvoId]);
+  if (alvo === null) fail("Usu\xE1rio n\xE3o encontrado.", 404, "not_found");
+  const b = body(req);
+  const campos = [];
+  const valores = [];
+  if (b.name !== void 0) {
+    const nome = nomeValido(bodyStr(b, "name", "", 160));
+    if (nome === "") fail("Informe o nome da pessoa (pelo menos 2 letras).", 422, "invalid_name");
+    campos.push("name = ?");
+    valores.push(nome);
+  }
+  if (b.email !== void 0) {
+    const email = normalizarEmail(bodyStr(b, "email", "", 190));
+    if (!emailValido(email)) fail("Informe um e-mail v\xE1lido.", 422, "invalid_email");
+    const outro = await q.one("SELECT id FROM admin_users WHERE email = ? AND id <> ?", [email, alvoId]);
+    if (outro !== null) fail("J\xE1 existe um usu\xE1rio com este e-mail.", 409, "email_taken");
+    campos.push("email = ?");
+    valores.push(email);
+  }
+  if (b.password !== void 0) {
+    if (alvoId === eu.id) {
+      fail(
+        'Para trocar a sua pr\xF3pria senha, informe a senha atual (use "Trocar minha senha").',
+        422,
+        "own_password"
+      );
+    }
+    const senha = typeof b.password === "string" ? b.password : "";
+    const problema = problemaNaSenha(senha, String(alvo.email));
+    if (problema !== "") fail(problema, 422, "invalid_password");
+    campos.push("password_hash = ?");
+    valores.push(await hashPassword(senha));
+  }
+  if (b.active !== void 0) {
+    const ativar = bodyBool(b, "active", true);
+    if (!ativar) {
+      const n = await q.one("SELECT COUNT(*) AS n FROM admin_users WHERE active = 1");
+      const motivo = motivoParaNaoDesativar({
+        alvoId,
+        atorId: eu.id,
+        ativasAgora: Number(n?.n ?? 0)
+      });
+      if (motivo !== "") fail(motivo, 422, "would_lock_out");
+    }
+    campos.push("active = ?");
+    valores.push(ativar ? 1 : 0);
+  }
+  if (campos.length === 0) fail("Nada para alterar.", 422, "nothing_to_update");
+  valores.push(alvoId);
+  await q.run(`UPDATE admin_users SET ${campos.join(", ")} WHERE id = ?`, valores);
+  jsonOk(res, { ok: true, users: await listaDeUsuarios(eu.id) });
+}));
+adminRoutes.put("/me/password", h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  const b = body(req);
+  const atual = typeof b.currentPassword === "string" ? b.currentPassword : "";
+  const nova = typeof b.newPassword === "string" ? b.newPassword : "";
+  const row = await q.one("SELECT password_hash FROM admin_users WHERE id = ?", [eu.id]);
+  if (row === null) fail("Sess\xE3o inv\xE1lida. Entre de novo.", 401, "unauthenticated");
+  await assertLoginAllowed(req, "admin", eu.email);
+  const confere = await verifyPassword(atual, String(row.password_hash));
+  await recordLoginAttempt(req, "admin", eu.email, confere);
+  if (!confere) fail("A senha atual est\xE1 incorreta.", 401, "invalid_credentials");
+  const problema = problemaNaSenha(nova, eu.email);
+  if (problema !== "") fail(problema, 422, "invalid_password");
+  if (atual === nova) fail("A nova senha \xE9 igual \xE0 atual.", 422, "same_password");
+  await q.run("UPDATE admin_users SET password_hash = ? WHERE id = ?", [await hashPassword(nova), eu.id]);
   jsonOk(res, { ok: true });
 }));
 function safeImageUrl(url) {
