@@ -12,7 +12,10 @@ import { config } from '../config.ts';
 import { encryptPayload } from '../crypto.ts';
 import { placeholders, q } from '../db.ts';
 import { fail } from '../errors.ts';
-import { body, bodyBool, bodyFloat, bodyInt, bodyStr, brl, digits, iso, jsonOk } from '../http.ts';
+import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
+import {
+  body, bodyBool, bodyFloat, bodyInt, bodyStr, brl, digits, iso, jsonOk, queryStr,
+} from '../http.ts';
 import { fireWebhooks, isInternalHost, providerSendWhatsapp, providerTest } from '../providers.ts';
 import {
   configGet, configMerge, configSet, DEFAULT_RECOVERY, DEFAULT_SETTINGS, DEFAULT_SHIPPING,
@@ -170,7 +173,7 @@ adminRoutes.post('/products', h(async (req, res) => {
   const image = bodyStr(b, 'image', '', 500);
   if (image !== '' && !safeImageUrl(image)) fail('Endereço de imagem inválido.', 422, 'invalid_image');
 
-  const atual = await q.one('SELECT active FROM products WHERE id = ?', [id]);
+  const atual = await q.one('SELECT * FROM products WHERE id = ?', [id]);
 
   await q.run(
     `INSERT INTO products (
@@ -206,8 +209,43 @@ adminRoutes.post('/products', h(async (req, res) => {
     ],
   );
 
+  /*
+   * O QUE FOI EDITADO AQUI PASSA A RESISTIR AO ERP.
+   *
+   * O cliente pediu duas coisas que se contradizem sem um mecanismo: o ERP é a
+   * fonte da verdade de preço e estoque, E o painel precisa poder alterar. A
+   * saída é a trava por campo — o que a lojista muda aqui entra em
+   * `locked_fields` e o próximo ciclo do ERP ignora aquele campo (ver
+   * erp-produtos.ts). Sem isto, a correção feita à mão volta sozinha e a
+   * conclusão de quem cuida da loja é "o site está com defeito".
+   *
+   * A comparação é por VALOR, não por presença: o painel envia o produto
+   * inteiro a cada salvamento, então tratar tudo como edição travaria o
+   * cadastro completo no primeiro clique — e o ERP nunca mais atualizaria nada.
+   */
+  const travados = await travarCamposEditados(id, b, atual);
+
   const row = await q.one('SELECT * FROM products WHERE id = ?', [id]);
-  jsonOk(res, { product: productRowToApi(row!) });
+  jsonOk(res, { product: productRowToApi(row!), lockedFields: travados });
+}));
+
+/**
+ * DELETE /api/admin/products/:id/locks — o produto volta a seguir o ERP.
+ *
+ * Sem uma forma de soltar, a trava vira armadilha: um preço ajustado numa
+ * promoção de um dia congelaria para sempre, e ninguém lembraria o motivo meses
+ * depois. `?fields=price,stock` solta só os informados; sem parâmetro, solta
+ * todos.
+ */
+adminRoutes.delete('/products/:id/locks', h(async (req, res) => {
+  await requireAdmin(req);
+  const pedidos = queryStr(req, 'fields', '', 255)
+    .split(',').map((x) => x.trim()).filter((x) => x !== '');
+  const restantes = await destravarCampos(
+    String(req.params.id ?? ''),
+    pedidos.length > 0 ? pedidos : null,
+  );
+  jsonOk(res, { ok: true, lockedFields: restantes });
 }));
 
 // DELETE /api/admin/products/:id

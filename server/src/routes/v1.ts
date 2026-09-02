@@ -15,6 +15,7 @@ import { Router } from 'express';
 import { requireApiKey } from '../auth.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
+import { gravarProdutoDoErp } from '../erp-produtos.ts';
 import { body, bodyInt, bodyStr, iso, jsonOk, queryStr } from '../http.ts';
 import { fireWebhooks } from '../providers.ts';
 import { fetchProducts, orderRowToApi, productRowToApi } from '../store.ts';
@@ -38,15 +39,106 @@ v1Routes.get('/products/:id', h(async (req, res) => {
   jsonOk(res, { product: productRowToApi(row) });
 }));
 
-// PATCH /api/v1/products/:id/stock — o ERP sincroniza o estoque
+/**
+ * PUT /api/v1/products/:id — o ERP grava o produto (cria ou atualiza).
+ *
+ * Aceita o MESMO formato que a leitura devolve, o que permite ao ERP ler um
+ * item, mudar um campo e devolver o objeto. Só os campos presentes no corpo são
+ * tocados: `{"price": 10}` muda o preço e não zera o resto.
+ *
+ * Responde 200 mesmo quando algum campo é recusado por estar travado no painel
+ * — `applied` e `ignored` dizem o que aconteceu. Ver o comentário em
+ * `erp-produtos.ts`: recusar a requisição inteira faria o ERP repetir para
+ * sempre, e responder 200 mudo faria ele acreditar que aplicou.
+ */
+v1Routes.put('/products/:id', h(async (req, res) => {
+  await requireApiKey(req);
+  const resultado = await gravarProdutoDoErp(String(req.params.id ?? ''), body(req));
+  if (!resultado.ok) {
+    fail(
+      resultado.error?.message ?? 'Não foi possível gravar o produto.',
+      422,
+      resultado.error?.code ?? 'invalid_product',
+    );
+  }
+  jsonOk(res, resultado, resultado.criado ? 201 : 200);
+}));
+
+/**
+ * POST /api/v1/products/batch — vários produtos numa chamada.
+ *
+ * Com mais de mil itens no catálogo, uma requisição por produto transforma um
+ * ciclo de sincronização em milhares de chamadas. Aqui vão até 200 por vez.
+ *
+ * Um item inválido NÃO derruba o lote: cada produto tem o seu resultado. Abortar
+ * tudo por causa de um faria o ERP reenviar as gravações que já tinham dado
+ * certo — e a repetição esconderia qual era o item ruim.
+ */
+v1Routes.post('/products/batch', h(async (req, res) => {
+  await requireApiKey(req);
+  const b = body(req);
+  const lista = Array.isArray(b.products) ? b.products : null;
+  if (lista === null) fail('Envie {"products": [...]}.', 422, 'invalid_batch');
+  if (lista.length === 0) fail('A lista está vazia.', 422, 'invalid_batch');
+  if (lista.length > LOTE_MAXIMO) {
+    fail(`Máximo de ${LOTE_MAXIMO} produtos por chamada.`, 422, 'batch_too_large');
+  }
+
+  const resultados = [];
+  for (const bruto of lista) {
+    if (bruto === null || typeof bruto !== 'object' || Array.isArray(bruto)) {
+      resultados.push({
+        id: '', ok: false, criado: false, applied: [], ignored: [], warnings: [],
+        error: { code: 'invalid_product', message: 'Cada item precisa ser um objeto.' },
+      });
+      continue;
+    }
+    const dto = bruto as Record<string, unknown>;
+    resultados.push(await gravarProdutoDoErp(String(dto.id ?? ''), dto));
+  }
+
+  jsonOk(res, {
+    total: resultados.length,
+    gravados: resultados.filter((r) => r.ok).length,
+    falhas: resultados.filter((r) => !r.ok).length,
+    results: resultados,
+  });
+}));
+
+/**
+ * Teto por chamada em lote: alto o bastante para um catálogo inteiro em poucas
+ * chamadas, baixo o bastante para a requisição não estourar tempo nem memória.
+ */
+const LOTE_MAXIMO = 200;
+
+/**
+ * PATCH /api/v1/products/:id/stock — o ERP sincroniza o estoque.
+ *
+ * Atalho para o caminho de gravação acima, mantido porque já está em uso: o
+ * valor é absoluto (saldo, não variação), o que torna a chamada idempotente.
+ * Passa pela MESMA regra de travas — estoque ajustado à mão no painel não é
+ * sobrescrito, e a resposta diz quando isso aconteceu.
+ */
 v1Routes.patch('/products/:id/stock', h(async (req, res) => {
   await requireApiKey(req);
+  const id = String(req.params.id ?? '');
   const stock = bodyInt(body(req), 'stock', -1);
   if (stock < 0) fail('Informe "stock" como um inteiro não negativo.', 422, 'invalid_stock');
-  if ((await q.run('UPDATE products SET stock = ? WHERE id = ?', [stock, req.params.id])) === 0) {
+
+  // Este endpoint não cria produto: id desconhecido é 404, como sempre foi.
+  if ((await q.one('SELECT id FROM products WHERE id = ?', [id])) === null) {
     fail('Produto não encontrado.', 404, 'not_found');
   }
-  jsonOk(res, { ok: true, id: req.params.id, stock });
+
+  const r = await gravarProdutoDoErp(id, { stock });
+  jsonOk(res, {
+    ok: true,
+    id,
+    stock,
+    applied: r.applied,
+    ignored: r.ignored,
+    warnings: r.warnings,
+  });
 }));
 
 // GET /api/v1/orders?status=&since=

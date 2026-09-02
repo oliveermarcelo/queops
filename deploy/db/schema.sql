@@ -142,6 +142,10 @@ CREATE TABLE IF NOT EXISTS products (
   ingredients       TEXT          NULL,
   highlight         TINYINT(1)    NOT NULL DEFAULT 0,
   active            TINYINT(1)    NOT NULL DEFAULT 1,
+  -- Campos editados no painel, que o ERP não sobrescreve (ex.: "price,stock").
+  -- É o que concilia "o ERP é a fonte da verdade" com "o painel precisa ter
+  -- autonomia": sem isto, o ajuste manual volta sozinho no próximo ciclo.
+  locked_fields     VARCHAR(255)  NOT NULL DEFAULT '',
   position          INT           NOT NULL DEFAULT 0,
   created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

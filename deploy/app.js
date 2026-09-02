@@ -580,6 +580,8 @@ function productRowToApi(r) {
   if (r.tag) out.tag = r.tag;
   if (r.ingredients) out.ingredients = r.ingredients;
   if (r.highlight) out.highlight = true;
+  const travados = String(r.locked_fields ?? "").split(",").filter((x) => x !== "");
+  if (travados.length > 0) out.lockedFields = travados;
   return out;
 }
 async function fetchProducts(onlyActive = true, exec = q) {
@@ -927,285 +929,6 @@ var init_melhorenvio = __esm({
   }
 });
 
-// server/src/correios.ts
-var correios_exports = {};
-__export(correios_exports, {
-  SERVICO_PAC: () => SERVICO_PAC,
-  SERVICO_SEDEX: () => SERVICO_SEDEX,
-  _internos: () => _internos,
-  autenticar: () => autenticar,
-  cotar: () => cotar2,
-  cotarTodos: () => cotarTodos,
-  credsFrom: () => credsFrom2,
-  esquecerToken: () => esquecerToken,
-  nomeDoServico: () => nomeDoServico,
-  rastrear: () => rastrear,
-  servicesOf: () => servicesOf
-});
-function nomeDoServico(codigo) {
-  return NOMES[codigo] ?? `Correios ${codigo}`;
-}
-function credsFrom2(f) {
-  const s = /* @__PURE__ */ __name((k) => String(f[k] ?? "").trim(), "s");
-  return {
-    user: s("user"),
-    accessCode: s("accessCode"),
-    postingCard: s("postingCard").replace(/\D/g, ""),
-    contract: s("contract"),
-    dr: s("dr"),
-    services: s("services"),
-    originCep: s("originCep").replace(/\D/g, "")
-  };
-}
-function servicesOf(c) {
-  const lista = (c.services ?? "").split(/[,;\s]+/).map((x) => x.replace(/\D/g, "")).filter((x) => x.length > 0);
-  return lista.length > 0 ? lista : [SERVICO_PAC, SERVICO_SEDEX];
-}
-async function autenticar(c) {
-  const chave = `${c.user}:${c.postingCard}`;
-  const agora = Date.now();
-  const salvo = cache.get(chave);
-  if (salvo && salvo.expiraEm - 5 * 6e4 > agora) {
-    return { token: salvo.token, erro: "" };
-  }
-  const basic = Buffer.from(`${c.user}:${c.accessCode}`).toString("base64");
-  const r = await httpCall(
-    "POST",
-    `${BASE}/token/v1/autentica/cartaopostagem`,
-    { Authorization: "Basic " + basic },
-    { numero: c.postingCard }
-  );
-  if (!r.ok) return { token: "", erro: explicar(r) };
-  let dados;
-  try {
-    dados = JSON.parse(r.body);
-  } catch {
-    return { token: "", erro: "Resposta inesperada dos Correios ao autenticar." };
-  }
-  if (!dados.token) return { token: "", erro: "Os Correios n\xE3o devolveram token." };
-  const expira = dados.expiraEm ? Date.parse(dados.expiraEm) : NaN;
-  cache.set(chave, {
-    token: dados.token,
-    expiraEm: Number.isFinite(expira) ? expira : agora + 12 * 36e5
-  });
-  return { token: dados.token, erro: "" };
-}
-function esquecerToken(c) {
-  cache.delete(`${c.user}:${c.postingCard}`);
-}
-function explicar(r, onde = "auth") {
-  if (r.status === 401 || r.status === 403) {
-    return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
-  }
-  if (r.status === 400) {
-    const detalhe = detalheDoErro2(r.body);
-    if (detalhe !== "") return detalhe;
-    if (onde === "cotacao") {
-      return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Confira em "Servi\xE7os a cotar" se os c\xF3digos pertencem ao seu contrato \u2014 os de balc\xE3o (04510 PAC, 04014 Sedex) cotam sem contrato e servem para testar.';
-    }
-    return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
-  }
-  if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
-  return `Correios responderam HTTP ${r.status}.`;
-}
-function detalheDoErro2(body2) {
-  const limpo = String(body2 ?? "").trim();
-  if (limpo === "") return "";
-  try {
-    const d = JSON.parse(limpo);
-    const candidatos2 = [
-      d.msgs,
-      d.msg,
-      d.message,
-      d.txErro,
-      d.error,
-      d.descricao,
-      d.causa,
-      d.mensagem,
-      d.detail,
-      d.erros
-    ];
-    for (const c of candidatos2) {
-      if (Array.isArray(c) && c.length > 0) {
-        const partes = c.map((x) => {
-          if (typeof x === "string") return x;
-          const o = x;
-          return String(o?.descricao ?? o?.mensagem ?? o?.msg ?? JSON.stringify(x));
-        });
-        return partes.join(" \xB7 ").slice(0, 300);
-      }
-      if (typeof c === "string" && c.trim() !== "") return c.trim().slice(0, 300);
-    }
-    return limpo.slice(0, 300);
-  } catch {
-    return limpo.length <= 300 ? limpo : "";
-  }
-}
-function moeda(v) {
-  const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(n) ? n : 0;
-}
-async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
-  const vazio = { servico, nome: nomeDoServico(servico), preco: 0, prazoDias: 0, erro: "" };
-  const { token, erro } = await autenticar(c);
-  if (erro) return { ...vazio, erro };
-  const origem = (c.originCep ?? "").replace(/\D/g, "");
-  const destino = String(cepDestino ?? "").replace(/\D/g, "");
-  if (origem.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
-  if (destino.length !== 8) return { ...vazio, erro: "CEP de destino inv\xE1lido." };
-  const produto = {
-    coProduto: servico,
-    nuRequisicao: "1",
-    cepOrigem: origem,
-    cepDestino: destino,
-    psObjeto: String(Math.max(300, Math.round(pesoGramas))),
-    tpObjeto: "2",
-    // pacote
-    comprimento: String(Math.max(16, dim.comprimento ?? 16)),
-    altura: String(Math.max(2, dim.altura ?? 5)),
-    largura: String(Math.max(11, dim.largura ?? 11))
-  };
-  const contrato = (c.contract ?? "").replace(/\D/g, "");
-  const dr = (c.dr ?? "").replace(/\D/g, "");
-  if (contrato !== "" && dr !== "") {
-    produto.nuContrato = contrato;
-    produto.nuDR = dr;
-  }
-  const corpo = { idLote: "1", parametrosProduto: [produto] };
-  const corpoPrazo = {
-    idLote: "1",
-    parametrosPrazo: [{
-      coProduto: servico,
-      nuRequisicao: "1",
-      cepOrigem: origem,
-      cepDestino: destino
-    }]
-  };
-  const auth = { Authorization: "Bearer " + token };
-  const [preco, prazo] = await Promise.all([
-    httpCall("POST", `${BASE}/preco/v1/nacional`, auth, corpo),
-    httpCall("POST", `${BASE}/prazo/v1/nacional`, auth, corpoPrazo)
-  ]);
-  if (preco.status === 401) {
-    esquecerToken(c);
-    return { ...vazio, erro: "Token expirado; tente de novo." };
-  }
-  if (!preco.ok) {
-    console.error(
-      `[queops] Correios recusaram a cota\xE7\xE3o de ${servico} (HTTP ${preco.status}):`,
-      String(preco.body ?? "").slice(0, 600)
-    );
-    return { ...vazio, erro: explicar(preco, "cotacao") };
-  }
-  try {
-    const p = JSON.parse(preco.body);
-    const item = Array.isArray(p) ? p[0] : null;
-    if (!item) return { ...vazio, erro: "Correios n\xE3o devolveram pre\xE7o." };
-    if (item.txErro) return { ...vazio, erro: String(item.txErro) };
-    let dias = 0;
-    if (prazo.ok) {
-      const q2 = JSON.parse(prazo.body);
-      dias = Number(q2?.[0]?.prazoEntrega ?? 0) || 0;
-      if (dias === 0) {
-        console.warn(
-          `[queops] Correios n\xE3o devolveram prazo para ${servico}:`,
-          String(prazo.body ?? "").slice(0, 300)
-        );
-      }
-    } else {
-      console.warn(
-        `[queops] falha ao consultar o prazo de ${servico} (HTTP ${prazo.status}):`,
-        String(prazo.body ?? "").slice(0, 300)
-      );
-    }
-    return {
-      servico,
-      nome: nomeDoServico(servico),
-      preco: moeda(item.pcFinal ?? item.pcBase),
-      prazoDias: dias,
-      erro: ""
-    };
-  } catch {
-    return { ...vazio, erro: "Resposta inesperada dos Correios ao cotar." };
-  }
-}
-async function cotarTodos(c, cepDestino, pesoGramas, dim) {
-  const servicos = servicesOf(c);
-  const todas = await Promise.all(servicos.map((s) => cotar2(c, s, cepDestino, pesoGramas, dim)));
-  const boas = todas.filter((x) => x.erro === "" && x.preco > 0);
-  return boas.length > 0 ? boas.sort((a, b) => a.preco - b.preco) : todas;
-}
-async function rastrear(c, codigo) {
-  const { token, erro } = await autenticar(c);
-  if (erro) return { eventos: [], erro };
-  const limpo = String(codigo ?? "").trim().toUpperCase().replace(/\s/g, "");
-  if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(limpo)) {
-    return { eventos: [], erro: "C\xF3digo de rastreio inv\xE1lido (formato AA123456789BR)." };
-  }
-  const r = await httpCall(
-    "GET",
-    `${BASE}/srorastro/v1/objetos/${limpo}?resultado=T`,
-    { Authorization: "Bearer " + token }
-  );
-  if (r.status === 401) {
-    esquecerToken(c);
-    return { eventos: [], erro: "Token expirado; tente de novo." };
-  }
-  if (!r.ok) return { eventos: [], erro: explicar(r, "rastreio") };
-  try {
-    const dados = JSON.parse(r.body);
-    const obj = dados.objetos?.[0];
-    if (!obj) return { eventos: [], erro: "Objeto n\xE3o encontrado." };
-    if (obj.mensagem) return { eventos: [], erro: String(obj.mensagem) };
-    const brutos = obj.eventos ?? [];
-    const eventos = brutos.map((e) => {
-      const u = e.unidade ?? {};
-      const end = u.endereco ?? {};
-      const cidade = String(end.cidade ?? "");
-      const uf = String(end.uf ?? "");
-      return {
-        data: String(e.dtHrCriado ?? ""),
-        descricao: String(e.descricao ?? ""),
-        local: cidade && uf ? `${cidade}/${uf}` : String(u.tipo ?? "")
-      };
-    });
-    return { eventos, erro: "" };
-  } catch {
-    return { eventos: [], erro: "Resposta inesperada dos Correios ao rastrear." };
-  }
-}
-var BASE, SERVICO_PAC, SERVICO_SEDEX, NOMES, cache, _internos;
-var init_correios = __esm({
-  "server/src/correios.ts"() {
-    "use strict";
-    init_providers();
-    BASE = "https://api.correios.com.br";
-    SERVICO_PAC = "03298";
-    SERVICO_SEDEX = "03220";
-    NOMES = {
-      "03298": "PAC",
-      "03220": "Sedex",
-      "03158": "Sedex 10",
-      "03204": "Sedex Hoje",
-      "04510": "PAC",
-      "04014": "Sedex"
-    };
-    __name(nomeDoServico, "nomeDoServico");
-    __name(credsFrom2, "credsFrom");
-    __name(servicesOf, "servicesOf");
-    cache = /* @__PURE__ */ new Map();
-    __name(autenticar, "autenticar");
-    __name(esquecerToken, "esquecerToken");
-    __name(explicar, "explicar");
-    __name(detalheDoErro2, "detalheDoErro");
-    _internos = { detalheDoErro: detalheDoErro2 };
-    __name(moeda, "moeda");
-    __name(cotar2, "cotar");
-    __name(cotarTodos, "cotarTodos");
-    __name(rastrear, "rastrear");
-  }
-});
-
 // server/src/providers.ts
 function isPrivateIp(ip) {
   const kind = (0, import_node_net2.isIP)(ip);
@@ -1507,6 +1230,285 @@ var init_providers = __esm({
     __name(providerTest, "providerTest");
     __name(providerSendWhatsapp, "providerSendWhatsapp");
     __name(fireWebhooks, "fireWebhooks");
+  }
+});
+
+// server/src/correios.ts
+var correios_exports = {};
+__export(correios_exports, {
+  SERVICO_PAC: () => SERVICO_PAC,
+  SERVICO_SEDEX: () => SERVICO_SEDEX,
+  _internos: () => _internos,
+  autenticar: () => autenticar,
+  cotar: () => cotar2,
+  cotarTodos: () => cotarTodos,
+  credsFrom: () => credsFrom2,
+  esquecerToken: () => esquecerToken,
+  nomeDoServico: () => nomeDoServico,
+  rastrear: () => rastrear,
+  servicesOf: () => servicesOf
+});
+function nomeDoServico(codigo) {
+  return NOMES[codigo] ?? `Correios ${codigo}`;
+}
+function credsFrom2(f) {
+  const s = /* @__PURE__ */ __name((k) => String(f[k] ?? "").trim(), "s");
+  return {
+    user: s("user"),
+    accessCode: s("accessCode"),
+    postingCard: s("postingCard").replace(/\D/g, ""),
+    contract: s("contract"),
+    dr: s("dr"),
+    services: s("services"),
+    originCep: s("originCep").replace(/\D/g, "")
+  };
+}
+function servicesOf(c) {
+  const lista = (c.services ?? "").split(/[,;\s]+/).map((x) => x.replace(/\D/g, "")).filter((x) => x.length > 0);
+  return lista.length > 0 ? lista : [SERVICO_PAC, SERVICO_SEDEX];
+}
+async function autenticar(c) {
+  const chave = `${c.user}:${c.postingCard}`;
+  const agora = Date.now();
+  const salvo = cache.get(chave);
+  if (salvo && salvo.expiraEm - 5 * 6e4 > agora) {
+    return { token: salvo.token, erro: "" };
+  }
+  const basic = Buffer.from(`${c.user}:${c.accessCode}`).toString("base64");
+  const r = await httpCall(
+    "POST",
+    `${BASE}/token/v1/autentica/cartaopostagem`,
+    { Authorization: "Basic " + basic },
+    { numero: c.postingCard }
+  );
+  if (!r.ok) return { token: "", erro: explicar(r) };
+  let dados;
+  try {
+    dados = JSON.parse(r.body);
+  } catch {
+    return { token: "", erro: "Resposta inesperada dos Correios ao autenticar." };
+  }
+  if (!dados.token) return { token: "", erro: "Os Correios n\xE3o devolveram token." };
+  const expira = dados.expiraEm ? Date.parse(dados.expiraEm) : NaN;
+  cache.set(chave, {
+    token: dados.token,
+    expiraEm: Number.isFinite(expira) ? expira : agora + 12 * 36e5
+  });
+  return { token: dados.token, erro: "" };
+}
+function esquecerToken(c) {
+  cache.delete(`${c.user}:${c.postingCard}`);
+}
+function explicar(r, onde = "auth") {
+  if (r.status === 401 || r.status === 403) {
+    return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
+  }
+  if (r.status === 400) {
+    const detalhe = detalheDoErro2(r.body);
+    if (detalhe !== "") return detalhe;
+    if (onde === "cotacao") {
+      return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Confira em "Servi\xE7os a cotar" se os c\xF3digos pertencem ao seu contrato \u2014 os de balc\xE3o (04510 PAC, 04014 Sedex) cotam sem contrato e servem para testar.';
+    }
+    return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
+  }
+  if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
+  return `Correios responderam HTTP ${r.status}.`;
+}
+function detalheDoErro2(body2) {
+  const limpo = String(body2 ?? "").trim();
+  if (limpo === "") return "";
+  try {
+    const d = JSON.parse(limpo);
+    const candidatos2 = [
+      d.msgs,
+      d.msg,
+      d.message,
+      d.txErro,
+      d.error,
+      d.descricao,
+      d.causa,
+      d.mensagem,
+      d.detail,
+      d.erros
+    ];
+    for (const c of candidatos2) {
+      if (Array.isArray(c) && c.length > 0) {
+        const partes = c.map((x) => {
+          if (typeof x === "string") return x;
+          const o = x;
+          return String(o?.descricao ?? o?.mensagem ?? o?.msg ?? JSON.stringify(x));
+        });
+        return partes.join(" \xB7 ").slice(0, 300);
+      }
+      if (typeof c === "string" && c.trim() !== "") return c.trim().slice(0, 300);
+    }
+    return limpo.slice(0, 300);
+  } catch {
+    return limpo.length <= 300 ? limpo : "";
+  }
+}
+function moeda(v) {
+  const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
+  const vazio = { servico, nome: nomeDoServico(servico), preco: 0, prazoDias: 0, erro: "" };
+  const { token, erro } = await autenticar(c);
+  if (erro) return { ...vazio, erro };
+  const origem = (c.originCep ?? "").replace(/\D/g, "");
+  const destino = String(cepDestino ?? "").replace(/\D/g, "");
+  if (origem.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
+  if (destino.length !== 8) return { ...vazio, erro: "CEP de destino inv\xE1lido." };
+  const produto = {
+    coProduto: servico,
+    nuRequisicao: "1",
+    cepOrigem: origem,
+    cepDestino: destino,
+    psObjeto: String(Math.max(300, Math.round(pesoGramas))),
+    tpObjeto: "2",
+    // pacote
+    comprimento: String(Math.max(16, dim.comprimento ?? 16)),
+    altura: String(Math.max(2, dim.altura ?? 5)),
+    largura: String(Math.max(11, dim.largura ?? 11))
+  };
+  const contrato = (c.contract ?? "").replace(/\D/g, "");
+  const dr = (c.dr ?? "").replace(/\D/g, "");
+  if (contrato !== "" && dr !== "") {
+    produto.nuContrato = contrato;
+    produto.nuDR = dr;
+  }
+  const corpo = { idLote: "1", parametrosProduto: [produto] };
+  const corpoPrazo = {
+    idLote: "1",
+    parametrosPrazo: [{
+      coProduto: servico,
+      nuRequisicao: "1",
+      cepOrigem: origem,
+      cepDestino: destino
+    }]
+  };
+  const auth = { Authorization: "Bearer " + token };
+  const [preco, prazo] = await Promise.all([
+    httpCall("POST", `${BASE}/preco/v1/nacional`, auth, corpo),
+    httpCall("POST", `${BASE}/prazo/v1/nacional`, auth, corpoPrazo)
+  ]);
+  if (preco.status === 401) {
+    esquecerToken(c);
+    return { ...vazio, erro: "Token expirado; tente de novo." };
+  }
+  if (!preco.ok) {
+    console.error(
+      `[queops] Correios recusaram a cota\xE7\xE3o de ${servico} (HTTP ${preco.status}):`,
+      String(preco.body ?? "").slice(0, 600)
+    );
+    return { ...vazio, erro: explicar(preco, "cotacao") };
+  }
+  try {
+    const p = JSON.parse(preco.body);
+    const item = Array.isArray(p) ? p[0] : null;
+    if (!item) return { ...vazio, erro: "Correios n\xE3o devolveram pre\xE7o." };
+    if (item.txErro) return { ...vazio, erro: String(item.txErro) };
+    let dias = 0;
+    if (prazo.ok) {
+      const q2 = JSON.parse(prazo.body);
+      dias = Number(q2?.[0]?.prazoEntrega ?? 0) || 0;
+      if (dias === 0) {
+        console.warn(
+          `[queops] Correios n\xE3o devolveram prazo para ${servico}:`,
+          String(prazo.body ?? "").slice(0, 300)
+        );
+      }
+    } else {
+      console.warn(
+        `[queops] falha ao consultar o prazo de ${servico} (HTTP ${prazo.status}):`,
+        String(prazo.body ?? "").slice(0, 300)
+      );
+    }
+    return {
+      servico,
+      nome: nomeDoServico(servico),
+      preco: moeda(item.pcFinal ?? item.pcBase),
+      prazoDias: dias,
+      erro: ""
+    };
+  } catch {
+    return { ...vazio, erro: "Resposta inesperada dos Correios ao cotar." };
+  }
+}
+async function cotarTodos(c, cepDestino, pesoGramas, dim) {
+  const servicos = servicesOf(c);
+  const todas = await Promise.all(servicos.map((s) => cotar2(c, s, cepDestino, pesoGramas, dim)));
+  const boas = todas.filter((x) => x.erro === "" && x.preco > 0);
+  return boas.length > 0 ? boas.sort((a, b) => a.preco - b.preco) : todas;
+}
+async function rastrear(c, codigo) {
+  const { token, erro } = await autenticar(c);
+  if (erro) return { eventos: [], erro };
+  const limpo = String(codigo ?? "").trim().toUpperCase().replace(/\s/g, "");
+  if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(limpo)) {
+    return { eventos: [], erro: "C\xF3digo de rastreio inv\xE1lido (formato AA123456789BR)." };
+  }
+  const r = await httpCall(
+    "GET",
+    `${BASE}/srorastro/v1/objetos/${limpo}?resultado=T`,
+    { Authorization: "Bearer " + token }
+  );
+  if (r.status === 401) {
+    esquecerToken(c);
+    return { eventos: [], erro: "Token expirado; tente de novo." };
+  }
+  if (!r.ok) return { eventos: [], erro: explicar(r, "rastreio") };
+  try {
+    const dados = JSON.parse(r.body);
+    const obj = dados.objetos?.[0];
+    if (!obj) return { eventos: [], erro: "Objeto n\xE3o encontrado." };
+    if (obj.mensagem) return { eventos: [], erro: String(obj.mensagem) };
+    const brutos = obj.eventos ?? [];
+    const eventos = brutos.map((e) => {
+      const u = e.unidade ?? {};
+      const end = u.endereco ?? {};
+      const cidade = String(end.cidade ?? "");
+      const uf = String(end.uf ?? "");
+      return {
+        data: String(e.dtHrCriado ?? ""),
+        descricao: String(e.descricao ?? ""),
+        local: cidade && uf ? `${cidade}/${uf}` : String(u.tipo ?? "")
+      };
+    });
+    return { eventos, erro: "" };
+  } catch {
+    return { eventos: [], erro: "Resposta inesperada dos Correios ao rastrear." };
+  }
+}
+var BASE, SERVICO_PAC, SERVICO_SEDEX, NOMES, cache, _internos;
+var init_correios = __esm({
+  "server/src/correios.ts"() {
+    "use strict";
+    init_providers();
+    BASE = "https://api.correios.com.br";
+    SERVICO_PAC = "03298";
+    SERVICO_SEDEX = "03220";
+    NOMES = {
+      "03298": "PAC",
+      "03220": "Sedex",
+      "03158": "Sedex 10",
+      "03204": "Sedex Hoje",
+      "04510": "PAC",
+      "04014": "Sedex"
+    };
+    __name(nomeDoServico, "nomeDoServico");
+    __name(credsFrom2, "credsFrom");
+    __name(servicesOf, "servicesOf");
+    cache = /* @__PURE__ */ new Map();
+    __name(autenticar, "autenticar");
+    __name(esquecerToken, "esquecerToken");
+    __name(explicar, "explicar");
+    __name(detalheDoErro2, "detalheDoErro");
+    _internos = { detalheDoErro: detalheDoErro2 };
+    __name(moeda, "moeda");
+    __name(cotar2, "cotar");
+    __name(cotarTodos, "cotarTodos");
+    __name(rastrear, "rastrear");
   }
 });
 
@@ -2069,6 +2071,600 @@ init_config();
 init_crypto();
 init_db();
 init_errors();
+
+// server/src/erp-produtos.ts
+init_db();
+init_http();
+
+// server/src/pricing.ts
+init_db();
+init_http();
+init_store();
+function normalizeCep(cep) {
+  const d = String(cep ?? "").replace(/\D/g, "");
+  return d.length === 8 ? d : "";
+}
+__name(normalizeCep, "normalizeCep");
+var CEP_RANGES = [
+  [1e3, 19999, "SP"],
+  [2e4, 28999, "RJ"],
+  [29e3, 29999, "ES"],
+  [3e4, 39999, "MG"],
+  [4e4, 48999, "BA"],
+  [49e3, 49999, "SE"],
+  [5e4, 56999, "PE"],
+  [57e3, 57999, "AL"],
+  [58e3, 58999, "PB"],
+  [59e3, 59999, "RN"],
+  [6e4, 63999, "CE"],
+  [64e3, 64999, "PI"],
+  [65e3, 65999, "MA"],
+  [66e3, 68899, "PA"],
+  [68900, 68999, "AP"],
+  [69e3, 69299, "AM"],
+  [69300, 69399, "RR"],
+  [69400, 69899, "AM"],
+  [69900, 69999, "AC"],
+  [7e4, 72799, "DF"],
+  [72800, 72999, "GO"],
+  [73e3, 73699, "DF"],
+  [73700, 76799, "GO"],
+  [76800, 76999, "RO"],
+  [77e3, 77999, "TO"],
+  [78e3, 78899, "MT"],
+  [79e3, 79999, "MS"],
+  [8e4, 87999, "PR"],
+  [88e3, 89999, "SC"],
+  [9e4, 99999, "RS"]
+];
+function ufFromCep(cep) {
+  const norm = normalizeCep(cep);
+  if (norm === "") return "";
+  const n = Number(norm.slice(0, 5));
+  for (const [from, to, uf] of CEP_RANGES) {
+    if (n >= from && n <= to) return uf;
+  }
+  return "";
+}
+__name(ufFromCep, "ufFromCep");
+function deliveryDaysFor(uf) {
+  switch (uf) {
+    case "SP":
+      return 3;
+    case "RJ":
+    case "MG":
+    case "ES":
+    case "PR":
+    case "SC":
+      return 4;
+    case "RS":
+    case "GO":
+    case "DF":
+    case "MS":
+    case "BA":
+      return 6;
+    case "":
+      return 7;
+    default:
+      return 8;
+  }
+}
+__name(deliveryDaysFor, "deliveryDaysFor");
+function calculateShipping(shipping, subtotal, ufRaw, cepRaw) {
+  const uf = String(ufRaw ?? "").toUpperCase().slice(0, 2);
+  const cep = normalizeCep(cepRaw);
+  const free = shipping.freeShipping ?? {};
+  const enabled = Boolean(free.enabled);
+  const minOrder = Number(free.minOrder ?? 0) || 0;
+  if (enabled && uf !== "" && (free.states ?? []).includes(uf)) {
+    return { cost: 0, reason: "free_state", label: `Frete gr\xE1tis para ${uf}` };
+  }
+  if (cep !== "") {
+    for (const range of shipping.cepRanges ?? []) {
+      const from = normalizeCep(String(range?.from ?? ""));
+      const to = normalizeCep(String(range?.to ?? ""));
+      if (from === "" || to === "") continue;
+      if (Number(cep) >= Number(from) && Number(cep) <= Number(to)) {
+        if (range.free) {
+          return { cost: 0, reason: "free_cep_range", label: String(range.label ?? "Frete gr\xE1tis") };
+        }
+        if (enabled && minOrder > 0 && subtotal >= minOrder) {
+          return { cost: 0, reason: "free_min_order", label: "Frete gr\xE1tis" };
+        }
+        return {
+          cost: round2(Number(range.price ?? 0) || 0),
+          reason: "cep_range",
+          label: String(range.label ?? "Entrega")
+        };
+      }
+    }
+  }
+  if (enabled && minOrder > 0 && subtotal > 0 && subtotal >= minOrder) {
+    return { cost: 0, reason: "free_min_order", label: "Frete gr\xE1tis" };
+  }
+  const perState = shipping.perState ?? {};
+  if (uf !== "" && Object.prototype.hasOwnProperty.call(perState, uf)) {
+    return { cost: round2(Number(perState[uf]) || 0), reason: "per_state", label: `Entrega para ${uf}` };
+  }
+  return {
+    cost: round2(Number(shipping.defaultPrice ?? 0) || 0),
+    reason: "default",
+    label: "Entrega padr\xE3o"
+  };
+}
+__name(calculateShipping, "calculateShipping");
+async function resolveCoupon(code, subtotal, exec = q, today = new Date(Date.now() - 3 * 36e5).toISOString().slice(0, 10)) {
+  const upper = String(code ?? "").trim().toUpperCase();
+  if (upper === "") return [null, null];
+  const row = await exec.one("SELECT * FROM coupons WHERE code = ?", [upper]);
+  if (row === null) return [null, "Cupom n\xE3o encontrado."];
+  if (!row.active) return [null, "Este cupom n\xE3o est\xE1 mais ativo."];
+  if (row.expires_at !== null && String(row.expires_at).slice(0, 10) < today) {
+    return [null, "Este cupom expirou."];
+  }
+  if (row.max_uses !== null && Number(row.uses) >= Number(row.max_uses)) {
+    return [null, "Este cupom atingiu o limite de usos."];
+  }
+  if (row.min_order !== null && subtotal < Number(row.min_order)) {
+    return [null, `Este cupom vale a partir de R$ ${brl(Number(row.min_order))}.`];
+  }
+  return [row, null];
+}
+__name(resolveCoupon, "resolveCoupon");
+function pesoDoCarrinho(items, found) {
+  const PADRAO_G = 500;
+  let total = 0;
+  for (const item of items) {
+    const bruto = String(found.get(item.productId)?.weight ?? "").trim().toLowerCase();
+    total += pesoEmGramas(bruto, PADRAO_G) * item.quantity;
+  }
+  return Math.max(300, Math.round(total));
+}
+__name(pesoDoCarrinho, "pesoDoCarrinho");
+async function opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
+  const pulou = /* @__PURE__ */ __name((motivo) => {
+    console.warn(`[queops] frete: Correios n\xE3o consultados \u2014 ${motivo}`);
+    diagnostico.motivo = motivo;
+    return null;
+  }, "pulou");
+  if (ship.reason.startsWith("free_")) return null;
+  if (normalizeCep(cep) === "") return pulou("CEP de destino inv\xE1lido");
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'correios' AND enabled = 1"
+    );
+    if (!row) return pulou("integra\xE7\xE3o desligada em Painel \u2192 Integra\xE7\xF5es");
+    const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
+    const { credsFrom: credsFrom3, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+    const creds = credsFrom3(await integrationSecrets2("correios", exec));
+    if (creds.user === "" || creds.accessCode === "") {
+      return pulou("usu\xE1rio ou c\xF3digo de acesso n\xE3o cadastrados");
+    }
+    if ((creds.originCep ?? "").length !== 8) {
+      return pulou("CEP de origem n\xE3o configurado no painel");
+    }
+    const cotacoes = await cotarTodos2(creds, cep, pesoGramas);
+    const boas = cotacoes.filter((c) => c.erro === "" && c.preco > 0);
+    if (boas.length === 0) {
+      const erros = cotacoes.map((c) => `${c.nome}: ${c.erro || "sem pre\xE7o"}`).join(" \xB7 ");
+      return pulou(`nenhum servi\xE7o cotou (${erros})`);
+    }
+    return boas.map((c) => ({
+      id: `correios:${c.servico}`,
+      label: c.nome,
+      carrier: "Correios",
+      price: round2(c.preco),
+      days: c.prazoDias,
+      source: "correios"
+    }));
+  } catch (e) {
+    return pulou(e instanceof Error ? e.message : String(e));
+  }
+}
+__name(opcoesDosCorreios, "opcoesDosCorreios");
+async function opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico) {
+  const pulou = /* @__PURE__ */ __name((motivo) => {
+    console.warn(`[queops] frete: Melhor Envio n\xE3o consultado \u2014 ${motivo}`);
+    diagnostico.motivo = diagnostico.motivo === "" ? `Melhor Envio: ${motivo}` : `${diagnostico.motivo} \xB7 Melhor Envio: ${motivo}`;
+    return null;
+  }, "pulou");
+  if (ship.reason.startsWith("free_")) return null;
+  if (normalizeCep(cep) === "") return null;
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'melhorenvio' AND enabled = 1"
+    );
+    if (!row) return null;
+    const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
+    const { credsFrom: credsFrom3, cotar: cotar3, servicosSelecionados: servicosSelecionados2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
+    const creds = credsFrom3(await integrationSecrets2("melhorenvio", exec));
+    if (creds.token === "") return pulou("token n\xE3o cadastrado");
+    if (creds.originCep.length !== 8) return pulou("CEP de origem n\xE3o configurado");
+    const selecionados = servicosSelecionados2(creds);
+    if (selecionados.length === 0) {
+      return pulou("nenhuma transportadora marcada em Painel \u2192 Integra\xE7\xF5es");
+    }
+    const paraCotar = itens.map((i) => ({
+      id: i.productId,
+      pesoGramas: pesoEmGramas(String(produtos.get(i.productId)?.weight ?? "")),
+      precoUnitario: i.unitPrice,
+      quantidade: i.quantity
+    }));
+    const { opcoes, erro } = await cotar3(creds, cep, paraCotar, selecionados);
+    if (erro !== "") return pulou(erro);
+    const boas = opcoes.filter((o) => o.erro === "" && o.preco > 0);
+    if (boas.length === 0) {
+      const motivos = opcoes.map((o) => `${o.nome}: ${o.erro || "sem pre\xE7o"}`).join(" \xB7 ");
+      return pulou(motivos === "" ? "nenhuma transportadora cotou" : `nenhuma cotou (${motivos})`);
+    }
+    return boas.map((o) => ({
+      id: `melhorenvio:${o.servico}`,
+      label: o.nome,
+      carrier: o.transportadora === "" ? "Melhor Envio" : o.transportadora,
+      price: round2(o.preco),
+      days: o.prazoDias,
+      source: "melhorenvio"
+    }));
+  } catch (e) {
+    return pulou(e instanceof Error ? e.message : String(e));
+  }
+}
+__name(opcoesDoMelhorEnvio, "opcoesDoMelhorEnvio");
+async function cotarTransportadoras(ship, cep, pesoGramas, itens, produtos, exec, diagnostico) {
+  const [correios, melhorEnvio] = await Promise.all([
+    opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico),
+    opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico)
+  ]);
+  const todas = [...correios ?? [], ...melhorEnvio ?? []];
+  return todas.sort((a, b) => a.price - b.price);
+}
+__name(cotarTransportadoras, "cotarTransportadoras");
+function pesoEmGramas(texto, padrao = 500) {
+  const m = texto.match(/([\d.,]+)\s*(kg|g|gramas?|quilos?)?/i);
+  if (!m) return padrao;
+  const bruto = m[1].replace(/\.(?=\d{3}\b)/g, "").replace(",", ".");
+  const n = Number(bruto);
+  if (!Number.isFinite(n) || n <= 0) return padrao;
+  const unidade = (m[2] ?? "").toLowerCase();
+  if (unidade === "") return n < 100 ? Math.round(n * 1e3) : Math.round(n);
+  if (unidade.startsWith("k") || unidade.startsWith("q")) return Math.round(n * 1e3);
+  return Math.round(n);
+}
+__name(pesoEmGramas, "pesoEmGramas");
+async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opcoes = {}) {
+  let uf = String(ufIn ?? "").trim().toUpperCase();
+  if (uf === "") uf = ufFromCep(cep);
+  const wanted = /* @__PURE__ */ new Map();
+  for (const item of Array.isArray(rawItems) ? rawItems : []) {
+    if (item === null || typeof item !== "object") continue;
+    const raw = item;
+    const id = String(raw.productId ?? raw.id ?? "");
+    const qty = Math.trunc(Number(raw.quantity ?? 0)) || 0;
+    if (id === "" || qty < 1) continue;
+    wanted.set(id, Math.min((wanted.get(id) ?? 0) + qty, 999));
+  }
+  if (wanted.size === 0) {
+    return {
+      items: [],
+      subtotal: 0,
+      shipping: 0,
+      shippingLabel: "",
+      couponDiscount: 0,
+      couponCode: null,
+      couponError: null,
+      pixDiscount: 0,
+      discount: 0,
+      total: 0,
+      uf,
+      deliveryDays: deliveryDaysFor(uf),
+      issues: ["Sacola vazia."]
+    };
+  }
+  const ids = [...wanted.keys()];
+  const rows = await exec.all(
+    `SELECT * FROM products WHERE id IN (${placeholders(ids.length)}) AND active = 1`,
+    ids
+  );
+  const found = new Map(rows.map((r) => [String(r.id), r]));
+  const items = [];
+  const issues = [];
+  let subtotal = 0;
+  for (const [id, qtyWanted] of wanted) {
+    const p = found.get(id);
+    if (!p) {
+      issues.push("Um item da sacola n\xE3o est\xE1 mais dispon\xEDvel e foi removido.");
+      continue;
+    }
+    const stock = Number(p.stock) || 0;
+    if (stock <= 0) {
+      issues.push(`\u201C${p.name}\u201D est\xE1 sem estoque e foi removido da sacola.`);
+      continue;
+    }
+    let qty = qtyWanted;
+    if (qty > stock) {
+      issues.push(`\u201C${p.name}\u201D: s\xF3 temos ${stock} em estoque, ajustamos a quantidade.`);
+      qty = stock;
+    }
+    const unit = Number(p.price) || 0;
+    subtotal += unit * qty;
+    items.push({
+      productId: String(p.id),
+      name: String(p.name),
+      quantity: qty,
+      unitPrice: unit,
+      lineTotal: round2(unit * qty),
+      image: String(p.image ?? "")
+    });
+  }
+  subtotal = round2(subtotal);
+  const ship = calculateShipping(await getShipping(exec), subtotal, uf, cep);
+  const diagnosticoFrete = { motivo: "" };
+  let shippingOptions = [];
+  let shippingChoice = "";
+  if (opcoes.freteFixado !== void 0) {
+    ship.cost = round2(opcoes.freteFixado.cost);
+    ship.label = opcoes.freteFixado.label;
+    ship.reason = opcoes.freteFixado.reason;
+    shippingChoice = opcoes.freteFixado.option;
+  } else {
+    const pesoTotal = pesoDoCarrinho(items, found);
+    shippingOptions = await cotarTransportadoras(
+      ship,
+      cep,
+      pesoTotal,
+      items,
+      found,
+      exec,
+      diagnosticoFrete
+    );
+    if (shippingOptions.length > 0) {
+      const pedida = shippingOptions.find((o) => o.id === (opcoes.escolha ?? ""));
+      const usada = pedida ?? shippingOptions[0];
+      ship.cost = usada.price;
+      ship.label = usada.days > 0 ? `${usada.label} \u2014 at\xE9 ${usada.days} ${usada.days === 1 ? "dia \xFAtil" : "dias \xFAteis"}` : usada.label;
+      ship.reason = usada.source;
+      shippingChoice = usada.id;
+    }
+  }
+  const [coupon, couponError] = await resolveCoupon(couponCode, subtotal, exec);
+  let couponDiscount = 0;
+  if (coupon !== null) {
+    couponDiscount = coupon.type === "percent" ? subtotal * (Number(coupon.value) / 100) : Number(coupon.value);
+    couponDiscount = round2(Math.min(couponDiscount, subtotal));
+  }
+  const settings = await getSettings(exec);
+  const pixPct = Number(settings.pixDiscountPct ?? 0) || 0;
+  const pixDiscount = payment === "pix" && pixPct > 0 ? round2(Math.max(0, subtotal - couponDiscount) * (pixPct / 100)) : 0;
+  const discount = round2(couponDiscount + pixDiscount);
+  const total = round2(Math.max(0, subtotal - discount) + ship.cost);
+  return {
+    items,
+    subtotal,
+    shipping: ship.cost,
+    shippingLabel: ship.label,
+    shippingReason: ship.reason,
+    shippingOptions,
+    shippingChoice,
+    /*
+     * Por que os Correios não entraram nesta cotação. Vazio quando entraram
+     * (ou quando o frete grátis do painel tinha precedência, que é regra e não
+     * falha). A rota só entrega este campo para administradores.
+     */
+    shippingNote: diagnosticoFrete.motivo,
+    couponCode: coupon?.code ?? null,
+    couponDiscount,
+    couponError,
+    pixDiscount,
+    pixDiscountPct: pixPct,
+    discount,
+    total,
+    uf,
+    deliveryDays: deliveryDaysFor(uf),
+    issues
+  };
+}
+__name(quoteCart, "quoteCart");
+
+// server/src/erp-produtos.ts
+var CAMPOS = {
+  sku: "sku",
+  name: "name",
+  category: "category",
+  subcategory: "subcategory",
+  categoryLabel: "category_label",
+  description: "description",
+  longDescription: "long_description",
+  price: "price",
+  oldPrice: "old_price",
+  stock: "stock",
+  image: "image",
+  weight: "weight",
+  tag: "tag",
+  ingredients: "ingredients",
+  highlight: "highlight",
+  active: "active"
+};
+var EXTRAS = /* @__PURE__ */ new Set(["id"]);
+function camposTravados(row) {
+  const bruto = String(row?.locked_fields ?? "");
+  return bruto.split(",").map((x) => x.trim()).filter((x) => x !== "");
+}
+__name(camposTravados, "camposTravados");
+function serializarTravas(campos) {
+  return [...new Set([...campos].filter((c) => c in CAMPOS))].sort().join(",").slice(0, 255);
+}
+__name(serializarTravas, "serializarTravas");
+function converter(campo, valor2) {
+  const texto = /* @__PURE__ */ __name((max) => ({ valor: String(valor2 ?? "").slice(0, max) }), "texto");
+  switch (campo) {
+    case "name": {
+      const n = String(valor2 ?? "").trim().slice(0, 255);
+      if (n === "") return { valor: null, erro: "name n\xE3o pode ser vazio" };
+      return { valor: n };
+    }
+    case "price":
+    case "oldPrice": {
+      const n = Number(valor2);
+      if (!Number.isFinite(n) || n < 0) {
+        return { valor: null, erro: `${campo} precisa ser um n\xFAmero maior ou igual a zero` };
+      }
+      if (campo === "oldPrice" && n === 0) return { valor: null };
+      return { valor: round2(n) };
+    }
+    case "stock": {
+      const n = Number(valor2);
+      if (!Number.isInteger(n) || n < 0) {
+        return { valor: null, erro: "stock precisa ser um inteiro maior ou igual a zero" };
+      }
+      return { valor: n };
+    }
+    case "image": {
+      const url = String(valor2 ?? "").slice(0, 500);
+      if (url !== "" && !safeImageUrl(url)) {
+        return { valor: null, erro: "image n\xE3o \xE9 um endere\xE7o de imagem aceito" };
+      }
+      return { valor: url };
+    }
+    case "weight": {
+      const bruto = String(valor2 ?? "").slice(0, 120);
+      if (bruto.trim() === "") return { valor: "" };
+      const gramas = pesoEmGramas(bruto, -1);
+      if (gramas <= 0) {
+        return {
+          valor: bruto,
+          aviso: `weight "${bruto}" n\xE3o foi reconhecido como peso; o frete vai usar o padr\xE3o. Use "1,2 kg" ou "800 g".`
+        };
+      }
+      return { valor: bruto };
+    }
+    case "highlight":
+    case "active":
+      return { valor: valor2 === true || valor2 === 1 || valor2 === "1" || valor2 === "true" ? 1 : 0 };
+    case "subcategory":
+    case "tag": {
+      const t = String(valor2 ?? "").trim().slice(0, 100);
+      return { valor: t === "" ? null : t };
+    }
+    case "sku":
+      return texto(64);
+    case "category":
+      return texto(100);
+    case "categoryLabel":
+      return texto(120);
+    case "description":
+    case "ingredients":
+      return texto(2e3);
+    case "longDescription":
+      return texto(2e4);
+    default:
+      return { valor: null, erro: "campo n\xE3o grav\xE1vel" };
+  }
+}
+__name(converter, "converter");
+async function gravarProdutoDoErp(id, dto, exec = q) {
+  const resultado = {
+    id,
+    ok: false,
+    criado: false,
+    applied: [],
+    ignored: [],
+    warnings: []
+  };
+  if (id === "" || id.length > 100) {
+    resultado.error = { code: "invalid_id", message: "Informe um id de at\xE9 100 caracteres." };
+    return resultado;
+  }
+  const atual = await exec.one("SELECT * FROM products WHERE id = ?", [id]);
+  const travados = new Set(camposTravados(atual));
+  const criando = atual === null;
+  const colunas = [];
+  const valores = [];
+  for (const [campo, valor2] of Object.entries(dto)) {
+    if (EXTRAS.has(campo)) continue;
+    if (!(campo in CAMPOS)) {
+      resultado.warnings.push(`campo "${campo}" n\xE3o \xE9 grav\xE1vel e foi ignorado`);
+      continue;
+    }
+    if (travados.has(campo)) {
+      resultado.ignored.push({ field: campo, reason: "locked_in_panel" });
+      continue;
+    }
+    const { valor: convertido, erro, aviso } = converter(campo, valor2);
+    if (erro !== void 0) {
+      resultado.error = { code: "invalid_field", message: erro };
+      return resultado;
+    }
+    if (aviso !== void 0) resultado.warnings.push(aviso);
+    colunas.push(CAMPOS[campo]);
+    valores.push(convertido);
+    resultado.applied.push(campo);
+  }
+  if (criando && !resultado.applied.includes("name")) {
+    resultado.error = {
+      code: "missing_name",
+      message: 'Produto novo precisa de "name". Para atualizar um existente, confira o id.'
+    };
+    return resultado;
+  }
+  if (colunas.length === 0) {
+    resultado.ok = true;
+    return resultado;
+  }
+  if (criando) {
+    await exec.run(
+      `INSERT INTO products (id, ${colunas.join(", ")}) VALUES (?${", ?".repeat(colunas.length)})`,
+      [id, ...valores]
+    );
+    resultado.criado = true;
+  } else {
+    await exec.run(
+      `UPDATE products SET ${colunas.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`,
+      [...valores, id]
+    );
+  }
+  const categoria = String(dto.category ?? (atual?.category ?? ""));
+  if (categoria !== "") {
+    const existe = await exec.one("SELECT id FROM categories WHERE id = ?", [categoria]);
+    if (existe === null) {
+      resultado.warnings.push(
+        `a categoria "${categoria}" n\xE3o existe na loja: o produto n\xE3o vai aparecer no menu. Cadastre a categoria no painel ou use uma existente.`
+      );
+    }
+  }
+  resultado.ok = true;
+  return resultado;
+}
+__name(gravarProdutoDoErp, "gravarProdutoDoErp");
+async function travarCamposEditados(id, dto, antes, exec = q) {
+  if (antes === null) return [];
+  const mudados = [];
+  for (const [campo, valor2] of Object.entries(dto)) {
+    if (!(campo in CAMPOS)) continue;
+    const { valor: convertido, erro } = converter(campo, valor2);
+    if (erro !== void 0) continue;
+    const anterior = antes[CAMPOS[campo]];
+    const iguais = convertido === null || anterior === null ? convertido === anterior || convertido === null && anterior === null : String(Number.isFinite(Number(anterior)) && typeof convertido === "number" ? Number(anterior) : anterior) === String(convertido);
+    if (!iguais) mudados.push(campo);
+  }
+  if (mudados.length === 0) return camposTravados(antes);
+  const todos = serializarTravas([...camposTravados(antes), ...mudados]);
+  await exec.run("UPDATE products SET locked_fields = ? WHERE id = ?", [todos, id]);
+  return todos.split(",").filter((x) => x !== "");
+}
+__name(travarCamposEditados, "travarCamposEditados");
+async function destravarCampos(id, campos, exec = q) {
+  const atual = await exec.one("SELECT locked_fields FROM products WHERE id = ?", [id]);
+  if (atual === null) return [];
+  const restantes = campos === null ? [] : camposTravados(atual).filter((c) => !campos.includes(c));
+  await exec.run("UPDATE products SET locked_fields = ? WHERE id = ?", [
+    serializarTravas(restantes),
+    id
+  ]);
+  return restantes;
+}
+__name(destravarCampos, "destravarCampos");
+
+// server/src/routes/admin.ts
 init_http();
 init_providers();
 init_store();
@@ -2200,7 +2796,7 @@ adminRoutes.post("/products", h(async (req, res) => {
   if (price < 0) fail("Pre\xE7o n\xE3o pode ser negativo.", 422, "invalid_price");
   const image = bodyStr(b, "image", "", 500);
   if (image !== "" && !safeImageUrl(image)) fail("Endere\xE7o de imagem inv\xE1lido.", 422, "invalid_image");
-  const atual = await q.one("SELECT active FROM products WHERE id = ?", [id]);
+  const atual = await q.one("SELECT * FROM products WHERE id = ?", [id]);
   await q.run(
     `INSERT INTO products (
         id, sku, name, category, subcategory, category_label, description, long_description,
@@ -2234,8 +2830,18 @@ adminRoutes.post("/products", h(async (req, res) => {
       bodyBool(b, "active", atual === null || Boolean(atual.active)) ? 1 : 0
     ]
   );
+  const travados = await travarCamposEditados(id, b, atual);
   const row = await q.one("SELECT * FROM products WHERE id = ?", [id]);
-  jsonOk(res, { product: productRowToApi(row) });
+  jsonOk(res, { product: productRowToApi(row), lockedFields: travados });
+}));
+adminRoutes.delete("/products/:id/locks", h(async (req, res) => {
+  await requireAdmin(req);
+  const pedidos = queryStr(req, "fields", "", 255).split(",").map((x) => x.trim()).filter((x) => x !== "");
+  const restantes = await destravarCampos(
+    String(req.params.id ?? ""),
+    pedidos.length > 0 ? pedidos : null
+  );
+  jsonOk(res, { ok: true, lockedFields: restantes });
 }));
 adminRoutes.delete("/products/:id", h(async (req, res) => {
   await requireAdmin(req);
@@ -2749,395 +3355,6 @@ async function cancelarSemCobranca(orderId, motivo) {
 }
 __name(cancelarSemCobranca, "cancelarSemCobranca");
 
-// server/src/pricing.ts
-init_db();
-init_http();
-init_store();
-function normalizeCep(cep) {
-  const d = String(cep ?? "").replace(/\D/g, "");
-  return d.length === 8 ? d : "";
-}
-__name(normalizeCep, "normalizeCep");
-var CEP_RANGES = [
-  [1e3, 19999, "SP"],
-  [2e4, 28999, "RJ"],
-  [29e3, 29999, "ES"],
-  [3e4, 39999, "MG"],
-  [4e4, 48999, "BA"],
-  [49e3, 49999, "SE"],
-  [5e4, 56999, "PE"],
-  [57e3, 57999, "AL"],
-  [58e3, 58999, "PB"],
-  [59e3, 59999, "RN"],
-  [6e4, 63999, "CE"],
-  [64e3, 64999, "PI"],
-  [65e3, 65999, "MA"],
-  [66e3, 68899, "PA"],
-  [68900, 68999, "AP"],
-  [69e3, 69299, "AM"],
-  [69300, 69399, "RR"],
-  [69400, 69899, "AM"],
-  [69900, 69999, "AC"],
-  [7e4, 72799, "DF"],
-  [72800, 72999, "GO"],
-  [73e3, 73699, "DF"],
-  [73700, 76799, "GO"],
-  [76800, 76999, "RO"],
-  [77e3, 77999, "TO"],
-  [78e3, 78899, "MT"],
-  [79e3, 79999, "MS"],
-  [8e4, 87999, "PR"],
-  [88e3, 89999, "SC"],
-  [9e4, 99999, "RS"]
-];
-function ufFromCep(cep) {
-  const norm = normalizeCep(cep);
-  if (norm === "") return "";
-  const n = Number(norm.slice(0, 5));
-  for (const [from, to, uf] of CEP_RANGES) {
-    if (n >= from && n <= to) return uf;
-  }
-  return "";
-}
-__name(ufFromCep, "ufFromCep");
-function deliveryDaysFor(uf) {
-  switch (uf) {
-    case "SP":
-      return 3;
-    case "RJ":
-    case "MG":
-    case "ES":
-    case "PR":
-    case "SC":
-      return 4;
-    case "RS":
-    case "GO":
-    case "DF":
-    case "MS":
-    case "BA":
-      return 6;
-    case "":
-      return 7;
-    default:
-      return 8;
-  }
-}
-__name(deliveryDaysFor, "deliveryDaysFor");
-function calculateShipping(shipping, subtotal, ufRaw, cepRaw) {
-  const uf = String(ufRaw ?? "").toUpperCase().slice(0, 2);
-  const cep = normalizeCep(cepRaw);
-  const free = shipping.freeShipping ?? {};
-  const enabled = Boolean(free.enabled);
-  const minOrder = Number(free.minOrder ?? 0) || 0;
-  if (enabled && uf !== "" && (free.states ?? []).includes(uf)) {
-    return { cost: 0, reason: "free_state", label: `Frete gr\xE1tis para ${uf}` };
-  }
-  if (cep !== "") {
-    for (const range of shipping.cepRanges ?? []) {
-      const from = normalizeCep(String(range?.from ?? ""));
-      const to = normalizeCep(String(range?.to ?? ""));
-      if (from === "" || to === "") continue;
-      if (Number(cep) >= Number(from) && Number(cep) <= Number(to)) {
-        if (range.free) {
-          return { cost: 0, reason: "free_cep_range", label: String(range.label ?? "Frete gr\xE1tis") };
-        }
-        if (enabled && minOrder > 0 && subtotal >= minOrder) {
-          return { cost: 0, reason: "free_min_order", label: "Frete gr\xE1tis" };
-        }
-        return {
-          cost: round2(Number(range.price ?? 0) || 0),
-          reason: "cep_range",
-          label: String(range.label ?? "Entrega")
-        };
-      }
-    }
-  }
-  if (enabled && minOrder > 0 && subtotal > 0 && subtotal >= minOrder) {
-    return { cost: 0, reason: "free_min_order", label: "Frete gr\xE1tis" };
-  }
-  const perState = shipping.perState ?? {};
-  if (uf !== "" && Object.prototype.hasOwnProperty.call(perState, uf)) {
-    return { cost: round2(Number(perState[uf]) || 0), reason: "per_state", label: `Entrega para ${uf}` };
-  }
-  return {
-    cost: round2(Number(shipping.defaultPrice ?? 0) || 0),
-    reason: "default",
-    label: "Entrega padr\xE3o"
-  };
-}
-__name(calculateShipping, "calculateShipping");
-async function resolveCoupon(code, subtotal, exec = q, today = new Date(Date.now() - 3 * 36e5).toISOString().slice(0, 10)) {
-  const upper = String(code ?? "").trim().toUpperCase();
-  if (upper === "") return [null, null];
-  const row = await exec.one("SELECT * FROM coupons WHERE code = ?", [upper]);
-  if (row === null) return [null, "Cupom n\xE3o encontrado."];
-  if (!row.active) return [null, "Este cupom n\xE3o est\xE1 mais ativo."];
-  if (row.expires_at !== null && String(row.expires_at).slice(0, 10) < today) {
-    return [null, "Este cupom expirou."];
-  }
-  if (row.max_uses !== null && Number(row.uses) >= Number(row.max_uses)) {
-    return [null, "Este cupom atingiu o limite de usos."];
-  }
-  if (row.min_order !== null && subtotal < Number(row.min_order)) {
-    return [null, `Este cupom vale a partir de R$ ${brl(Number(row.min_order))}.`];
-  }
-  return [row, null];
-}
-__name(resolveCoupon, "resolveCoupon");
-function pesoDoCarrinho(items, found) {
-  const PADRAO_G = 500;
-  let total = 0;
-  for (const item of items) {
-    const bruto = String(found.get(item.productId)?.weight ?? "").trim().toLowerCase();
-    total += pesoEmGramas(bruto, PADRAO_G) * item.quantity;
-  }
-  return Math.max(300, Math.round(total));
-}
-__name(pesoDoCarrinho, "pesoDoCarrinho");
-async function opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
-  const pulou = /* @__PURE__ */ __name((motivo) => {
-    console.warn(`[queops] frete: Correios n\xE3o consultados \u2014 ${motivo}`);
-    diagnostico.motivo = motivo;
-    return null;
-  }, "pulou");
-  if (ship.reason.startsWith("free_")) return null;
-  if (normalizeCep(cep) === "") return pulou("CEP de destino inv\xE1lido");
-  try {
-    const row = await exec.one(
-      "SELECT enabled FROM integrations WHERE id = 'correios' AND enabled = 1"
-    );
-    if (!row) return pulou("integra\xE7\xE3o desligada em Painel \u2192 Integra\xE7\xF5es");
-    const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
-    const { credsFrom: credsFrom3, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
-    const creds = credsFrom3(await integrationSecrets2("correios", exec));
-    if (creds.user === "" || creds.accessCode === "") {
-      return pulou("usu\xE1rio ou c\xF3digo de acesso n\xE3o cadastrados");
-    }
-    if ((creds.originCep ?? "").length !== 8) {
-      return pulou("CEP de origem n\xE3o configurado no painel");
-    }
-    const cotacoes = await cotarTodos2(creds, cep, pesoGramas);
-    const boas = cotacoes.filter((c) => c.erro === "" && c.preco > 0);
-    if (boas.length === 0) {
-      const erros = cotacoes.map((c) => `${c.nome}: ${c.erro || "sem pre\xE7o"}`).join(" \xB7 ");
-      return pulou(`nenhum servi\xE7o cotou (${erros})`);
-    }
-    return boas.map((c) => ({
-      id: `correios:${c.servico}`,
-      label: c.nome,
-      carrier: "Correios",
-      price: round2(c.preco),
-      days: c.prazoDias,
-      source: "correios"
-    }));
-  } catch (e) {
-    return pulou(e instanceof Error ? e.message : String(e));
-  }
-}
-__name(opcoesDosCorreios, "opcoesDosCorreios");
-async function opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico) {
-  const pulou = /* @__PURE__ */ __name((motivo) => {
-    console.warn(`[queops] frete: Melhor Envio n\xE3o consultado \u2014 ${motivo}`);
-    diagnostico.motivo = diagnostico.motivo === "" ? `Melhor Envio: ${motivo}` : `${diagnostico.motivo} \xB7 Melhor Envio: ${motivo}`;
-    return null;
-  }, "pulou");
-  if (ship.reason.startsWith("free_")) return null;
-  if (normalizeCep(cep) === "") return null;
-  try {
-    const row = await exec.one(
-      "SELECT enabled FROM integrations WHERE id = 'melhorenvio' AND enabled = 1"
-    );
-    if (!row) return null;
-    const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
-    const { credsFrom: credsFrom3, cotar: cotar3, servicosSelecionados: servicosSelecionados2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
-    const creds = credsFrom3(await integrationSecrets2("melhorenvio", exec));
-    if (creds.token === "") return pulou("token n\xE3o cadastrado");
-    if (creds.originCep.length !== 8) return pulou("CEP de origem n\xE3o configurado");
-    const selecionados = servicosSelecionados2(creds);
-    if (selecionados.length === 0) {
-      return pulou("nenhuma transportadora marcada em Painel \u2192 Integra\xE7\xF5es");
-    }
-    const paraCotar = itens.map((i) => ({
-      id: i.productId,
-      pesoGramas: pesoEmGramas(String(produtos.get(i.productId)?.weight ?? "")),
-      precoUnitario: i.unitPrice,
-      quantidade: i.quantity
-    }));
-    const { opcoes, erro } = await cotar3(creds, cep, paraCotar, selecionados);
-    if (erro !== "") return pulou(erro);
-    const boas = opcoes.filter((o) => o.erro === "" && o.preco > 0);
-    if (boas.length === 0) {
-      const motivos = opcoes.map((o) => `${o.nome}: ${o.erro || "sem pre\xE7o"}`).join(" \xB7 ");
-      return pulou(motivos === "" ? "nenhuma transportadora cotou" : `nenhuma cotou (${motivos})`);
-    }
-    return boas.map((o) => ({
-      id: `melhorenvio:${o.servico}`,
-      label: o.nome,
-      carrier: o.transportadora === "" ? "Melhor Envio" : o.transportadora,
-      price: round2(o.preco),
-      days: o.prazoDias,
-      source: "melhorenvio"
-    }));
-  } catch (e) {
-    return pulou(e instanceof Error ? e.message : String(e));
-  }
-}
-__name(opcoesDoMelhorEnvio, "opcoesDoMelhorEnvio");
-async function cotarTransportadoras(ship, cep, pesoGramas, itens, produtos, exec, diagnostico) {
-  const [correios, melhorEnvio] = await Promise.all([
-    opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico),
-    opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico)
-  ]);
-  const todas = [...correios ?? [], ...melhorEnvio ?? []];
-  return todas.sort((a, b) => a.price - b.price);
-}
-__name(cotarTransportadoras, "cotarTransportadoras");
-function pesoEmGramas(texto, padrao = 500) {
-  const m = texto.match(/([\d.,]+)\s*(kg|g|gramas?|quilos?)?/i);
-  if (!m) return padrao;
-  const bruto = m[1].replace(/\.(?=\d{3}\b)/g, "").replace(",", ".");
-  const n = Number(bruto);
-  if (!Number.isFinite(n) || n <= 0) return padrao;
-  const unidade = (m[2] ?? "").toLowerCase();
-  if (unidade === "") return n < 100 ? Math.round(n * 1e3) : Math.round(n);
-  if (unidade.startsWith("k") || unidade.startsWith("q")) return Math.round(n * 1e3);
-  return Math.round(n);
-}
-__name(pesoEmGramas, "pesoEmGramas");
-async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opcoes = {}) {
-  let uf = String(ufIn ?? "").trim().toUpperCase();
-  if (uf === "") uf = ufFromCep(cep);
-  const wanted = /* @__PURE__ */ new Map();
-  for (const item of Array.isArray(rawItems) ? rawItems : []) {
-    if (item === null || typeof item !== "object") continue;
-    const raw = item;
-    const id = String(raw.productId ?? raw.id ?? "");
-    const qty = Math.trunc(Number(raw.quantity ?? 0)) || 0;
-    if (id === "" || qty < 1) continue;
-    wanted.set(id, Math.min((wanted.get(id) ?? 0) + qty, 999));
-  }
-  if (wanted.size === 0) {
-    return {
-      items: [],
-      subtotal: 0,
-      shipping: 0,
-      shippingLabel: "",
-      couponDiscount: 0,
-      couponCode: null,
-      couponError: null,
-      pixDiscount: 0,
-      discount: 0,
-      total: 0,
-      uf,
-      deliveryDays: deliveryDaysFor(uf),
-      issues: ["Sacola vazia."]
-    };
-  }
-  const ids = [...wanted.keys()];
-  const rows = await exec.all(
-    `SELECT * FROM products WHERE id IN (${placeholders(ids.length)}) AND active = 1`,
-    ids
-  );
-  const found = new Map(rows.map((r) => [String(r.id), r]));
-  const items = [];
-  const issues = [];
-  let subtotal = 0;
-  for (const [id, qtyWanted] of wanted) {
-    const p = found.get(id);
-    if (!p) {
-      issues.push("Um item da sacola n\xE3o est\xE1 mais dispon\xEDvel e foi removido.");
-      continue;
-    }
-    const stock = Number(p.stock) || 0;
-    if (stock <= 0) {
-      issues.push(`\u201C${p.name}\u201D est\xE1 sem estoque e foi removido da sacola.`);
-      continue;
-    }
-    let qty = qtyWanted;
-    if (qty > stock) {
-      issues.push(`\u201C${p.name}\u201D: s\xF3 temos ${stock} em estoque, ajustamos a quantidade.`);
-      qty = stock;
-    }
-    const unit = Number(p.price) || 0;
-    subtotal += unit * qty;
-    items.push({
-      productId: String(p.id),
-      name: String(p.name),
-      quantity: qty,
-      unitPrice: unit,
-      lineTotal: round2(unit * qty),
-      image: String(p.image ?? "")
-    });
-  }
-  subtotal = round2(subtotal);
-  const ship = calculateShipping(await getShipping(exec), subtotal, uf, cep);
-  const diagnosticoFrete = { motivo: "" };
-  let shippingOptions = [];
-  let shippingChoice = "";
-  if (opcoes.freteFixado !== void 0) {
-    ship.cost = round2(opcoes.freteFixado.cost);
-    ship.label = opcoes.freteFixado.label;
-    ship.reason = opcoes.freteFixado.reason;
-    shippingChoice = opcoes.freteFixado.option;
-  } else {
-    const pesoTotal = pesoDoCarrinho(items, found);
-    shippingOptions = await cotarTransportadoras(
-      ship,
-      cep,
-      pesoTotal,
-      items,
-      found,
-      exec,
-      diagnosticoFrete
-    );
-    if (shippingOptions.length > 0) {
-      const pedida = shippingOptions.find((o) => o.id === (opcoes.escolha ?? ""));
-      const usada = pedida ?? shippingOptions[0];
-      ship.cost = usada.price;
-      ship.label = usada.days > 0 ? `${usada.label} \u2014 at\xE9 ${usada.days} ${usada.days === 1 ? "dia \xFAtil" : "dias \xFAteis"}` : usada.label;
-      ship.reason = usada.source;
-      shippingChoice = usada.id;
-    }
-  }
-  const [coupon, couponError] = await resolveCoupon(couponCode, subtotal, exec);
-  let couponDiscount = 0;
-  if (coupon !== null) {
-    couponDiscount = coupon.type === "percent" ? subtotal * (Number(coupon.value) / 100) : Number(coupon.value);
-    couponDiscount = round2(Math.min(couponDiscount, subtotal));
-  }
-  const settings = await getSettings(exec);
-  const pixPct = Number(settings.pixDiscountPct ?? 0) || 0;
-  const pixDiscount = payment === "pix" && pixPct > 0 ? round2(Math.max(0, subtotal - couponDiscount) * (pixPct / 100)) : 0;
-  const discount = round2(couponDiscount + pixDiscount);
-  const total = round2(Math.max(0, subtotal - discount) + ship.cost);
-  return {
-    items,
-    subtotal,
-    shipping: ship.cost,
-    shippingLabel: ship.label,
-    shippingReason: ship.reason,
-    shippingOptions,
-    shippingChoice,
-    /*
-     * Por que os Correios não entraram nesta cotação. Vazio quando entraram
-     * (ou quando o frete grátis do painel tinha precedência, que é regra e não
-     * falha). A rota só entrega este campo para administradores.
-     */
-    shippingNote: diagnosticoFrete.motivo,
-    couponCode: coupon?.code ?? null,
-    couponDiscount,
-    couponError,
-    pixDiscount,
-    pixDiscountPct: pixPct,
-    discount,
-    total,
-    uf,
-    deliveryDays: deliveryDaysFor(uf),
-    issues
-  };
-}
-__name(quoteCart, "quoteCart");
-
 // server/src/routes/public.ts
 init_providers();
 init_store();
@@ -3578,14 +3795,69 @@ v1Routes.get("/products/:id", h(async (req, res) => {
   if (row === null) fail("Produto n\xE3o encontrado.", 404, "not_found");
   jsonOk(res, { product: productRowToApi(row) });
 }));
+v1Routes.put("/products/:id", h(async (req, res) => {
+  await requireApiKey(req);
+  const resultado = await gravarProdutoDoErp(String(req.params.id ?? ""), body(req));
+  if (!resultado.ok) {
+    fail(
+      resultado.error?.message ?? "N\xE3o foi poss\xEDvel gravar o produto.",
+      422,
+      resultado.error?.code ?? "invalid_product"
+    );
+  }
+  jsonOk(res, resultado, resultado.criado ? 201 : 200);
+}));
+v1Routes.post("/products/batch", h(async (req, res) => {
+  await requireApiKey(req);
+  const b = body(req);
+  const lista = Array.isArray(b.products) ? b.products : null;
+  if (lista === null) fail('Envie {"products": [...]}.', 422, "invalid_batch");
+  if (lista.length === 0) fail("A lista est\xE1 vazia.", 422, "invalid_batch");
+  if (lista.length > LOTE_MAXIMO) {
+    fail(`M\xE1ximo de ${LOTE_MAXIMO} produtos por chamada.`, 422, "batch_too_large");
+  }
+  const resultados = [];
+  for (const bruto of lista) {
+    if (bruto === null || typeof bruto !== "object" || Array.isArray(bruto)) {
+      resultados.push({
+        id: "",
+        ok: false,
+        criado: false,
+        applied: [],
+        ignored: [],
+        warnings: [],
+        error: { code: "invalid_product", message: "Cada item precisa ser um objeto." }
+      });
+      continue;
+    }
+    const dto = bruto;
+    resultados.push(await gravarProdutoDoErp(String(dto.id ?? ""), dto));
+  }
+  jsonOk(res, {
+    total: resultados.length,
+    gravados: resultados.filter((r) => r.ok).length,
+    falhas: resultados.filter((r) => !r.ok).length,
+    results: resultados
+  });
+}));
+var LOTE_MAXIMO = 200;
 v1Routes.patch("/products/:id/stock", h(async (req, res) => {
   await requireApiKey(req);
+  const id = String(req.params.id ?? "");
   const stock = bodyInt(body(req), "stock", -1);
   if (stock < 0) fail('Informe "stock" como um inteiro n\xE3o negativo.', 422, "invalid_stock");
-  if (await q.run("UPDATE products SET stock = ? WHERE id = ?", [stock, req.params.id]) === 0) {
+  if (await q.one("SELECT id FROM products WHERE id = ?", [id]) === null) {
     fail("Produto n\xE3o encontrado.", 404, "not_found");
   }
-  jsonOk(res, { ok: true, id: req.params.id, stock });
+  const r = await gravarProdutoDoErp(id, { stock });
+  jsonOk(res, {
+    ok: true,
+    id,
+    stock,
+    applied: r.applied,
+    ignored: r.ignored,
+    warnings: r.warnings
+  });
 }));
 v1Routes.get("/orders", h(async (req, res) => {
   await requireApiKey(req);

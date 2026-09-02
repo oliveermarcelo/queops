@@ -202,6 +202,16 @@ export function productRowToApi(r: Row): Record<string, unknown> {
   if (r.tag) out.tag = r.tag;
   if (r.ingredients) out.ingredients = r.ingredients;
   if (r.highlight) out.highlight = true;
+  /*
+   * Campos travados contra o ERP (ver erp-produtos.ts). Só aparece quando há
+   * algum: um array vazio em cada um dos 1.400 produtos seria ruído em toda
+   * resposta da vitrine.
+   *
+   * Serve ao ERP também — ele consulta antes de enviar e descobre, sem
+   * tentativa e erro, que aquele preço não vai ser aceito.
+   */
+  const travados = String(r.locked_fields ?? '').split(',').filter((x) => x !== '');
+  if (travados.length > 0) out.lockedFields = travados;
   return out;
 }
 
