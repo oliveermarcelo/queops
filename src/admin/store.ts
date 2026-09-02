@@ -15,6 +15,7 @@ import { Product } from '../types';
 import {
   AdminState, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
   IntegrationId, AbandonedStatus, RecoveryConfig, ShippingConfig, TrackingEvent, Webhook,
+  PanelUser,
 } from './types';
 
 /** Estado completo do painel numa requisição só. */
@@ -127,4 +128,32 @@ export function addWebhook(webhook: Omit<Webhook, 'id'>): Promise<void> {
 
 export function removeWebhook(id: string): Promise<void> {
   return api.del(`/admin/webhooks/${encodeURIComponent(id)}`);
+}
+
+// ------------------------------------------------ usuários do painel -----
+
+/**
+ * As rotas de usuário devolvem a lista inteira já atualizada.
+ *
+ * É de propósito: nesta tela um clique muda o que os outros cliques podem
+ * fazer (desativar o penúltimo usuário faz o último deixar de ser desativável).
+ * Devolver a lista de volta mantém a tela e o servidor com a mesma verdade,
+ * sem uma segunda ida ao servidor entre um clique e o próximo.
+ */
+export function createPanelUser(input: {
+  name: string; email: string; password: string;
+}): Promise<{ id: string; users: PanelUser[] }> {
+  return api.post<{ id: string; users: PanelUser[] }>('/admin/users', input);
+}
+
+export function updatePanelUser(
+  id: string,
+  patch: { name?: string; email?: string; active?: boolean; password?: string },
+): Promise<{ users: PanelUser[] }> {
+  return api.patch<{ users: PanelUser[] }>(`/admin/users/${encodeURIComponent(id)}`, patch);
+}
+
+/** Trocar a própria senha exige a atual — a sessão aberta não basta. */
+export function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
+  return api.put('/admin/me/password', { currentPassword, newPassword });
 }

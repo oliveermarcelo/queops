@@ -17,7 +17,7 @@ import React, {
 import { Product } from '../types';
 import {
   AdminState, Order, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
-  IntegrationId, AbandonedStatus, RecoveryConfig, Webhook, ShippingConfig,
+  IntegrationId, AbandonedStatus, RecoveryConfig, Webhook, ShippingConfig, PanelUser,
 } from './types';
 import * as store from './store';
 
@@ -46,6 +46,22 @@ interface AdminContextValue {
   addWebhook: (w: Omit<Webhook, 'id'>) => Promise<void>;
   removeWebhook: (id: string) => Promise<void>;
   updateShipping: (patch: Partial<ShippingConfig>) => Promise<void>;
+
+  /**
+   * As ações de usuário NÃO usam resposta otimista, e isso é deliberado.
+   *
+   * No resto do painel, mostrar a mudança antes da confirmação custa pouco: se
+   * o servidor recusar, o estado recarrega e o operador tenta de novo. Aqui a
+   * mudança é sobre quem consegue entrar. Uma tela que mostra "usuário criado"
+   * antes da confirmação convida o dono a fechar o navegador e passar uma senha
+   * que não existe — e a descobrir isso pela pessoa que não conseguiu entrar.
+   * Então estas quatro esperam o servidor e propagam o erro para quem chamou.
+   */
+  createPanelUser: (input: { name: string; email: string; password: string }) => Promise<void>;
+  renamePanelUser: (id: string, patch: { name?: string; email?: string }) => Promise<void>;
+  setPanelUserActive: (id: string, active: boolean) => Promise<void>;
+  resetPanelUserPassword: (id: string, password: string) => Promise<void>;
+  changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
 const Ctx = createContext<AdminContextValue | null>(null);
@@ -61,7 +77,7 @@ const EMPTY: AdminState = {
   },
   integrations: {} as AdminState['integrations'],
   abandonedCarts: [], recovery: { enabled: false, delayMinutes: 60, message: '', couponCode: '' },
-  apiKeys: [], webhooks: [],
+  apiKeys: [], webhooks: [], users: [],
   shipping: {
     defaultPrice: 0, perState: {}, cepRanges: [],
     freeShipping: { enabled: false, minOrder: 0, states: [] },
@@ -115,6 +131,11 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     },
     [refresh],
   );
+
+  /** Grava a lista de usuários que a rota devolveu, sem tocar no resto. */
+  const aplicarUsuarios = useCallback((users: PanelUser[]) => {
+    if (alive.current) setState((s) => ({ ...s, users }));
+  }, []);
 
   const value = useMemo<AdminContextValue>(
     () => ({
@@ -243,8 +264,32 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           (s) => ({ ...s, webhooks: s.webhooks.filter((w) => w.id !== id) }),
           () => store.removeWebhook(id),
         ),
+
+      // As rotas devolvem a lista já atualizada, então a tela não precisa
+      // adivinhar o resultado nem esperar um /state inteiro para acertar.
+      createPanelUser: async (input) => {
+        const { users } = await store.createPanelUser(input);
+        aplicarUsuarios(users);
+      },
+
+      renamePanelUser: async (id, patch) => {
+        const { users } = await store.updatePanelUser(id, patch);
+        aplicarUsuarios(users);
+      },
+
+      setPanelUserActive: async (id, active) => {
+        const { users } = await store.updatePanelUser(id, { active });
+        aplicarUsuarios(users);
+      },
+
+      resetPanelUserPassword: async (id, password) => {
+        const { users } = await store.updatePanelUser(id, { password });
+        aplicarUsuarios(users);
+      },
+
+      changeOwnPassword: (atual, nova) => store.changeOwnPassword(atual, nova),
     }),
-    [state, loading, error, mutate, refresh],
+    [state, loading, error, mutate, refresh, aplicarUsuarios],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

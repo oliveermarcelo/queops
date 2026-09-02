@@ -7,10 +7,13 @@ import { randomBytes } from 'node:crypto';
 
 import { Router } from 'express';
 
-import { adminLogin, adminLogout, currentAdmin, hashApiToken, requireAdmin } from '../auth.ts';
+import {
+  adminLogin, adminLogout, assertLoginAllowed, currentAdmin, hashApiToken, hashPassword,
+  recordLoginAttempt, requireAdmin, verifyPassword,
+} from '../auth.ts';
 import { config } from '../config.ts';
 import { encryptPayload } from '../crypto.ts';
-import { placeholders, q } from '../db.ts';
+import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
 import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
 import {
@@ -23,6 +26,9 @@ import {
   integrationSecrets, integrationToApi, INTEGRATION_IDS, INTEGRATION_SECRET_FIELDS,
   productRowToApi,
 } from '../store.ts';
+import {
+  emailValido, motivoParaNaoDesativar, nomeValido, normalizarEmail, problemaNaSenha,
+} from '../usuarios.ts';
 import { h } from './helpers.ts';
 
 export const adminRoutes = Router();
@@ -53,7 +59,7 @@ adminRoutes.get('/me', h(async (req, res) => {
 
 // GET /api/admin/state — estado completo do painel numa requisição
 adminRoutes.get('/state', h(async (req, res) => {
-  await requireAdmin(req);
+  const eu = await requireAdmin(req);
 
   const customers = (
     await q.all(
@@ -157,6 +163,7 @@ adminRoutes.get('/state', h(async (req, res) => {
       event: w.event,
       active: Boolean(w.active),
     })),
+    users: await listaDeUsuarios(eu.id),
   });
 }));
 
@@ -538,6 +545,195 @@ adminRoutes.post('/webhooks', h(async (req, res) => {
 adminRoutes.delete('/webhooks/:id', h(async (req, res) => {
   await requireAdmin(req);
   await q.run('DELETE FROM webhooks WHERE id = ?', [req.params.id]);
+  jsonOk(res, { ok: true });
+}));
+
+// ------------------------------------------------- usuários do painel ----
+
+/**
+ * Quem entra no painel.
+ *
+ * Antes disso, criar um acesso exigia SSH e `node migrate.js --admin-email=…`.
+ * Na prática significava que a loja tinha um único usuário e que a senha dele
+ * circulava entre as pessoas que precisavam trabalhar — o pior dos dois mundos,
+ * porque ninguém pode ser removido sem trocar a senha de todos.
+ *
+ * Todo usuário criado aqui tem acesso total, como o dono. Foi decisão do dono
+ * da loja, e vale saber o que ela implica: qualquer um deles pode ver as
+ * credenciais das integrações, gerar chave de API — que hoje dá acesso a CPF de
+ * cliente — e criar outros usuários. É acesso de confiança total, não de
+ * funcionário. Se um dia precisar de níveis, a coluna `role` já existe.
+ */
+function usuarioParaApi(r: Row, euId: number): Record<string, unknown> {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    email: String(r.email),
+    active: Boolean(r.active),
+    lastLoginAt: iso(r.last_login_at),
+    createdAt: iso(r.created_at),
+    // Quem é você na lista. A tela usa isso para não oferecer botão que a rota
+    // vai recusar (desativar a si mesmo) — o servidor recusa de todo jeito.
+    isYou: Number(r.id) === euId,
+  };
+}
+
+async function listaDeUsuarios(euId: number): Promise<Record<string, unknown>[]> {
+  const rows = await q.all(
+    `SELECT id, name, email, active, last_login_at, created_at
+       FROM admin_users ORDER BY active DESC, name ASC`,
+  );
+  return rows.map((r) => usuarioParaApi(r, euId));
+}
+
+// GET /api/admin/users
+adminRoutes.get('/users', h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  jsonOk(res, { users: await listaDeUsuarios(eu.id) });
+}));
+
+// POST /api/admin/users — cria um acesso ao painel
+adminRoutes.post('/users', h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  const b = body(req);
+
+  const nome = nomeValido(bodyStr(b, 'name', '', 160));
+  if (nome === '') fail('Informe o nome da pessoa (pelo menos 2 letras).', 422, 'invalid_name');
+
+  const email = normalizarEmail(bodyStr(b, 'email', '', 190));
+  if (!emailValido(email)) fail('Informe um e-mail válido.', 422, 'invalid_email');
+
+  const senha = typeof b.password === 'string' ? b.password : '';
+  const problema = problemaNaSenha(senha, email);
+  if (problema !== '') fail(problema, 422, 'invalid_password');
+
+  const jaExiste = await q.one('SELECT id, active FROM admin_users WHERE email = ?', [email]);
+  if (jaExiste !== null) {
+    // Mensagem diferente para conta desativada: sem isso, o dono cria de novo,
+    // recebe "já existe" e não descobre que a conta está ali, só desligada.
+    fail(
+      Boolean(jaExiste.active)
+        ? 'Já existe um usuário com este e-mail.'
+        : 'Já existe um usuário com este e-mail, desativado. Reative-o em vez de criar outro.',
+      409,
+      'email_taken',
+    );
+  }
+
+  await q.run(
+    'INSERT INTO admin_users (name, email, password_hash, role, active) VALUES (?,?,?,?,1)',
+    [nome, email, await hashPassword(senha), 'admin'],
+  );
+  // O id vem de uma consulta, e não de `lastId()`: no pool cada chamada pode
+  // pegar outra conexão, e `LAST_INSERT_ID()` é por conexão — devolveria o id
+  // de um insert de outra requisição.
+  const criado = await q.one('SELECT id FROM admin_users WHERE email = ?', [email]);
+
+  jsonOk(res, {
+    ok: true,
+    id: String(criado?.id ?? ''),
+    users: await listaDeUsuarios(eu.id),
+  }, 201);
+}));
+
+/**
+ * PATCH /api/admin/users/:id — nome, e-mail, ativar/desativar e senha.
+ *
+ * A senha do PRÓPRIO usuário não passa por aqui: trocar a sua exige a atual
+ * (rota /me/password). Aqui é o caso "esqueci a senha do João" — quem já tem
+ * acesso total ao painel define uma nova para ele.
+ */
+adminRoutes.patch('/users/:id', h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  const alvoId = Number(req.params.id);
+  if (!Number.isInteger(alvoId) || alvoId <= 0) fail('Usuário não encontrado.', 404, 'not_found');
+
+  const alvo = await q.one('SELECT * FROM admin_users WHERE id = ?', [alvoId]);
+  if (alvo === null) fail('Usuário não encontrado.', 404, 'not_found');
+
+  const b = body(req);
+  const campos: string[] = [];
+  const valores: unknown[] = [];
+
+  if (b.name !== undefined) {
+    const nome = nomeValido(bodyStr(b, 'name', '', 160));
+    if (nome === '') fail('Informe o nome da pessoa (pelo menos 2 letras).', 422, 'invalid_name');
+    campos.push('name = ?');
+    valores.push(nome);
+  }
+
+  if (b.email !== undefined) {
+    const email = normalizarEmail(bodyStr(b, 'email', '', 190));
+    if (!emailValido(email)) fail('Informe um e-mail válido.', 422, 'invalid_email');
+    const outro = await q.one('SELECT id FROM admin_users WHERE email = ? AND id <> ?', [email, alvoId]);
+    if (outro !== null) fail('Já existe um usuário com este e-mail.', 409, 'email_taken');
+    campos.push('email = ?');
+    valores.push(email);
+  }
+
+  if (b.password !== undefined) {
+    if (alvoId === eu.id) {
+      fail(
+        'Para trocar a sua própria senha, informe a senha atual (use "Trocar minha senha").',
+        422,
+        'own_password',
+      );
+    }
+    const senha = typeof b.password === 'string' ? b.password : '';
+    const problema = problemaNaSenha(senha, String(alvo.email));
+    if (problema !== '') fail(problema, 422, 'invalid_password');
+    campos.push('password_hash = ?');
+    valores.push(await hashPassword(senha));
+  }
+
+  if (b.active !== undefined) {
+    const ativar = bodyBool(b, 'active', true);
+    if (!ativar) {
+      const n = await q.one('SELECT COUNT(*) AS n FROM admin_users WHERE active = 1');
+      const motivo = motivoParaNaoDesativar({
+        alvoId,
+        atorId: eu.id,
+        ativasAgora: Number(n?.n ?? 0),
+      });
+      if (motivo !== '') fail(motivo, 422, 'would_lock_out');
+    }
+    campos.push('active = ?');
+    valores.push(ativar ? 1 : 0);
+  }
+
+  if (campos.length === 0) fail('Nada para alterar.', 422, 'nothing_to_update');
+
+  valores.push(alvoId);
+  await q.run(`UPDATE admin_users SET ${campos.join(', ')} WHERE id = ?`, valores);
+  jsonOk(res, { ok: true, users: await listaDeUsuarios(eu.id) });
+}));
+
+/**
+ * PUT /api/admin/me/password — trocar a própria senha.
+ *
+ * Exige a senha atual mesmo com a sessão aberta: sem isso, um notebook
+ * desbloqueado por dois minutos vira uma conta roubada em definitivo.
+ */
+adminRoutes.put('/me/password', h(async (req, res) => {
+  const eu = await requireAdmin(req);
+  const b = body(req);
+
+  const atual = typeof b.currentPassword === 'string' ? b.currentPassword : '';
+  const nova = typeof b.newPassword === 'string' ? b.newPassword : '';
+
+  const row = await q.one('SELECT password_hash FROM admin_users WHERE id = ?', [eu.id]);
+  if (row === null) fail('Sessão inválida. Entre de novo.', 401, 'unauthenticated');
+
+  await assertLoginAllowed(req, 'admin', eu.email);
+  const confere = await verifyPassword(atual, String(row.password_hash));
+  await recordLoginAttempt(req, 'admin', eu.email, confere);
+  if (!confere) fail('A senha atual está incorreta.', 401, 'invalid_credentials');
+
+  const problema = problemaNaSenha(nova, eu.email);
+  if (problema !== '') fail(problema, 422, 'invalid_password');
+  if (atual === nova) fail('A nova senha é igual à atual.', 422, 'same_password');
+
+  await q.run('UPDATE admin_users SET password_hash = ? WHERE id = ?', [await hashPassword(nova), eu.id]);
   jsonOk(res, { ok: true });
 }));
 

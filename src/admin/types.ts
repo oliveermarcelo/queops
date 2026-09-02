@@ -173,6 +173,23 @@ export interface Webhook {
   active: boolean;
 }
 
+/**
+ * Uma pessoa com acesso ao painel.
+ *
+ * Não há senha aqui, nem mascarada: a senha não sai do servidor de forma
+ * alguma. `isYou` também vem de lá, porque só o servidor sabe de qual sessão a
+ * requisição veio.
+ */
+export interface PanelUser {
+  id: string;
+  name: string;
+  email: string;
+  active: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+  isYou: boolean;
+}
+
 export interface AdminState {
   /** Taxonomia de categorias, para os seletores do painel. */
   menu: MenuCategory[];
@@ -187,4 +204,5 @@ export interface AdminState {
   apiKeys: ApiKey[];
   webhooks: Webhook[];
   shipping: ShippingConfig;
+  users: PanelUser[];
 }
