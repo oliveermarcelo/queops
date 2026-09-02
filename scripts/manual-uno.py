@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 2.1 — 2 de setembro de 2026'
+VERSAO = 'Versão 2.2 — 2 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -497,6 +497,7 @@ GET /api/v1/orders?status=paid&since=2026-08-01T00:00:00Z
       "customerName": "Maria Oliveira",
       "customerEmail": "maria@exemplo.com",
       "customerPhone": "(11) 98888-7777",
+      "customerCpf": "123.456.789-09",       // para NF-e; "" se não informado
       "items": [
         { "productId": "piramide-cobre-15cm-1001",
           "name": "Pirâmide de Cobre 15cm",  // nome no momento da venda
@@ -600,13 +601,17 @@ PATCH /api/v1/orders/QP-000142
         '<font face="Courier">totalSpent</font> soma os pedidos não cancelados.', P))
     add(Spacer(1, 4))
     add(aviso(
-        'CPF: decisão pendente do lado da loja',
-        'O CPF do comprador é gravado na compra, mas <b>não sai em nenhum endpoint</b> — nem aqui, '
-        'nem no pedido. Para emitir NF-e ao consumidor, o UNO vai precisar dele. Não foi exposto '
-        'por conta própria porque é dado pessoal: cada campo desses numa API amplia o estrago de '
-        'uma chave vazada, e a LGPD trata o assunto pelo princípio da necessidade. '
-        '<b>Se a emissão de nota exigir, avise que o campo é liberado no pedido</b> — a decisão é '
-        'do dono da loja, não do código.'))
+        'CPF: liberado no pedido, não nesta listagem',
+        'A partir da versão 2.2 o CPF do comprador sai em '
+        '<font face="Courier">customerCpf</font> no <b>pedido</b> (seção 4.5), liberado a pedido do '
+        'dono da loja para o UNO emitir NF-e ao consumidor. Aqui em '
+        '<font face="Courier">/customers</font> ele <b>não</b> sai: nota se emite contra a venda, '
+        'não contra o cadastro. Vem vazio (<font face="Courier">""</font>) quando o comprador não '
+        'informou — nesse caso a nota é sem identificação do destinatário, e o UNO não deve tratar '
+        'a ausência como erro de integração. <b>Consequência prática:</b> a chave da API v1 agora '
+        'dá acesso a CPF de cliente. Quem tem a chave tem os CPFs — ela pertence ao cofre de '
+        'credenciais do UNO, não a arquivo de configuração compartilhado nem a repositório, e o '
+        'corpo destas respostas não deve ir para log.'))
 
     # ---------------------------------------------------- 5. webhooks ----
     add(PageBreak())

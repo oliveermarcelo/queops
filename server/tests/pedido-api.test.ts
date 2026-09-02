@@ -19,6 +19,7 @@ const LINHA: Record<string, unknown> = {
   customer_name: 'Maria Oliveira',
   customer_email: 'maria@exemplo.com',
   customer_phone: '(11) 98888-7777',
+  customer_cpf: '123.456.789-09',
   subtotal: '379.80',
   shipping_cost: '26.63',
   discount: '18.99',
@@ -74,6 +75,22 @@ test('transportadora escolhida e previsão de entrega saem no pedido', () => {
   const o = orderRowToApi(LINHA as never, ITENS) as Record<string, never>;
   assert.match(String(o.shippingService), /Jadlog/);
   assert.equal(o.deliveryEta as unknown as string, '2026-09-08');
+});
+
+/**
+ * O CPF sai no pedido porque o ERP emite NF-e ao consumidor.
+ *
+ * Fica pinado aqui por dois motivos opostos, e os dois importam: remover o
+ * campo para o ERP de nota, e mudar o tipo quando o comprador não informou.
+ * Se virar `null` em vez de `''`, o lado do ERP que faz `.replace(/\D/g, '')`
+ * quebra no pedido sem CPF — que é exatamente o caso menos testado lá.
+ */
+test('CPF do comprador sai no pedido, e vazio é string vazia', () => {
+  const o = orderRowToApi(LINHA as never, ITENS) as Record<string, never>;
+  assert.equal(o.customerCpf as unknown as string, '123.456.789-09');
+
+  const semCpf = orderRowToApi({ ...LINHA, customer_cpf: null } as never, ITENS) as Record<string, never>;
+  assert.equal(semCpf.customerCpf as unknown as string, '');
 });
 
 test('pedido antigo, sem esses dados, não quebra o formato', () => {

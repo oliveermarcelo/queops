@@ -229,6 +229,16 @@ export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
     customerName: r.customer_name,
     customerEmail: r.customer_email,
     customerPhone: r.customer_phone,
+    /*
+     * CPF do comprador — liberado a pedido do dono da loja, para o ERP emitir
+     * NF-e ao consumidor.
+     *
+     * É dado pessoal, e isso tem consequência prática: a chave da API v1 passa a
+     * dar acesso a CPF de cliente. Quem tiver a chave tem os CPFs. Portanto ela
+     * pertence ao cofre do ERP, não a um arquivo de configuração compartilhado,
+     * e o corpo destas respostas não deve ir para log.
+     */
+    customerCpf: String(r.customer_cpf ?? ''),
     items: items.map((i) => ({
       productId: i.product_id,
       name: i.name,
