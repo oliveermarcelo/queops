@@ -173,16 +173,29 @@ export const PROVIDERS: ProviderMeta[] = [
     ],
   },
 
+  /*
+   * UNO ERP — card sem credencial, de propósito.
+   *
+   * Ele pedia "Token de integração UNO" e "Código da empresa/filial", e
+   * nenhuma linha da loja lia qualquer um dos dois. Um campo de senha que não
+   * é usado por nada é pior que um campo a menos: convida a colar ali um token
+   * de verdade, que fica guardado sem motivo e amplia o estrago de um vazamento
+   * sem trazer benefício nenhum.
+   *
+   * A integração acontece na direção contrária: é o UNO que chama a loja, com
+   * uma chave `qp_live_` gerada em Chaves de API. Por isso o botão de testar
+   * aqui só informa se alguma requisição do UNO chegou — e o teste que vale a
+   * pena está na própria chave.
+   */
   {
     id: 'uno',
     name: 'UNO ERP',
     category: 'erp',
     native: true,
-    description: 'Integração nativa com o UNO ERP — sincroniza produtos, estoque, preços e pedidos automaticamente.',
-    fields: [
-      { key: 'token', label: 'Token de integração UNO', type: 'password', help: 'Gerado no painel do UNO ERP.' },
-      { key: 'company', label: 'Código da empresa/filial', placeholder: '001' },
-    ],
+    description:
+      'O UNO consome a API da loja com uma chave de API — não há credencial do UNO para guardar '
+      + 'aqui. Testar mostra se alguma requisição do UNO já chegou.',
+    fields: [],
   },
   {
     id: 'erp',

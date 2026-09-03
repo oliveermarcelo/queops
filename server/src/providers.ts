@@ -56,7 +56,9 @@ export const PROVIDERS_META: Record<string, { fields: string[] }> = {
   correios: { fields: ['user', 'accessCode', 'postingCard'] },
   melhorenvio: { fields: ['token'] },
   frenet: { fields: ['token'] },
-  uno: { fields: ['token', 'company'] },
+  // Sem campo obrigatório: o teste do UNO não usa credencial nenhuma da loja —
+  // ele lê o uso das chaves de API, que é o caminho por onde o UNO entra.
+  uno: { fields: [] },
   erp: { fields: ['baseUrl', 'token'] },
   zapi: { fields: ['instanceId', 'token'] },
   evolution: { fields: ['baseUrl', 'instance', 'apiKey'] },
@@ -332,11 +334,70 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
       };
     }
 
-    case 'uno':
-      r = await httpCall('GET', 'https://api.unoerp.com/v1/ping', {
-        Authorization: 'Bearer ' + str(f, 'token'),
-      });
-      return { ok: r.ok, message: r.ok ? 'UNO ERP conectado.' : `Falha (HTTP ${r.status}). ${r.error}` };
+    /*
+     * UNO ERP — o teste olha para dentro, porque é para dentro que a
+     * integração aponta.
+     *
+     * Este case chamava `https://api.unoerp.com/v1/ping`: um endereço fixo no
+     * código que ninguém verificou existir, com um token que nenhuma linha da
+     * loja lê. Era um "Testar conexão" respondendo sobre uma conexão que não
+     * existe. Botão que sempre falha ensina a ignorar o resultado — e aí ele
+     * deixa de servir justamente no dia em que algo quebra de verdade.
+     *
+     * A integração real é o UNO CHAMANDO a loja, com uma chave `qp_live_` no
+     * header Authorization. Então a evidência honesta que a loja tem é o
+     * registro de uso dessas chaves. "Nenhuma requisição chegou" é uma
+     * resposta útil, não uma falha do teste.
+     */
+    case 'uno': {
+      const chaves = await q.all(
+        `SELECT name, last_used_at FROM api_keys
+          WHERE revoked = 0
+          ORDER BY last_used_at IS NULL, last_used_at DESC`,
+      );
+
+      if (chaves.length === 0) {
+        return {
+          ok: false,
+          message:
+            'Nenhuma chave de API ativa. O UNO acessa a loja com uma chave: gere uma em '
+            + 'Chaves de API, aqui embaixo, e cadastre no UNO.',
+        };
+      }
+
+      const usada = chaves.find((k) => k.last_used_at !== null);
+      if (!usada) {
+        return {
+          ok: false,
+          message:
+            `${chaves.length} chave(s) ativa(s), mas nenhuma foi usada ainda — nenhuma requisição `
+            + 'do UNO chegou à loja. Se o UNO já está configurado, o problema está antes da loja: '
+            + 'endereço, chave ou bloqueio de rede. Use o botão "Testar" da chave, aqui embaixo, '
+            + 'para confirmar que ela responde.',
+        };
+      }
+
+      /*
+       * A data é reformatada como texto, sem passar por `new Date`.
+       *
+       * A conexão do MySQL usa `dateStrings` com fuso -03:00, então
+       * `last_used_at` já chega como a hora de São Paulo: "2026-09-02 20:50:31".
+       * Construir um Date com isso faria o Node interpretar a string no fuso
+       * DELE — hoje UTC, onde os dígitos por coincidência não mudam. Num
+       * servidor com outro fuso a hora exibida sairia deslocada, e o erro seria
+       * daquele tipo que só aparece depois de mudar de hospedagem.
+       */
+      const cru = String(usada.last_used_at);
+      const [dia, hora] = cru.split(' ');
+      const [a, m, d] = (dia ?? '').split('-');
+      const quando = a && hora ? `${d}/${m}/${a} às ${hora.slice(0, 5)}` : cru;
+      return {
+        ok: true,
+        message:
+          `O UNO está chamando a loja: a chave "${usada.name}" foi usada por último em ${quando}. `
+          + 'Este card não guarda credencial nenhuma — quem dá acesso ao UNO é a chave de API.',
+      };
+    }
 
     case 'erp':
       r = await httpCall('GET', trimSlash(str(f, 'baseUrl')) + '/health', {

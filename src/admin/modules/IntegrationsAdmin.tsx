@@ -281,6 +281,19 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
         {/* Collapsible config */}
         {open && (
           <div className="mt-4 pt-4 border-t border-gray-100 space-y-3 animate-fade-in">
+            {/*
+              Integração sem campo de credencial existe: é o caso de quem
+              CONSOME a API da loja, em vez de a loja consumir a dele. Sem esta
+              nota, a área de configuração abriria vazia e pareceria quebrada.
+            */}
+            {provider.fields.length === 0 && (
+              <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 border border-gray-150 rounded-lg px-3 py-2.5">
+                Esta integração não guarda credencial aqui: quem consome a loja é o sistema do outro
+                lado, usando uma <b>chave de API</b>. Gere e teste a chave em{' '}
+                <b>Integrações → API &amp; Desenvolvedores</b>. O botão abaixo diz se alguma
+                requisição já chegou.
+              </p>
+            )}
             {provider.fields.map((f) => {
               const isSecret = SECRET_FIELD_KEYS.has(f.key);
               const alreadySet = configured.includes(f.key);

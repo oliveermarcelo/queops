@@ -1132,11 +1132,49 @@ async function providerTest(id, f) {
         message: `${cotaram.length} transportadora(s) cotando: ${amostra}${cotaram.length > 4 ? "\u2026" : ""} (500 g para S\xE3o Paulo).` + (selecionados === 0 ? " Escolha abaixo quais o cliente pode ver." : ` ${selecionados} liberada(s) para o cliente.`)
       };
     }
-    case "uno":
-      r = await httpCall("GET", "https://api.unoerp.com/v1/ping", {
-        Authorization: "Bearer " + str(f, "token")
-      });
-      return { ok: r.ok, message: r.ok ? "UNO ERP conectado." : `Falha (HTTP ${r.status}). ${r.error}` };
+    /*
+     * UNO ERP — o teste olha para dentro, porque é para dentro que a
+     * integração aponta.
+     *
+     * Este case chamava `https://api.unoerp.com/v1/ping`: um endereço fixo no
+     * código que ninguém verificou existir, com um token que nenhuma linha da
+     * loja lê. Era um "Testar conexão" respondendo sobre uma conexão que não
+     * existe. Botão que sempre falha ensina a ignorar o resultado — e aí ele
+     * deixa de servir justamente no dia em que algo quebra de verdade.
+     *
+     * A integração real é o UNO CHAMANDO a loja, com uma chave `qp_live_` no
+     * header Authorization. Então a evidência honesta que a loja tem é o
+     * registro de uso dessas chaves. "Nenhuma requisição chegou" é uma
+     * resposta útil, não uma falha do teste.
+     */
+    case "uno": {
+      const chaves = await q.all(
+        `SELECT name, last_used_at FROM api_keys
+          WHERE revoked = 0
+          ORDER BY last_used_at IS NULL, last_used_at DESC`
+      );
+      if (chaves.length === 0) {
+        return {
+          ok: false,
+          message: "Nenhuma chave de API ativa. O UNO acessa a loja com uma chave: gere uma em Chaves de API, aqui embaixo, e cadastre no UNO."
+        };
+      }
+      const usada = chaves.find((k) => k.last_used_at !== null);
+      if (!usada) {
+        return {
+          ok: false,
+          message: `${chaves.length} chave(s) ativa(s), mas nenhuma foi usada ainda \u2014 nenhuma requisi\xE7\xE3o do UNO chegou \xE0 loja. Se o UNO j\xE1 est\xE1 configurado, o problema est\xE1 antes da loja: endere\xE7o, chave ou bloqueio de rede. Use o bot\xE3o "Testar" da chave, aqui embaixo, para confirmar que ela responde.`
+        };
+      }
+      const cru = String(usada.last_used_at);
+      const [dia, hora] = cru.split(" ");
+      const [a, m, d] = (dia ?? "").split("-");
+      const quando = a && hora ? `${d}/${m}/${a} \xE0s ${hora.slice(0, 5)}` : cru;
+      return {
+        ok: true,
+        message: `O UNO est\xE1 chamando a loja: a chave "${usada.name}" foi usada por \xFAltimo em ${quando}. Este card n\xE3o guarda credencial nenhuma \u2014 quem d\xE1 acesso ao UNO \xE9 a chave de API.`
+      };
+    }
     case "erp":
       r = await httpCall("GET", trimSlash(str(f, "baseUrl")) + "/health", {
         Authorization: "Bearer " + str(f, "token")
@@ -1247,7 +1285,9 @@ var init_providers = __esm({
       correios: { fields: ["user", "accessCode", "postingCard"] },
       melhorenvio: { fields: ["token"] },
       frenet: { fields: ["token"] },
-      uno: { fields: ["token", "company"] },
+      // Sem campo obrigatório: o teste do UNO não usa credencial nenhuma da loja —
+      // ele lê o uso das chaves de API, que é o caminho por onde o UNO entra.
+      uno: { fields: [] },
       erp: { fields: ["baseUrl", "token"] },
       zapi: { fields: ["instanceId", "token"] },
       evolution: { fields: ["baseUrl", "instance", "apiKey"] },
@@ -1813,7 +1853,10 @@ async function currentApiKey(req) {
   ]);
   for (const k of candidatas) {
     if (await verifyPassword(token, String(k.token_hash))) {
-      await q.run("UPDATE api_keys SET last_used_at = NOW() WHERE id = ?", [k.id]);
+      const doPainel = Boolean(req.qp?.data?.adminId);
+      if (!doPainel) {
+        await q.run("UPDATE api_keys SET last_used_at = NOW() WHERE id = ?", [k.id]);
+      }
       return k;
     }
   }

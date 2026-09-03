@@ -224,7 +224,27 @@ export async function currentApiKey(req: Request): Promise<Row | null> {
   ]);
   for (const k of candidatas) {
     if (await verifyPassword(token, String(k.token_hash))) {
-      await q.run('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [k.id]);
+      /*
+       * O teste feito pelo painel NÃO conta como uso.
+       *
+       * `last_used_at` responde a uma pergunta específica: "o ERP já chamou a
+       * loja?". É o diagnóstico mais útil que a loja tem quando o outro lado
+       * jura que integrou — se nada chegou, o problema está antes daqui.
+       *
+       * Se o botão "Testar" do painel gravasse uso, a resposta viraria "sim,
+       * alguém chamou" logo depois do primeiro clique — e o dono passaria a ler
+       * como confirmação do ERP a própria chamada dele. Uma evidência que se
+       * contamina ao ser consultada não serve de evidência.
+       *
+       * A distinção é a sessão de admin: ela vem do cookie httpOnly do painel,
+       * que só existe em quem entrou no painel. Nenhum ERP tem esse cookie, e
+       * ler isso não custa consulta nenhuma — a sessão já foi decodificada
+       * pelo middleware.
+       */
+      const doPainel = Boolean(req.qp?.data?.adminId);
+      if (!doPainel) {
+        await q.run('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [k.id]);
+      }
       return k;
     }
   }
