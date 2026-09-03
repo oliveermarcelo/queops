@@ -18,8 +18,9 @@ import { hashPassword } from './auth.ts';
 import { configProblems } from './config.ts';
 import { closePool, q, transaction } from './db.ts';
 import { round2 } from './http.ts';
+import { pesoEmGramas } from './pricing.ts';
 import {
-  addMissingColumns, addMissingIndexes, dbDir, splitStatements,
+  addMissingColumns, addMissingIndexes, dbDir, splitStatements, widenColumns,
 } from './schema.ts';
 import {
   configSet, DEFAULT_RECOVERY, DEFAULT_SETTINGS, DEFAULT_SHIPPING, INTEGRATION_IDS,
@@ -50,7 +51,14 @@ interface CatalogProduct {
   stock?: number;
   image?: string;
   tag?: string;
+  /**
+   * No catálogo de origem o peso é texto ("0,2 kg", "Base 15cm · cobre"),
+   * porque veio de cadastro feito à mão. A carga separa as duas coisas: o
+   * número vai para `weight_kg` e o texto continua como rótulo de vitrine.
+   */
   weight?: string;
+  /** Peso em quilos, quando o catálogo já traz o número pronto. */
+  weightKg?: number;
   ingredients?: string;
   highlight?: boolean;
 }
@@ -106,22 +114,33 @@ async function importCatalog(dir: string): Promise<void> {
     await q.run(
       `INSERT INTO products (
           id, sku, name, category, subcategory, category_label, description, long_description,
-          price, old_price, stock, image, tag, weight, ingredients,
+          price, old_price, stock, image, tag, weight_kg, weight, ingredients,
           highlight, active, position
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
        ON DUPLICATE KEY UPDATE
           sku=VALUES(sku), name=VALUES(name), category=VALUES(category),
           subcategory=VALUES(subcategory), category_label=VALUES(category_label),
           description=VALUES(description), long_description=VALUES(long_description),
           price=VALUES(price), old_price=VALUES(old_price), image=VALUES(image),
-          tag=VALUES(tag), weight=VALUES(weight), ingredients=VALUES(ingredients),
+          tag=VALUES(tag), weight_kg=VALUES(weight_kg), weight=VALUES(weight),
+          ingredients=VALUES(ingredients),
           highlight=VALUES(highlight), position=VALUES(position)`,
       [
         p.id, p.sku ?? '', p.name, p.category ?? '', p.subcategory ?? null,
         p.categoryLabel ?? '', p.description ?? '', p.longDescription ?? null,
         p.price ?? 0, p.oldPrice ?? null,
         p.stock ?? defaultStock[i % defaultStock.length],
-        p.image ?? '', p.tag ?? null, p.weight ?? '', p.ingredients ?? null,
+        p.image ?? '', p.tag ?? null,
+        /*
+         * Peso em quilos: o número pronto, se o catálogo tiver; senão, o que
+         * der para extrair do texto. `pesoEmGramas` devolve -1 quando não acha
+         * número nenhum ("Base 15cm · cobre"), e aí fica 0 — sem peso, e a
+         * cotação usa o padrão, que é o comportamento de hoje.
+         */
+        typeof p.weightKg === 'number' && p.weightKg > 0
+          ? Math.round(p.weightKg * 1000) / 1000
+          : Math.max(0, pesoEmGramas(p.weight ?? '', -1)) / 1000,
+        p.weight ?? '', p.ingredients ?? null,
         p.highlight ? 1 : 0, i,
       ],
     );
@@ -289,6 +308,9 @@ async function main(): Promise<void> {
 
   const indices = await addMissingIndexes(say);
   say(indices === 0 ? 'Nenhum índice novo a adicionar.' : `Índices adicionados: ${indices}.`);
+
+  const convertidas = await widenColumns(say);
+  say(convertidas === 0 ? 'Nenhuma coluna a converter.' : `Colunas convertidas: ${convertidas}.`);
 
   // ------------------------------------------------------------ catálogo ----
   await importCatalog(dir);

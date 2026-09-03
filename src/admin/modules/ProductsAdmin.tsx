@@ -19,7 +19,8 @@ const blank = (): Product => ({
   price: 0,
   stock: 0,
   image: '',
-  weight: '',
+  weight: 0,
+  weightLabel: '',
   sku: '',
 });
 
@@ -199,22 +200,41 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
               <input type="number" step="0.01" min="0" value={p.oldPrice ?? ''}
                 onChange={(e) => set({ oldPrice: e.target.value ? parseFloat(e.target.value) : undefined })} className={inputCls} />
             </Field>
-            <Field label="Estoque (un.)">
-              <input type="number" step="1" min="0" value={p.stock ?? 0}
-                onChange={(e) => set({ stock: parseInt(e.target.value) || 0 })} className={inputCls} />
+            {/*
+              Estoque aceita fração porque o ERP manda o saldo assim. Arredondar
+              aqui faria a loja e o ERP discordarem em silêncio.
+            */}
+            <Field label="Estoque">
+              <input type="number" step="0.001" min="0" value={p.stock ?? 0}
+                onChange={(e) => set({ stock: parseFloat(e.target.value) || 0 })} className={inputCls} />
             </Field>
           </div>
 
           <ImageUploader value={p.image} onChange={(img) => set({ image: img })} />
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Peso/Embalagem">
-              <input value={p.weight} onChange={(e) => set({ weight: e.target.value })} className={inputCls} />
+            {/*
+              Peso e medida eram um campo só, de texto — e o frete tentava
+              achar o peso no meio da frase. Peso vazio não dá erro: a cotação
+              cai num padrão de 500 g por item, o que é silencioso e caro. Por
+              isso o aviso abaixo do campo, e não só no manual.
+            */}
+            <Field label="Peso da peça (kg) — usado no frete">
+              <input type="number" step="0.001" min="0" value={p.weight ?? 0}
+                onChange={(e) => set({ weight: parseFloat(e.target.value) || 0 })} className={inputCls} />
             </Field>
-            <Field label="Tag (DESTAQUE, NOVIDADE, OFERTA)">
-              <input value={p.tag ?? ''} onChange={(e) => set({ tag: e.target.value || undefined })} className={inputCls} />
+            <Field label="Medida/formato (aparece na vitrine)">
+              <input value={p.weightLabel ?? ''} placeholder="Base 15cm · cobre"
+                onChange={(e) => set({ weightLabel: e.target.value })} className={inputCls} />
             </Field>
           </div>
+
+          {(p.weight ?? 0) <= 0 && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 -mt-2">
+              Sem peso, o frete deste produto é cotado com <b>500 g</b> por unidade — o valor sai
+              errado sem dar nenhum erro, e a diferença sai do seu bolso.
+            </p>
+          )}
 
           <Field label="Descrição">
             <textarea value={p.description} onChange={(e) => set({ description: e.target.value })} rows={3} className={inputCls} />

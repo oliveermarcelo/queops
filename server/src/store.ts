@@ -191,9 +191,29 @@ export function productRowToApi(r: Row): Record<string, unknown> {
     categoryLabel: r.category_label,
     description: String(r.description ?? ''),
     price: Number(r.price) || 0,
+    /*
+     * Estoque é número, e pode ter fração.
+     *
+     * JSON não distingue inteiro de decimal — `7` e `7.0` são o mesmo número
+     * para qualquer parser. O que muda é o que a loja aceita GUARDAR: até aqui
+     * ela recusava fração, e o saldo 7,5 do ERP virava 7 ou virava erro. Agora
+     * o valor atravessa inteiro nos dois sentidos.
+     */
     stock: Number(r.stock) || 0,
     image: r.image,
-    weight: String(r.weight ?? ''),
+    /*
+     * `weight` é o peso em QUILOS, como número.
+     *
+     * Era texto livre ("0,2kg", "Base 15cm · cobre"), servindo ao mesmo tempo
+     * de rótulo na vitrine e de peso para o frete — dois trabalhos
+     * incompatíveis no mesmo campo. Ninguém consegue ler "0,2kg" como número, e
+     * o frete tinha que adivinhar o valor no meio da frase.
+     *
+     * A unidade é quilo porque é a unidade dos Correios, do Melhor Envio e do
+     * ERP. O rótulo continua existindo, com nome próprio: `weightLabel`.
+     */
+    weight: Number(r.weight_kg) || 0,
+    weightLabel: String(r.weight ?? ''),
     active: Boolean(r.active),
   };
   if (r.subcategory) out.subcategory = r.subcategory;

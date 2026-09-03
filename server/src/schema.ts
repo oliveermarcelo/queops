@@ -165,15 +165,80 @@ export async function addMissingIndexes(say: Log): Promise<number> {
 }
 
 /**
- * Acerta a estrutura do banco: só colunas e índices que faltam.
+ * Colunas que precisam de um tipo MAIOR do que o banco antigo tem.
  *
- * Devolve quantos foram criados. Não cria tabela, não carrega catálogo, não
- * mexe em dado nenhum — é seguro rodar a cada subida do servidor.
+ * Este módulo é aditivo por princípio, e mudar tipo de coluna não é aditivo —
+ * então a lista é explícita, curta, e cada item só entra aqui se a conversão
+ * não perde dado nenhum: um INT cabe inteiro num DECIMAL(10,3), e o MySQL faz
+ * a conversão sem tocar nos valores.
+ *
+ * O que NÃO pode entrar nesta lista: encurtar VARCHAR, trocar para tipo de
+ * família diferente, ou qualquer coisa que arredonde. Migração que perde dado
+ * exige alguém olhando, e o lugar dela é o `migrate.ts`.
  */
-export async function sincronizarEstrutura(say: Log): Promise<{ colunas: number; indices: number }> {
+const ALARGAMENTOS: { tabela: string; coluna: string; de: RegExp; para: string }[] = [
+  {
+    tabela: 'products',
+    coluna: 'stock',
+    // "int", "int(11)", "int unsigned" — versões diferentes do MySQL relatam
+    // de formas diferentes, e todas significam a mesma coluna a converter.
+    de: /^(int|integer|smallint|mediumint|bigint)\b/i,
+    para: 'DECIMAL(10,3) NOT NULL DEFAULT 0',
+  },
+];
+
+export async function widenColumns(say: Log): Promise<number> {
+  let convertidas = 0;
+  for (const { tabela, coluna, de, para } of ALARGAMENTOS) {
+    let atual: string;
+    try {
+      const row = await q.one(
+        `SELECT COLUMN_TYPE AS tipo FROM information_schema.columns
+          WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+        [tabela, coluna],
+      );
+      // Coluna ainda não existe: o addMissingColumns cria já no tipo certo.
+      if (row === null) continue;
+      atual = String(row.tipo);
+    } catch (e) {
+      if (tabelaAusente(e)) continue;
+      throw e;
+    }
+
+    if (!de.test(atual)) continue; // já está no tipo novo — nada a fazer
+
+    try {
+      await q.run(`ALTER TABLE \`${tabela}\` MODIFY COLUMN \`${coluna}\` ${para}`);
+      say(`  ~ ${tabela}.${coluna}: ${atual} → ${para}`);
+      convertidas++;
+    } catch (e) {
+      /*
+       * Falhar aqui não pode impedir a loja de subir. Um saldo lido como
+       * inteiro é menos ruim do que uma loja fora do ar — o efeito é o ERP
+       * mandar 7,5 e a loja guardar 7, que é exatamente o problema que esta
+       * conversão resolve, mas ele já era o comportamento de ontem.
+       */
+      const err = e as { code?: string; message?: string };
+      say(`  ! não consegui converter ${tabela}.${coluna}: ${err.code ?? ''} ${err.message ?? ''}`.trimEnd());
+    }
+  }
+  return convertidas;
+}
+
+/**
+ * Acerta a estrutura do banco: colunas e índices que faltam, mais os
+ * alargamentos de tipo listados acima.
+ *
+ * Devolve quantos foram criados. Não cria tabela, não carrega catálogo e não
+ * apaga dado — é seguro rodar a cada subida do servidor.
+ */
+export async function sincronizarEstrutura(
+  say: Log,
+): Promise<{ colunas: number; indices: number; convertidas: number }> {
   const sql = readFileSync(path.join(dbDir(), 'schema.sql'), 'utf8');
   const { noComments } = splitStatements(sql);
   const colunas = await addMissingColumns(noComments, say);
   const indices = await addMissingIndexes(say);
-  return { colunas, indices };
+  const convertidas = await widenColumns(say);
+  return { colunas, indices, convertidas };
 }

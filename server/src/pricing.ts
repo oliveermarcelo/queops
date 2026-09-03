@@ -250,12 +250,47 @@ export interface RawItem {
   quantity?: unknown;
 }
 
+/** Peso de UM produto em gramas, com a origem do número. */
+export function pesoDoProduto(
+  linha: Record<string, unknown> | undefined,
+  padraoG = 500,
+): { gramas: number; origem: 'weight_kg' | 'rotulo' | 'padrao' } {
+  const kg = Number(linha?.weight_kg ?? 0);
+  if (Number.isFinite(kg) && kg > 0) {
+    return { gramas: Math.round(kg * 1000), origem: 'weight_kg' };
+  }
+
+  /*
+   * Sem peso numérico, tenta o rótulo — mas SÓ com unidade de massa escrita.
+   *
+   * É compatibilidade com o que existia antes de `weight_kg`: quem cadastrou
+   * "800g" naquele campo continua com o frete certo. A exigência da unidade é
+   * o que torna a reserva segura, e o teste que a motivou é real: o rótulo
+   * "Base 15cm · cobre" fazia `pesoEmGramas` achar o 15, não achar unidade
+   * nenhuma, e concluir 15 kg — trinta vezes o peso da peça, num campo que
+   * nunca falou de peso. Um número solto num campo de MEDIDA é medida; só "kg"
+   * ou "g" escrito ali autoriza lê-lo como peso.
+   */
+  const rotulo = String(linha?.weight ?? '').trim().toLowerCase();
+  if (/\d\s*(kg|g|gramas?|quilos?)\b/.test(rotulo)) {
+    const g = pesoEmGramas(rotulo, -1);
+    if (g > 0) return { gramas: g, origem: 'rotulo' };
+  }
+
+  return { gramas: padraoG, origem: 'padrao' };
+}
+
 /**
  * Peso do carrinho em GRAMAS.
  *
- * `products.weight` é VARCHAR livre: vem "1,2 kg", "800g", "0.5" ou vazio,
- * conforme quem cadastrou. Interpretamos o que der e caímos num padrão quando
- * não dá — frete que falha por peso ausente é pior do que frete aproximado.
+ * O padrão de 500 g existe porque frete que FALHA por peso ausente é pior que
+ * frete aproximado — a venda para. Mas ele não é inofensivo: enquanto os
+ * produtos não tiverem `weight_kg` preenchido, toda cotação sai com 500 g por
+ * item, independentemente do que a peça pesa. Uma pirâmide de cobre de 3 kg
+ * cotada como 500 g é prejuízo a cada venda, e silencioso — ninguém abre
+ * chamado porque o frete saiu barato.
+ *
+ * Por isso o log: quando um item cai no padrão, fica registrado qual foi.
  */
 function pesoDoCarrinho(
   items: QuoteItem[],
@@ -263,9 +298,17 @@ function pesoDoCarrinho(
 ): number {
   const PADRAO_G = 500;
   let total = 0;
+  const semPeso: string[] = [];
   for (const item of items) {
-    const bruto = String(found.get(item.productId)?.weight ?? '').trim().toLowerCase();
-    total += pesoEmGramas(bruto, PADRAO_G) * item.quantity;
+    const { gramas, origem } = pesoDoProduto(found.get(item.productId), PADRAO_G);
+    if (origem === 'padrao') semPeso.push(String(item.productId));
+    total += gramas * item.quantity;
+  }
+  if (semPeso.length > 0) {
+    console.warn(
+      '[queops] frete cotado com peso padrão (500 g/item) para: ' + semPeso.join(', ')
+      + ' — preencha o peso em Painel → Produtos, ou pelo ERP.',
+    );
   }
   return Math.max(300, Math.round(total));
 }
@@ -395,7 +438,9 @@ async function opcoesDoMelhorEnvio(
 
     const paraCotar = itens.map((i) => ({
       id: i.productId,
-      pesoGramas: pesoEmGramas(String(produtos.get(i.productId)?.weight ?? '')),
+      // Mesma regra do peso do carrinho: número primeiro, rótulo depois,
+      // padrão por último. Antes daqui saía direto do texto.
+      pesoGramas: pesoDoProduto(produtos.get(i.productId)).gramas,
       precoUnitario: i.unitPrice,
       quantidade: i.quantity,
     }));

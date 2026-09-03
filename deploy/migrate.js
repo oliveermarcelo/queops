@@ -6,6 +6,9 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -23,73 +26,46 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// server/src/migrate.ts
-var import_node_fs4 = require("node:fs");
-var import_node_path4 = __toESM(require("node:path"), 1);
-
-// server/src/auth.ts
-var import_node_crypto = require("node:crypto");
-var import_bcryptjs = __toESM(require("bcryptjs"), 1);
-
 // server/src/env.ts
-var import_node_fs = require("node:fs");
-var import_node_path = __toESM(require("node:path"), 1);
-var candidatos = [
-  import_node_path.default.resolve(process.cwd(), ".env"),
-  // Quando o app roda de uma subpasta (ex.: .build/app.js chamado da raiz).
-  import_node_path.default.resolve(process.cwd(), "..", ".env")
-];
-for (const arquivo of candidatos) {
-  if (!(0, import_node_fs.existsSync)(arquivo)) continue;
-  try {
-    process.loadEnvFile(arquivo);
-    break;
-  } catch (e) {
-    console.error(`[queops] n\xE3o consegui ler ${arquivo}:`, e instanceof Error ? e.message : e);
+var import_node_fs, import_node_path, candidatos;
+var init_env = __esm({
+  "server/src/env.ts"() {
+    "use strict";
+    import_node_fs = require("node:fs");
+    import_node_path = __toESM(require("node:path"), 1);
+    candidatos = [
+      import_node_path.default.resolve(process.cwd(), ".env"),
+      // Quando o app roda de uma subpasta (ex.: .build/app.js chamado da raiz).
+      import_node_path.default.resolve(process.cwd(), "..", ".env")
+    ];
+    for (const arquivo of candidatos) {
+      if (!(0, import_node_fs.existsSync)(arquivo)) continue;
+      try {
+        process.loadEnvFile(arquivo);
+        break;
+      } catch (e) {
+        console.error(`[queops] n\xE3o consegui ler ${arquivo}:`, e instanceof Error ? e.message : e);
+      }
+    }
   }
-}
+});
 
 // server/src/config.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = __toESM(require("node:path"), 1);
 function env(name, fallback = "") {
   const v = process.env[name];
   return v === void 0 || v === "" ? fallback : v;
 }
-__name(env, "env");
 function detectPublicDir() {
   for (const pasta of ["public", "dist"]) {
     if ((0, import_node_fs2.existsSync)(import_node_path2.default.join(process.cwd(), pasta, "index.html"))) return pasta;
   }
   return "public";
 }
-__name(detectPublicDir, "detectPublicDir");
 function envBool(name, fallback) {
   const v = process.env[name];
   if (v === void 0 || v === "") return fallback;
   return ["1", "true", "yes", "on"].includes(v.toLowerCase());
 }
-__name(envBool, "envBool");
-var config = {
-  env: env("APP_ENV", "production") === "development" ? "development" : "production",
-  get isProd() {
-    return this.env === "production";
-  },
-  port: Number(env("PORT", "3000")) || 3e3,
-  host: env("HOST", "0.0.0.0"),
-  db: {
-    host: env("DB_HOST", "localhost"),
-    port: Number(env("DB_PORT", "3306")) || 3306,
-    database: env("DB_NAME"),
-    user: env("DB_USER"),
-    password: env("DB_PASS")
-  },
-  appKey: env("APP_KEY"),
-  appUrl: env("APP_URL", "https://queopspiramides.com.br"),
-  secureCookies: envBool("SECURE_COOKIES", true),
-  publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
-  trustProxy: envBool("TRUST_PROXY", true)
-};
 function configProblems() {
   const p = [];
   if (!config.db.database) p.push("DB_NAME n\xE3o definido.");
@@ -103,31 +79,76 @@ function configProblems() {
   }
   return p;
 }
-__name(configProblems, "configProblems");
+var import_node_fs2, import_node_path2, config;
+var init_config = __esm({
+  "server/src/config.ts"() {
+    "use strict";
+    init_env();
+    import_node_fs2 = require("node:fs");
+    import_node_path2 = __toESM(require("node:path"), 1);
+    __name(env, "env");
+    __name(detectPublicDir, "detectPublicDir");
+    __name(envBool, "envBool");
+    config = {
+      env: env("APP_ENV", "production") === "development" ? "development" : "production",
+      get isProd() {
+        return this.env === "production";
+      },
+      port: Number(env("PORT", "3000")) || 3e3,
+      host: env("HOST", "0.0.0.0"),
+      db: {
+        host: env("DB_HOST", "localhost"),
+        port: Number(env("DB_PORT", "3306")) || 3306,
+        database: env("DB_NAME"),
+        user: env("DB_USER"),
+        password: env("DB_PASS")
+      },
+      appKey: env("APP_KEY"),
+      appUrl: env("APP_URL", "https://queopspiramides.com.br"),
+      secureCookies: envBool("SECURE_COOKIES", true),
+      publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
+      trustProxy: envBool("TRUST_PROXY", true)
+    };
+    __name(configProblems, "configProblems");
+  }
+});
 
 // server/src/errors.ts
-var ApiError = class extends Error {
-  static {
-    __name(this, "ApiError");
-  }
-  status;
-  code;
-  constructor(message, status = 400, code = "bad_request", cause) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-    if (cause !== void 0) this.cause = cause;
-  }
-};
 function fail(message, status = 400, code = "bad_request", cause) {
   throw new ApiError(message, status, code, cause);
 }
-__name(fail, "fail");
+var ApiError;
+var init_errors = __esm({
+  "server/src/errors.ts"() {
+    "use strict";
+    ApiError = class extends Error {
+      static {
+        __name(this, "ApiError");
+      }
+      status;
+      code;
+      constructor(message, status = 400, code = "bad_request", cause) {
+        super(message);
+        this.name = "ApiError";
+        this.status = status;
+        this.code = code;
+        if (cause !== void 0) this.cause = cause;
+      }
+    };
+    __name(fail, "fail");
+  }
+});
+
+// server/src/crypto.ts
+var init_crypto = __esm({
+  "server/src/crypto.ts"() {
+    "use strict";
+    init_config();
+    init_errors();
+  }
+});
 
 // server/src/db.ts
-var import_promise = __toESM(require("mysql2/promise"), 1);
-var pool = null;
 function getPool() {
   if (pool) return pool;
   pool = import_promise.default.createPool({
@@ -151,7 +172,6 @@ function getPool() {
   });
   return pool;
 }
-__name(getPool, "getPool");
 async function closePool() {
   if (pool) {
     const p = pool;
@@ -159,7 +179,6 @@ async function closePool() {
     await p.end();
   }
 }
-__name(closePool, "closePool");
 function rethrow(e) {
   const err = e;
   const conexao = [
@@ -178,7 +197,6 @@ function rethrow(e) {
   }
   throw e;
 }
-__name(rethrow, "rethrow");
 function wrap(exec, lastIdRef) {
   return {
     async all(sql, params = []) {
@@ -208,12 +226,6 @@ function wrap(exec, lastIdRef) {
     }
   };
 }
-__name(wrap, "wrap");
-var poolRef = { value: 0 };
-var q = wrap(
-  (sql, params) => getPool().execute(sql, params),
-  poolRef
-);
 async function transaction(fn) {
   let conn;
   try {
@@ -238,13 +250,31 @@ async function transaction(fn) {
     conn.release();
   }
 }
-__name(transaction, "transaction");
+var import_promise, pool, poolRef, q;
+var init_db = __esm({
+  "server/src/db.ts"() {
+    "use strict";
+    import_promise = __toESM(require("mysql2/promise"), 1);
+    init_config();
+    init_errors();
+    pool = null;
+    __name(getPool, "getPool");
+    __name(closePool, "closePool");
+    __name(rethrow, "rethrow");
+    __name(wrap, "wrap");
+    poolRef = { value: 0 };
+    q = wrap(
+      (sql, params) => getPool().execute(sql, params),
+      poolRef
+    );
+    __name(transaction, "transaction");
+  }
+});
 
 // server/src/http.ts
 function round2(value) {
   return roundTo(value, 2);
 }
-__name(round2, "round2");
 function roundTo(value, places) {
   if (!Number.isFinite(value)) return 0;
   const f = 10 ** places;
@@ -252,9 +282,93 @@ function roundTo(value, places) {
   const rounded = Math.sign(scaled) * Math.round(Math.abs(scaled));
   return rounded / f;
 }
-__name(roundTo, "roundTo");
+var init_http = __esm({
+  "server/src/http.ts"() {
+    "use strict";
+    __name(round2, "round2");
+    __name(roundTo, "roundTo");
+  }
+});
+
+// server/src/store.ts
+async function configSet(key, value, exec = q) {
+  await exec.run(
+    `INSERT INTO store_config (config_key, config_val) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE config_val = VALUES(config_val)`,
+    [key, JSON.stringify(value)]
+  );
+}
+var DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_RECOVERY, INTEGRATION_IDS;
+var init_store = __esm({
+  "server/src/store.ts"() {
+    "use strict";
+    init_crypto();
+    init_db();
+    init_http();
+    DEFAULT_SETTINGS = {
+      name: "Qu\xE9ops Pir\xE2mides",
+      email: "contato@queopspiramides.com.br",
+      phone: "(11) 0000-0000",
+      whatsapp: "5511000000000",
+      pixDiscountPct: 5,
+      payments: { card: true, pix: true, boleto: true }
+    };
+    DEFAULT_SHIPPING = {
+      defaultPrice: 24.9,
+      perState: {
+        SP: 14.9,
+        RJ: 19.9,
+        MG: 19.9,
+        ES: 22.9,
+        PR: 24.9,
+        SC: 24.9,
+        RS: 27.9,
+        DF: 22.9
+      },
+      cepRanges: [
+        { id: "cr1", from: "01000000", to: "05999999", price: 9.9, label: "Capital SP" }
+      ],
+      // `states` lista UFs com frete grátis INCONDICIONAL (qualquer valor). Fica
+      // vazio por padrão: com 'SP' aqui, o mínimo de R$ 199 e a faixa de CEP da
+      // capital nunca seriam aplicados — todo pedido paulista sairia com frete 0.
+      freeShipping: { enabled: true, minOrder: 199, states: [] }
+    };
+    DEFAULT_RECOVERY = {
+      enabled: true,
+      delayMinutes: 60,
+      message: "Ol\xE1 {nome}! \u{1F44B} Voc\xEA esqueceu alguns itens na sua sacola da Qu\xE9ops Pir\xE2mides (total {valor}). Use o cupom {cupom} e finalize com desconto: ",
+      couponCode: "VOLTA10"
+    };
+    INTEGRATION_IDS = [
+      "uno",
+      "erp",
+      "zapi",
+      "evolution",
+      "chatwoot",
+      "chatvolt",
+      "mercadopago",
+      "pagseguro",
+      "stripe",
+      "pagarme",
+      "correios",
+      "melhorenvio",
+      "frenet"
+    ];
+    __name(configSet, "configSet");
+  }
+});
+
+// server/src/migrate.ts
+var import_node_fs4 = require("node:fs");
+var import_node_path4 = __toESM(require("node:path"), 1);
 
 // server/src/auth.ts
+var import_node_crypto = require("node:crypto");
+var import_bcryptjs = __toESM(require("bcryptjs"), 1);
+init_crypto();
+init_db();
+init_errors();
+init_http();
 var ROUNDS_SENHA = 12;
 function hashPassword(plain) {
   return import_bcryptjs.default.hash(plain, ROUNDS_SENHA);
@@ -262,9 +376,32 @@ function hashPassword(plain) {
 __name(hashPassword, "hashPassword");
 var DUMMY_HASH = import_bcryptjs.default.hashSync("senha-que-nao-existe-" + (0, import_node_crypto.randomBytes)(16).toString("hex"), ROUNDS_SENHA);
 
+// server/src/migrate.ts
+init_config();
+init_db();
+init_http();
+
+// server/src/pricing.ts
+init_db();
+init_http();
+init_store();
+function pesoEmGramas(texto, padrao = 500) {
+  const m = texto.match(/([\d.,]+)\s*(kg|g|gramas?|quilos?)?/i);
+  if (!m) return padrao;
+  const bruto = m[1].replace(/\.(?=\d{3}\b)/g, "").replace(",", ".");
+  const n = Number(bruto);
+  if (!Number.isFinite(n) || n <= 0) return padrao;
+  const unidade = (m[2] ?? "").toLowerCase();
+  if (unidade === "") return n < 100 ? Math.round(n * 1e3) : Math.round(n);
+  if (unidade.startsWith("k") || unidade.startsWith("q")) return Math.round(n * 1e3);
+  return Math.round(n);
+}
+__name(pesoEmGramas, "pesoEmGramas");
+
 // server/src/schema.ts
 var import_node_fs3 = require("node:fs");
 var import_node_path3 = __toESM(require("node:path"), 1);
+init_db();
 function dbDir() {
   const candidatos2 = [
     import_node_path3.default.resolve(process.cwd(), "server/db"),
@@ -357,67 +494,48 @@ async function addMissingIndexes(say2) {
   return criados;
 }
 __name(addMissingIndexes, "addMissingIndexes");
-
-// server/src/store.ts
-var DEFAULT_SETTINGS = {
-  name: "Qu\xE9ops Pir\xE2mides",
-  email: "contato@queopspiramides.com.br",
-  phone: "(11) 0000-0000",
-  whatsapp: "5511000000000",
-  pixDiscountPct: 5,
-  payments: { card: true, pix: true, boleto: true }
-};
-var DEFAULT_SHIPPING = {
-  defaultPrice: 24.9,
-  perState: {
-    SP: 14.9,
-    RJ: 19.9,
-    MG: 19.9,
-    ES: 22.9,
-    PR: 24.9,
-    SC: 24.9,
-    RS: 27.9,
-    DF: 22.9
-  },
-  cepRanges: [
-    { id: "cr1", from: "01000000", to: "05999999", price: 9.9, label: "Capital SP" }
-  ],
-  // `states` lista UFs com frete grátis INCONDICIONAL (qualquer valor). Fica
-  // vazio por padrão: com 'SP' aqui, o mínimo de R$ 199 e a faixa de CEP da
-  // capital nunca seriam aplicados — todo pedido paulista sairia com frete 0.
-  freeShipping: { enabled: true, minOrder: 199, states: [] }
-};
-var DEFAULT_RECOVERY = {
-  enabled: true,
-  delayMinutes: 60,
-  message: "Ol\xE1 {nome}! \u{1F44B} Voc\xEA esqueceu alguns itens na sua sacola da Qu\xE9ops Pir\xE2mides (total {valor}). Use o cupom {cupom} e finalize com desconto: ",
-  couponCode: "VOLTA10"
-};
-var INTEGRATION_IDS = [
-  "uno",
-  "erp",
-  "zapi",
-  "evolution",
-  "chatwoot",
-  "chatvolt",
-  "mercadopago",
-  "pagseguro",
-  "stripe",
-  "pagarme",
-  "correios",
-  "melhorenvio",
-  "frenet"
+var ALARGAMENTOS = [
+  {
+    tabela: "products",
+    coluna: "stock",
+    // "int", "int(11)", "int unsigned" — versões diferentes do MySQL relatam
+    // de formas diferentes, e todas significam a mesma coluna a converter.
+    de: /^(int|integer|smallint|mediumint|bigint)\b/i,
+    para: "DECIMAL(10,3) NOT NULL DEFAULT 0"
+  }
 ];
-async function configSet(key, value, exec = q) {
-  await exec.run(
-    `INSERT INTO store_config (config_key, config_val) VALUES (?, ?)
-     ON DUPLICATE KEY UPDATE config_val = VALUES(config_val)`,
-    [key, JSON.stringify(value)]
-  );
+async function widenColumns(say2) {
+  let convertidas = 0;
+  for (const { tabela, coluna, de, para } of ALARGAMENTOS) {
+    let atual;
+    try {
+      const row = await q.one(
+        `SELECT COLUMN_TYPE AS tipo FROM information_schema.columns
+          WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+        [tabela, coluna]
+      );
+      if (row === null) continue;
+      atual = String(row.tipo);
+    } catch (e) {
+      if (tabelaAusente(e)) continue;
+      throw e;
+    }
+    if (!de.test(atual)) continue;
+    try {
+      await q.run(`ALTER TABLE \`${tabela}\` MODIFY COLUMN \`${coluna}\` ${para}`);
+      say2(`  ~ ${tabela}.${coluna}: ${atual} \u2192 ${para}`);
+      convertidas++;
+    } catch (e) {
+      const err = e;
+      say2(`  ! n\xE3o consegui converter ${tabela}.${coluna}: ${err.code ?? ""} ${err.message ?? ""}`.trimEnd());
+    }
+  }
+  return convertidas;
 }
-__name(configSet, "configSet");
+__name(widenColumns, "widenColumns");
 
 // server/src/migrate.ts
+init_store();
 var say = /* @__PURE__ */ __name((m) => console.log(m), "say");
 function parseArgs(argv) {
   const out = {};
@@ -463,15 +581,16 @@ async function importCatalog(dir) {
     await q.run(
       `INSERT INTO products (
           id, sku, name, category, subcategory, category_label, description, long_description,
-          price, old_price, stock, image, tag, weight, ingredients,
+          price, old_price, stock, image, tag, weight_kg, weight, ingredients,
           highlight, active, position
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
        ON DUPLICATE KEY UPDATE
           sku=VALUES(sku), name=VALUES(name), category=VALUES(category),
           subcategory=VALUES(subcategory), category_label=VALUES(category_label),
           description=VALUES(description), long_description=VALUES(long_description),
           price=VALUES(price), old_price=VALUES(old_price), image=VALUES(image),
-          tag=VALUES(tag), weight=VALUES(weight), ingredients=VALUES(ingredients),
+          tag=VALUES(tag), weight_kg=VALUES(weight_kg), weight=VALUES(weight),
+          ingredients=VALUES(ingredients),
           highlight=VALUES(highlight), position=VALUES(position)`,
       [
         p.id,
@@ -487,6 +606,13 @@ async function importCatalog(dir) {
         p.stock ?? defaultStock[i % defaultStock.length],
         p.image ?? "",
         p.tag ?? null,
+        /*
+         * Peso em quilos: o número pronto, se o catálogo tiver; senão, o que
+         * der para extrair do texto. `pesoEmGramas` devolve -1 quando não acha
+         * número nenhum ("Base 15cm · cobre"), e aí fica 0 — sem peso, e a
+         * cotação usa o padrão, que é o comportamento de hoje.
+         */
+        typeof p.weightKg === "number" && p.weightKg > 0 ? Math.round(p.weightKg * 1e3) / 1e3 : Math.max(0, pesoEmGramas(p.weight ?? "", -1)) / 1e3,
         p.weight ?? "",
         p.ingredients ?? null,
         p.highlight ? 1 : 0,
@@ -634,6 +760,8 @@ async function main() {
   say(adicionadas === 0 ? "Nenhuma coluna nova a adicionar." : `Colunas adicionadas: ${adicionadas}.`);
   const indices = await addMissingIndexes(say);
   say(indices === 0 ? "Nenhum \xEDndice novo a adicionar." : `\xCDndices adicionados: ${indices}.`);
+  const convertidas = await widenColumns(say);
+  say(convertidas === 0 ? "Nenhuma coluna a converter." : `Colunas convertidas: ${convertidas}.`);
   await importCatalog(dir);
   const padroes = [
     ["settings", DEFAULT_SETTINGS],

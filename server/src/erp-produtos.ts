@@ -42,7 +42,10 @@ const CAMPOS: Record<string, string> = {
   oldPrice: 'old_price',
   stock: 'stock',
   image: 'image',
-  weight: 'weight',
+  // `weight` do ERP é o peso em quilos e vai para a coluna numérica. O texto de
+  // medida da vitrine é outro campo, `weightLabel`.
+  weight: 'weight_kg',
+  weightLabel: 'weight',
   tag: 'tag',
   ingredients: 'ingredients',
   highlight: 'highlight',
@@ -83,8 +86,14 @@ interface Convertido {
   aviso?: string;
 }
 
-/** Converte e valida um campo do DTO para o formato da coluna. */
-function converter(campo: string, valor: unknown): Convertido {
+/**
+ * Converte e valida um campo do DTO para o formato da coluna.
+ *
+ * Exportada para o teste. É aqui que moram as decisões que custam dinheiro em
+ * silêncio — peso na unidade errada, saldo arredondado —, e testá-las por
+ * dentro é bem mais barato que reproduzi-las por HTTP com banco.
+ */
+export function converter(campo: string, valor: unknown): Convertido {
   const texto = (max: number): Convertido => ({ valor: String(valor ?? '').slice(0, max) });
 
   switch (campo) {
@@ -103,12 +112,31 @@ function converter(campo: string, valor: unknown): Convertido {
       if (campo === 'oldPrice' && n === 0) return { valor: null };
       return { valor: round2(n) };
     }
+    /*
+     * Estoque aceita fração.
+     *
+     * Exigia inteiro, e o ERP trabalha o saldo como número fracionário —
+     * então 7,5 era recusado com 422. A alternativa que parece gentil (aceitar
+     * e arredondar) é pior: os dois sistemas passariam a discordar do saldo em
+     * silêncio, cada um confiante no seu número, e a diferença só apareceria
+     * num inventário meses depois.
+     *
+     * Três casas é o que a coluna guarda; mandar mais é arredondado aqui, com
+     * aviso, para o ERP saber que o valor gravado não é idêntico ao enviado.
+     */
     case 'stock': {
       const n = Number(valor);
-      if (!Number.isInteger(n) || n < 0) {
-        return { valor: null, erro: 'stock precisa ser um inteiro maior ou igual a zero' };
+      if (!Number.isFinite(n) || n < 0) {
+        return { valor: null, erro: 'stock precisa ser um número maior ou igual a zero' };
       }
-      return { valor: n };
+      const gravado = Math.round(n * 1000) / 1000;
+      if (gravado !== n) {
+        return {
+          valor: gravado,
+          aviso: `stock ${n} foi arredondado para ${gravado}: a loja guarda 3 casas decimais.`,
+        };
+      }
+      return { valor: gravado };
     }
     case 'image': {
       const url = String(valor ?? '').slice(0, 500);
@@ -117,24 +145,72 @@ function converter(campo: string, valor: unknown): Convertido {
       }
       return { valor: url };
     }
+    /*
+     * `weight` é o peso em QUILOS, número.
+     *
+     * Era texto livre, e o frete tentava achar o peso no meio da frase —
+     * "0,2kg" nenhum sistema lê como número, e "Base 15cm · cobre", que também
+     * caía aqui, não é peso nenhum.
+     *
+     * Peso errado é prejuízo silencioso: ninguém abre chamado porque o frete
+     * saiu barato. Por isso todo caminho duvidoso aqui devolve aviso, e o
+     * único erro possível é texto que não tem número.
+     */
     case 'weight': {
-      const bruto = String(valor ?? '').slice(0, 120);
-      if (bruto.trim() === '') return { valor: '' };
-      /*
-       * O peso alimenta a cotação de frete. Texto que a loja não consegue
-       * interpretar cai no peso padrão, e frete calculado com peso errado é
-       * prejuízo silencioso — ninguém reclama de frete barato demais.
-       */
+      if (valor === null || valor === undefined || String(valor).trim() === '') {
+        return {
+          valor: 0,
+          aviso: 'weight vazio: a cotação de frete deste produto vai usar o peso padrão de 500 g.',
+        };
+      }
+
+      const bruto = String(valor).trim();
+      // Número, ou texto que é só um número ("0.2", "0,2"): quilos, direto.
+      const limpo = bruto.replace(',', '.');
+      if (/^\d+(\.\d+)?$/.test(limpo)) {
+        const kg = Math.round(Number(limpo) * 1000) / 1000;
+        if (kg === 0) {
+          return {
+            valor: 0,
+            aviso: 'weight 0: a cotação de frete deste produto vai usar o peso padrão de 500 g.',
+          };
+        }
+        /*
+         * Erro de unidade é a falha mais provável deste campo, e a mais cara:
+         * gramas no lugar de quilos multiplica o peso por mil e o frete
+         * cotado deixa de ter relação com a realidade. Não recuso — não me
+         * cabe decidir que a loja nunca vai vender algo de 150 kg — mas
+         * ninguém pode dizer que não foi avisado.
+         */
+        if (kg > 100) {
+          return {
+            valor: kg,
+            aviso: `weight ${kg} kg é um valor alto. A unidade esperada é QUILO — se o ERP `
+              + `enviou gramas, o valor correto seria ${Math.round(kg) / 1000} kg.`,
+          };
+        }
+        return { valor: kg };
+      }
+
+      // Texto com unidade ("0,2kg", "800 g"): aceito para não quebrar o que já
+      // está integrado, convertido, e avisado — o campo agora é numérico.
       const gramas = pesoEmGramas(bruto, -1);
       if (gramas <= 0) {
         return {
-          valor: bruto,
-          aviso: `weight "${bruto}" não foi reconhecido como peso; o frete vai usar o padrão. `
-            + 'Use "1,2 kg" ou "800 g".',
+          valor: null,
+          erro: `weight "${bruto}" não tem número que dê para ler como peso. `
+            + 'O campo agora é numérico, em quilos (ex.: 0.2). Texto de medida vai em weightLabel.',
         };
       }
-      return { valor: bruto };
+      return {
+        valor: Math.round(gramas) / 1000,
+        aviso: `weight "${bruto}" foi lido como ${Math.round(gramas) / 1000} kg. O campo agora é `
+          + 'numérico, em quilos — mande 0.2 em vez de "0,2kg".',
+      };
     }
+    case 'weightLabel':
+      // Só rótulo de vitrine ("Base 15cm · cobre"). Não influencia frete.
+      return texto(120);
     case 'highlight':
     case 'active':
       return { valor: valor === true || valor === 1 || valor === '1' || valor === 'true' ? 1 : 0 };

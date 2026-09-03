@@ -135,9 +135,18 @@ CREATE TABLE IF NOT EXISTS products (
   long_description  MEDIUMTEXT    NULL,
   price             DECIMAL(10,2) NOT NULL DEFAULT 0,
   old_price         DECIMAL(10,2) NULL,
-  stock             INT           NOT NULL DEFAULT 0,
+  -- Estoque é DECIMAL, e não INT: o ERP trabalha o saldo como número
+  -- fracionário. Truncar 7,5 para 7 na sincronização seria uma divergência
+  -- silenciosa — cada sistema confiante no seu número. Quantidade de item
+  -- vendido continua inteira; saldo, não.
+  stock             DECIMAL(10,3) NOT NULL DEFAULT 0,
   image             VARCHAR(500)  NOT NULL DEFAULT '',
   tag               VARCHAR(40)   NULL,
+  -- Peso da peça em QUILOS: é o que o frete usa e o que o ERP envia.
+  weight_kg         DECIMAL(10,3) NOT NULL DEFAULT 0,
+  -- Texto de medida/formato exibido na página do produto ("Base 15cm · cobre").
+  -- Já serviu de peso, e o frete tentava achar o número no meio da frase. Hoje
+  -- é só rótulo: quem manda no frete é weight_kg.
   weight            VARCHAR(120)  NOT NULL DEFAULT '',
   ingredients       TEXT          NULL,
   highlight         TINYINT(1)    NOT NULL DEFAULT 0,

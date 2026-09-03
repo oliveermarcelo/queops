@@ -105,6 +105,19 @@ export default function ProductDetailPage({
   const pixPct = settings?.pixDiscountPct ?? 0;
   const pixPrice = product.price * (1 - pixPct / 100);
 
+  /*
+   * Rótulo de medida da peça: o texto cadastrado ou, na falta dele, o peso.
+   *
+   * Vem vazio na maior parte do catálogo, e antes disso a página desenhava a
+   * pastilha e o "/" do preço com nada dentro — uma bolinha branca flutuando
+   * sobre a foto de todo produto. Vazio agora significa não desenhar.
+   */
+  const medida = (product.weightLabel ?? '').trim() !== ''
+    ? String(product.weightLabel).trim()
+    : product.weight > 0
+      ? `${brlNumber(product.weight)} kg`
+      : '';
+
   // Stock signal
   const stock = product.stock ?? 0;
   const lowStock = stock > 0 && stock <= 6;
@@ -260,10 +273,12 @@ export default function ProductDetailPage({
                 referrerPolicy="no-referrer"
               />
 
-              {/* Weight chip */}
-              <div className="absolute bottom-6 right-6 bg-white/90 backdrop-blur-sm px-3.5 py-1.5 rounded-full text-xs text-gray-600 border border-gray-150 font-bold shadow-sm">
-                {product.weight}
-              </div>
+              {/* Medida da peça — só aparece quando existe algo para mostrar. */}
+              {medida !== '' && (
+                <div className="absolute bottom-6 right-6 bg-white/90 backdrop-blur-sm px-3.5 py-1.5 rounded-full text-xs text-gray-600 border border-gray-150 font-bold shadow-sm">
+                  {medida}
+                </div>
+              )}
             </div>
 
             {/* Quality Seals Row */}
@@ -340,7 +355,9 @@ export default function ProductDetailPage({
                     <span className={`text-4xl font-black tracking-tight ${hasDiscount ? 'text-brand-copper' : 'text-brand-ink'}`}>
                       R$ {brlNumber(product.price)}
                     </span>
-                    <span className="text-sm text-gray-400 font-semibold">/ {product.weight}</span>
+                    {medida !== '' && (
+                      <span className="text-sm text-gray-400 font-semibold">/ {medida}</span>
+                    )}
                   </div>
                 </div>
 

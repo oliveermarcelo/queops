@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 2.2 — 2 de setembro de 2026'
+VERSAO = 'Versão 2.3 — 3 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -355,9 +355,10 @@ curl -s https://queopspiramides.com.br/api/v1/products \\
       "longDescription": "texto completo",  // opcional
       "price": 189.9,
       "oldPrice": 219.9,                    // opcional (preço "de")
-      "stock": 12,
+      "stock": 12,                          // número; aceita fração (12.5)
       "image": "/produtos/piramide-cobre-15cm.jpg",
-      "weight": "1,2 kg",                   // TEXTO livre — ver aviso abaixo
+      "weight": 1.2,                        // número, em QUILOS
+      "weightLabel": "Base 15cm · cobre",   // só texto de vitrine; não é peso
       "tag": "mais vendido",                // opcional
       "highlight": true,                    // opcional
       "active": true
@@ -367,11 +368,26 @@ curl -s https://queopspiramides.com.br/api/v1/products \\
 """))
     add(Spacer(1, 6))
     add(aviso(
-        'O campo weight é texto, não número',
-        'A loja guarda o peso como texto livre ("1,2 kg", "800 g", "0.5") e o interpreta na hora de '
-        'cotar frete. Se o UNO for a fonte do peso, mande sempre no mesmo formato — de preferência '
-        '<font face="Courier">"1,2 kg"</font> — porque valor ambíguo aqui vira frete errado, que é '
-        'prejuízo silencioso: ninguém reclama de frete barato demais.'))
+        'MUDOU NA 2.3: weight é número em quilos, e stock aceita fração',
+        'Até a versão 2.2, <font face="Courier">weight</font> era texto livre ("1,2 kg") e '
+        '<font face="Courier">stock</font> recusava decimais. Os dois estavam errados, e a mudança '
+        '<b>quebra quem lia weight como string</b>.<br/><br/>'
+        '<b>weight</b> agora é número, em <b>QUILOS</b> — 0.2 são duzentos gramas. Enviar gramas '
+        'por engano multiplica o frete por mil; a loja não recusa (peça de 150 kg existe), mas '
+        'devolve aviso em <font face="Courier">warnings</font> com a conta feita. Texto com unidade '
+        '("0,2kg") ainda é aceito, convertido e avisado — não conte com isso para sempre.<br/><br/>'
+        '<b>weightLabel</b> é o antigo conteúdo de texto: medida da peça, exibida na vitrine. Não '
+        'entra em cálculo nenhum. O ERP pode ignorá-lo.<br/><br/>'
+        '<b>stock</b> aceita decimal, até 3 casas. Antes, 7,5 era recusado com 422; agora atravessa '
+        'inteiro nos dois sentidos. Acima de 3 casas, arredonda e avisa.'))
+    add(Spacer(1, 6))
+    add(aviso(
+        'Sem peso, o frete é cotado com 500 g por item',
+        'Peso ausente ou zero não dá erro: a cotação usa 500 g. Isso mantém a loja vendendo quando '
+        'falta cadastro, e é a razão de o campo não ser obrigatório — mas para uma peça de 3 kg o '
+        'frete cobrado do cliente sai bem abaixo do custo, e a diferença sai do bolso da loja sem '
+        'aparecer em relatório nenhum. <b>Se o UNO é a fonte do peso, mandar peso é o que evita '
+        'esse prejuízo.</b>'))
 
     for parte in endpoint('GET', '/products/{id}', 'Um produto. Diferente da listagem, este endpoint devolve o produto <b>mesmo inativo</b> — útil para o ERP conferir um item que saiu da vitrine.'):
         add(parte)
@@ -390,7 +406,7 @@ curl -s https://queopspiramides.com.br/api/v1/products \\
     add(bloco("""
 PUT /api/v1/products/piramide-cobre-15cm-1001
 { "sku": "PIR-CO-15", "name": "Pirâmide de Cobre 15cm", "price": 199.9,
-  "oldPrice": 229.9, "stock": 12, "weight": "1,2 kg",
+  "oldPrice": 229.9, "stock": 12.5, "weight": 1.2,
   "category": "piramides", "subcategory": "cobre", "active": true }
 
 200 (ou 201 quando cria) →
@@ -431,7 +447,7 @@ PUT /api/v1/products/piramide-cobre-15cm-1001
         add(parte)
     add(bloco("""
 POST /api/v1/products/batch
-{ "products": [ { "id": "...", "name": "...", "price": 25, "stock": 4 },
+{ "products": [ { "id": "...", "name": "...", "price": 25, "stock": 4.5 },
                 { "id": "...", "price": 30 } ] }
 
 200 → { "total": 2, "gravados": 2, "falhas": 0,
@@ -454,15 +470,15 @@ POST /api/v1/products/batch
 PATCH /api/v1/products/piramide-cobre-15cm-1001/stock
 { "stock": 7 }
 
-200 → { "ok": true, "id": "piramide-cobre-15cm-1001", "stock": 7 }
-422 → { "error": { "code": "invalid_stock", ... } }   // negativo ou não inteiro
+200 → { "ok": true, "id": "piramide-cobre-15cm-1001", "stock": 7.5 }
+422 → { "error": { "code": "invalid_stock", ... } }   // negativo ou não numérico
 404 → { "error": { "code": "not_found", ... } }
 """))
     add(bloco("""
 PATCH /api/v1/products/piramide-cobre-15cm-1001/stock
-{ "stock": 7 }
+{ "stock": 7.5 }
 
-200 → { "ok": true, "id": "...", "stock": 7, "applied": ["stock"],
+200 → { "ok": true, "id": "...", "stock": 7.5, "applied": ["stock"],
         "ignored": [], "warnings": [] }
 404 → not_found      # este endpoint NÃO cria produto; use PUT para isso
 """))
@@ -720,11 +736,12 @@ GET /api/v1/products/{id} → { "product": { ..., "lockedFields": ["price"] } }
     add(tabela(
         ['Campo', 'Dono', 'Observação'],
         [
-            ['stock', 'ERP', 'Absoluto, a cada ciclo. Travável no painel para ajuste manual.'],
+            ['stock', 'ERP', 'Absoluto, a cada ciclo. Aceita fração. Travável no painel.'],
             ['price / oldPrice', 'ERP', 'Travável para promoção pontual da loja.'],
             ['sku', 'ERP', 'Chave de conciliação; a loja não deve alterar.'],
             ['name / description', 'ERP com sobrescrita', 'A loja costuma preferir o texto de vitrine ao do ERP.'],
-            ['weight', 'ERP', 'Formato fixo (ver aviso na seção 4) — alimenta o cálculo de frete.'],
+            ['weight', 'ERP', 'Número, em quilos. Alimenta o frete; vazio custa dinheiro (seção 4).'],
+            ['weightLabel', 'Painel', 'Medida exibida na vitrine. O ERP pode ignorar.'],
             ['image / longDescription / tag / highlight', 'Loja', 'Conteúdo de vitrine; o ERP não deve enviar.'],
             ['active', 'ERP com sobrescrita', 'ERP inativa por descontinuação; loja, por curadoria.'],
             ['status do pedido', 'Compartilhado', 'Loja até paid; ERP de paid em diante.'],

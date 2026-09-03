@@ -182,6 +182,40 @@ r = await aplicarPagamento({
 });
 checar('aviso de pedido inexistente não quebra nada', false, r.mudou);
 
+/*
+ * ------------------------------------------------- saldo fracionado ----
+ *
+ * `stock` virou DECIMAL porque o ERP trabalha o saldo com fração. A baixa e a
+ * devolução são UPDATEs aritméticos com trava no WHERE
+ * (`stock = stock - ? WHERE stock >= ?`), e é aí que uma coluna inteira
+ * estragaria a conta sem reclamar: 2,5 menos 1 daria 1 em vez de 1,5, e a
+ * diferença só apareceria num inventário meses depois.
+ *
+ * Nenhum teste de função pega isso. Só o banco responde.
+ */
+await q.run('UPDATE products SET stock = ? WHERE id = ?', [2.5, PRODUTO]);
+checar('a coluna guarda a fração como enviada', 2.5, await estoque());
+
+// A mesma baixa que o checkout faz, com a mesma trava.
+let baixou = await q.run(
+  'UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?',
+  [1, PRODUTO, 1],
+);
+checar('a baixa de 1 sobre 2,5 acontece', 1, baixou);
+checar('e sobra 1,5 — não 1', 1.5, await estoque());
+
+// A trava continua valendo: não vende 2 quando só há 1,5.
+baixou = await q.run(
+  'UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?',
+  [2, PRODUTO, 2],
+);
+checar('não deixa vender 2 com saldo 1,5', 0, baixou);
+checar('e o saldo fica intacto depois da recusa', 1.5, await estoque());
+
+// Devolução, como no cancelamento.
+await q.run('UPDATE products SET stock = stock + ? WHERE id = ?', [1, PRODUTO]);
+checar('a devolução recompõe o saldo fracionado', 2.5, await estoque());
+
 await limpar();
 await closePool();
 

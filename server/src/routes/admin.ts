@@ -185,13 +185,14 @@ adminRoutes.post('/products', h(async (req, res) => {
   await q.run(
     `INSERT INTO products (
         id, sku, name, category, subcategory, category_label, description, long_description,
-        price, old_price, stock, image, tag, weight, ingredients, highlight, active
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        price, old_price, stock, image, tag, weight_kg, weight, ingredients, highlight, active
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
         sku=VALUES(sku), name=VALUES(name), category=VALUES(category), subcategory=VALUES(subcategory),
         category_label=VALUES(category_label), description=VALUES(description),
         long_description=VALUES(long_description), price=VALUES(price), old_price=VALUES(old_price),
-        stock=VALUES(stock), image=VALUES(image), tag=VALUES(tag), weight=VALUES(weight),
+        stock=VALUES(stock), image=VALUES(image), tag=VALUES(tag), weight_kg=VALUES(weight_kg),
+        weight=VALUES(weight),
         ingredients=VALUES(ingredients), highlight=VALUES(highlight), active=VALUES(active)`,
     [
       id,
@@ -204,10 +205,14 @@ adminRoutes.post('/products', h(async (req, res) => {
       bodyStr(b, 'longDescription', '', 20000),
       price,
       bodyFloat(b, 'oldPrice', 0) > 0 ? bodyFloat(b, 'oldPrice') : null,
-      Math.max(0, bodyInt(b, 'stock')),
+      // Saldo pode ter fração (o ERP trabalha assim); 3 casas, como a coluna.
+      Math.max(0, Math.round(bodyFloat(b, 'stock') * 1000) / 1000),
       image,
       bodyStr(b, 'tag', '', 40) || null,
-      bodyStr(b, 'weight', '', 120),
+      // Peso em quilos, numérico — o que o frete usa.
+      Math.max(0, Math.round(bodyFloat(b, 'weight') * 1000) / 1000),
+      // Rótulo de medida da vitrine, texto.
+      bodyStr(b, 'weightLabel', '', 120),
       bodyStr(b, 'ingredients', '', 2000),
       bodyBool(b, 'highlight') ? 1 : 0,
       // Sem `active` no corpo, mantém o estado atual: salvar uma edição de

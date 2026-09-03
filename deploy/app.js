@@ -569,9 +569,29 @@ function productRowToApi(r) {
     categoryLabel: r.category_label,
     description: String(r.description ?? ""),
     price: Number(r.price) || 0,
+    /*
+     * Estoque é número, e pode ter fração.
+     *
+     * JSON não distingue inteiro de decimal — `7` e `7.0` são o mesmo número
+     * para qualquer parser. O que muda é o que a loja aceita GUARDAR: até aqui
+     * ela recusava fração, e o saldo 7,5 do ERP virava 7 ou virava erro. Agora
+     * o valor atravessa inteiro nos dois sentidos.
+     */
     stock: Number(r.stock) || 0,
     image: r.image,
-    weight: String(r.weight ?? ""),
+    /*
+     * `weight` é o peso em QUILOS, como número.
+     *
+     * Era texto livre ("0,2kg", "Base 15cm · cobre"), servindo ao mesmo tempo
+     * de rótulo na vitrine e de peso para o frete — dois trabalhos
+     * incompatíveis no mesmo campo. Ninguém consegue ler "0,2kg" como número, e
+     * o frete tinha que adivinhar o valor no meio da frase.
+     *
+     * A unidade é quilo porque é a unidade dos Correios, do Melhor Envio e do
+     * ERP. O rótulo continua existindo, com nome próprio: `weightLabel`.
+     */
+    weight: Number(r.weight_kg) || 0,
+    weightLabel: String(r.weight ?? ""),
     active: Boolean(r.active)
   };
   if (r.subcategory) out.subcategory = r.subcategory;
@@ -1592,7 +1612,8 @@ __export(schema_exports, {
   addMissingIndexes: () => addMissingIndexes,
   dbDir: () => dbDir,
   sincronizarEstrutura: () => sincronizarEstrutura,
-  splitStatements: () => splitStatements
+  splitStatements: () => splitStatements,
+  widenColumns: () => widenColumns
 });
 function dbDir() {
   const candidatos2 = [
@@ -1671,14 +1692,43 @@ async function addMissingIndexes(say) {
   }
   return criados;
 }
+async function widenColumns(say) {
+  let convertidas = 0;
+  for (const { tabela, coluna, de, para } of ALARGAMENTOS) {
+    let atual;
+    try {
+      const row = await q.one(
+        `SELECT COLUMN_TYPE AS tipo FROM information_schema.columns
+          WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+        [tabela, coluna]
+      );
+      if (row === null) continue;
+      atual = String(row.tipo);
+    } catch (e) {
+      if (tabelaAusente(e)) continue;
+      throw e;
+    }
+    if (!de.test(atual)) continue;
+    try {
+      await q.run(`ALTER TABLE \`${tabela}\` MODIFY COLUMN \`${coluna}\` ${para}`);
+      say(`  ~ ${tabela}.${coluna}: ${atual} \u2192 ${para}`);
+      convertidas++;
+    } catch (e) {
+      const err = e;
+      say(`  ! n\xE3o consegui converter ${tabela}.${coluna}: ${err.code ?? ""} ${err.message ?? ""}`.trimEnd());
+    }
+  }
+  return convertidas;
+}
 async function sincronizarEstrutura(say) {
   const sql = (0, import_node_fs4.readFileSync)(import_node_path4.default.join(dbDir(), "schema.sql"), "utf8");
   const { noComments } = splitStatements(sql);
   const colunas = await addMissingColumns(noComments, say);
   const indices = await addMissingIndexes(say);
-  return { colunas, indices };
+  const convertidas = await widenColumns(say);
+  return { colunas, indices, convertidas };
 }
-var import_node_fs4, import_node_path4, TIPOS_SQL, INDICES;
+var import_node_fs4, import_node_path4, TIPOS_SQL, INDICES, ALARGAMENTOS;
 var init_schema = __esm({
   "server/src/schema.ts"() {
     "use strict";
@@ -1700,6 +1750,17 @@ var init_schema = __esm({
       }
     ];
     __name(addMissingIndexes, "addMissingIndexes");
+    ALARGAMENTOS = [
+      {
+        tabela: "products",
+        coluna: "stock",
+        // "int", "int(11)", "int unsigned" — versões diferentes do MySQL relatam
+        // de formas diferentes, e todas significam a mesma coluna a converter.
+        de: /^(int|integer|smallint|mediumint|bigint)\b/i,
+        para: "DECIMAL(10,3) NOT NULL DEFAULT 0"
+      }
+    ];
+    __name(widenColumns, "widenColumns");
     __name(sincronizarEstrutura, "sincronizarEstrutura");
   }
 });
@@ -2287,12 +2348,32 @@ async function resolveCoupon(code, subtotal, exec = q, today = new Date(Date.now
   return [row, null];
 }
 __name(resolveCoupon, "resolveCoupon");
+function pesoDoProduto(linha, padraoG = 500) {
+  const kg = Number(linha?.weight_kg ?? 0);
+  if (Number.isFinite(kg) && kg > 0) {
+    return { gramas: Math.round(kg * 1e3), origem: "weight_kg" };
+  }
+  const rotulo = String(linha?.weight ?? "").trim().toLowerCase();
+  if (/\d\s*(kg|g|gramas?|quilos?)\b/.test(rotulo)) {
+    const g = pesoEmGramas(rotulo, -1);
+    if (g > 0) return { gramas: g, origem: "rotulo" };
+  }
+  return { gramas: padraoG, origem: "padrao" };
+}
+__name(pesoDoProduto, "pesoDoProduto");
 function pesoDoCarrinho(items, found) {
   const PADRAO_G = 500;
   let total = 0;
+  const semPeso = [];
   for (const item of items) {
-    const bruto = String(found.get(item.productId)?.weight ?? "").trim().toLowerCase();
-    total += pesoEmGramas(bruto, PADRAO_G) * item.quantity;
+    const { gramas, origem } = pesoDoProduto(found.get(item.productId), PADRAO_G);
+    if (origem === "padrao") semPeso.push(String(item.productId));
+    total += gramas * item.quantity;
+  }
+  if (semPeso.length > 0) {
+    console.warn(
+      "[queops] frete cotado com peso padr\xE3o (500 g/item) para: " + semPeso.join(", ") + " \u2014 preencha o peso em Painel \u2192 Produtos, ou pelo ERP."
+    );
   }
   return Math.max(300, Math.round(total));
 }
@@ -2362,7 +2443,9 @@ async function opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico
     }
     const paraCotar = itens.map((i) => ({
       id: i.productId,
-      pesoGramas: pesoEmGramas(String(produtos.get(i.productId)?.weight ?? "")),
+      // Mesma regra do peso do carrinho: número primeiro, rótulo depois,
+      // padrão por último. Antes daqui saía direto do texto.
+      pesoGramas: pesoDoProduto(produtos.get(i.productId)).gramas,
       precoUnitario: i.unitPrice,
       quantidade: i.quantity
     }));
@@ -2554,7 +2637,10 @@ var CAMPOS = {
   oldPrice: "old_price",
   stock: "stock",
   image: "image",
-  weight: "weight",
+  // `weight` do ERP é o peso em quilos e vai para a coluna numérica. O texto de
+  // medida da vitrine é outro campo, `weightLabel`.
+  weight: "weight_kg",
+  weightLabel: "weight",
   tag: "tag",
   ingredients: "ingredients",
   highlight: "highlight",
@@ -2587,12 +2673,31 @@ function converter(campo, valor2) {
       if (campo === "oldPrice" && n === 0) return { valor: null };
       return { valor: round2(n) };
     }
+    /*
+     * Estoque aceita fração.
+     *
+     * Exigia inteiro, e o ERP trabalha o saldo como número fracionário —
+     * então 7,5 era recusado com 422. A alternativa que parece gentil (aceitar
+     * e arredondar) é pior: os dois sistemas passariam a discordar do saldo em
+     * silêncio, cada um confiante no seu número, e a diferença só apareceria
+     * num inventário meses depois.
+     *
+     * Três casas é o que a coluna guarda; mandar mais é arredondado aqui, com
+     * aviso, para o ERP saber que o valor gravado não é idêntico ao enviado.
+     */
     case "stock": {
       const n = Number(valor2);
-      if (!Number.isInteger(n) || n < 0) {
-        return { valor: null, erro: "stock precisa ser um inteiro maior ou igual a zero" };
+      if (!Number.isFinite(n) || n < 0) {
+        return { valor: null, erro: "stock precisa ser um n\xFAmero maior ou igual a zero" };
       }
-      return { valor: n };
+      const gravado = Math.round(n * 1e3) / 1e3;
+      if (gravado !== n) {
+        return {
+          valor: gravado,
+          aviso: `stock ${n} foi arredondado para ${gravado}: a loja guarda 3 casas decimais.`
+        };
+      }
+      return { valor: gravado };
     }
     case "image": {
       const url = String(valor2 ?? "").slice(0, 500);
@@ -2601,18 +2706,56 @@ function converter(campo, valor2) {
       }
       return { valor: url };
     }
+    /*
+     * `weight` é o peso em QUILOS, número.
+     *
+     * Era texto livre, e o frete tentava achar o peso no meio da frase —
+     * "0,2kg" nenhum sistema lê como número, e "Base 15cm · cobre", que também
+     * caía aqui, não é peso nenhum.
+     *
+     * Peso errado é prejuízo silencioso: ninguém abre chamado porque o frete
+     * saiu barato. Por isso todo caminho duvidoso aqui devolve aviso, e o
+     * único erro possível é texto que não tem número.
+     */
     case "weight": {
-      const bruto = String(valor2 ?? "").slice(0, 120);
-      if (bruto.trim() === "") return { valor: "" };
+      if (valor2 === null || valor2 === void 0 || String(valor2).trim() === "") {
+        return {
+          valor: 0,
+          aviso: "weight vazio: a cota\xE7\xE3o de frete deste produto vai usar o peso padr\xE3o de 500 g."
+        };
+      }
+      const bruto = String(valor2).trim();
+      const limpo = bruto.replace(",", ".");
+      if (/^\d+(\.\d+)?$/.test(limpo)) {
+        const kg = Math.round(Number(limpo) * 1e3) / 1e3;
+        if (kg === 0) {
+          return {
+            valor: 0,
+            aviso: "weight 0: a cota\xE7\xE3o de frete deste produto vai usar o peso padr\xE3o de 500 g."
+          };
+        }
+        if (kg > 100) {
+          return {
+            valor: kg,
+            aviso: `weight ${kg} kg \xE9 um valor alto. A unidade esperada \xE9 QUILO \u2014 se o ERP enviou gramas, o valor correto seria ${Math.round(kg) / 1e3} kg.`
+          };
+        }
+        return { valor: kg };
+      }
       const gramas = pesoEmGramas(bruto, -1);
       if (gramas <= 0) {
         return {
-          valor: bruto,
-          aviso: `weight "${bruto}" n\xE3o foi reconhecido como peso; o frete vai usar o padr\xE3o. Use "1,2 kg" ou "800 g".`
+          valor: null,
+          erro: `weight "${bruto}" n\xE3o tem n\xFAmero que d\xEA para ler como peso. O campo agora \xE9 num\xE9rico, em quilos (ex.: 0.2). Texto de medida vai em weightLabel.`
         };
       }
-      return { valor: bruto };
+      return {
+        valor: Math.round(gramas) / 1e3,
+        aviso: `weight "${bruto}" foi lido como ${Math.round(gramas) / 1e3} kg. O campo agora \xE9 num\xE9rico, em quilos \u2014 mande 0.2 em vez de "0,2kg".`
+      };
     }
+    case "weightLabel":
+      return texto(120);
     case "highlight":
     case "active":
       return { valor: valor2 === true || valor2 === 1 || valor2 === "1" || valor2 === "true" ? 1 : 0 };
@@ -2938,13 +3081,14 @@ adminRoutes.post("/products", h(async (req, res) => {
   await q.run(
     `INSERT INTO products (
         id, sku, name, category, subcategory, category_label, description, long_description,
-        price, old_price, stock, image, tag, weight, ingredients, highlight, active
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        price, old_price, stock, image, tag, weight_kg, weight, ingredients, highlight, active
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
         sku=VALUES(sku), name=VALUES(name), category=VALUES(category), subcategory=VALUES(subcategory),
         category_label=VALUES(category_label), description=VALUES(description),
         long_description=VALUES(long_description), price=VALUES(price), old_price=VALUES(old_price),
-        stock=VALUES(stock), image=VALUES(image), tag=VALUES(tag), weight=VALUES(weight),
+        stock=VALUES(stock), image=VALUES(image), tag=VALUES(tag), weight_kg=VALUES(weight_kg),
+        weight=VALUES(weight),
         ingredients=VALUES(ingredients), highlight=VALUES(highlight), active=VALUES(active)`,
     [
       id,
@@ -2957,10 +3101,14 @@ adminRoutes.post("/products", h(async (req, res) => {
       bodyStr(b, "longDescription", "", 2e4),
       price,
       bodyFloat(b, "oldPrice", 0) > 0 ? bodyFloat(b, "oldPrice") : null,
-      Math.max(0, bodyInt(b, "stock")),
+      // Saldo pode ter fração (o ERP trabalha assim); 3 casas, como a coluna.
+      Math.max(0, Math.round(bodyFloat(b, "stock") * 1e3) / 1e3),
       image,
       bodyStr(b, "tag", "", 40) || null,
-      bodyStr(b, "weight", "", 120),
+      // Peso em quilos, numérico — o que o frete usa.
+      Math.max(0, Math.round(bodyFloat(b, "weight") * 1e3) / 1e3),
+      // Rótulo de medida da vitrine, texto.
+      bodyStr(b, "weightLabel", "", 120),
       bodyStr(b, "ingredients", "", 2e3),
       bodyBool(b, "highlight") ? 1 : 0,
       // Sem `active` no corpo, mantém o estado atual: salvar uma edição de
@@ -4110,16 +4258,19 @@ var LOTE_MAXIMO = 200;
 v1Routes.patch("/products/:id/stock", h(async (req, res) => {
   await requireApiKey(req);
   const id = String(req.params.id ?? "");
-  const stock = bodyInt(body(req), "stock", -1);
-  if (stock < 0) fail('Informe "stock" como um inteiro n\xE3o negativo.', 422, "invalid_stock");
+  const stock = bodyFloat(body(req), "stock", -1);
+  if (!Number.isFinite(stock) || stock < 0) {
+    fail('Informe "stock" como um n\xFAmero n\xE3o negativo (aceita decimais).', 422, "invalid_stock");
+  }
   if (await q.one("SELECT id FROM products WHERE id = ?", [id]) === null) {
     fail("Produto n\xE3o encontrado.", 404, "not_found");
   }
   const r = await gravarProdutoDoErp(id, { stock });
+  const depois = await q.one("SELECT stock FROM products WHERE id = ?", [id]);
   jsonOk(res, {
     ok: true,
     id,
-    stock,
+    stock: Number(depois?.stock ?? 0),
     applied: r.applied,
     ignored: r.ignored,
     warnings: r.warnings
@@ -4584,9 +4735,13 @@ async function main() {
   if (process.env.AUTO_MIGRAR !== "false") {
     try {
       const { sincronizarEstrutura: sincronizarEstrutura2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { colunas, indices } = await sincronizarEstrutura2((m) => console.log("[queops]" + m));
-      if (colunas > 0 || indices > 0) {
-        console.log(`[queops] banco atualizado na subida: ${colunas} coluna(s), ${indices} \xEDndice(s).`);
+      const { colunas, indices, convertidas } = await sincronizarEstrutura2(
+        (m) => console.log("[queops]" + m)
+      );
+      if (colunas > 0 || indices > 0 || convertidas > 0) {
+        console.log(
+          `[queops] banco atualizado na subida: ${colunas} coluna(s), ${indices} \xEDndice(s), ${convertidas} coluna(s) convertida(s).`
+        );
       }
     } catch (e) {
       const err = e;

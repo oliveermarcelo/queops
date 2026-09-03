@@ -16,7 +16,7 @@ import { requireApiKey } from '../auth.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
 import { gravarProdutoDoErp } from '../erp-produtos.ts';
-import { body, bodyInt, bodyStr, iso, jsonOk, queryStr } from '../http.ts';
+import { body, bodyFloat, bodyInt, bodyStr, iso, jsonOk, queryStr } from '../http.ts';
 import { fireWebhooks } from '../providers.ts';
 import { fetchProducts, orderRowToApi, productRowToApi } from '../store.ts';
 import { h } from './helpers.ts';
@@ -122,8 +122,18 @@ const LOTE_MAXIMO = 200;
 v1Routes.patch('/products/:id/stock', h(async (req, res) => {
   await requireApiKey(req);
   const id = String(req.params.id ?? '');
-  const stock = bodyInt(body(req), 'stock', -1);
-  if (stock < 0) fail('Informe "stock" como um inteiro não negativo.', 422, 'invalid_stock');
+  /*
+   * Saldo pode ter fração — o ERP trabalha assim.
+   *
+   * Era lido com `bodyInt`, que trunca: mandar 7,5 gravava 7 e a resposta
+   * confirmava "stock: 7" sem apontar nada de errado. Os dois sistemas
+   * passavam a discordar do saldo, cada um convicto, e a diferença só
+   * apareceria num inventário meses depois.
+   */
+  const stock = bodyFloat(body(req), 'stock', -1);
+  if (!Number.isFinite(stock) || stock < 0) {
+    fail('Informe "stock" como um número não negativo (aceita decimais).', 422, 'invalid_stock');
+  }
 
   // Este endpoint não cria produto: id desconhecido é 404, como sempre foi.
   if ((await q.one('SELECT id FROM products WHERE id = ?', [id])) === null) {
@@ -131,10 +141,19 @@ v1Routes.patch('/products/:id/stock', h(async (req, res) => {
   }
 
   const r = await gravarProdutoDoErp(id, { stock });
+
+  /*
+   * A resposta devolve o saldo GRAVADO, lido do banco — não o que veio no
+   * corpo. Ecoar o valor enviado seria confirmar uma gravação que pode não ter
+   * acontecido: com o estoque travado no painel, o pedido é ignorado de
+   * propósito (vem em `ignored`), e a resposta antiga dizia "stock: 7" com o
+   * banco em 12.
+   */
+  const depois = await q.one('SELECT stock FROM products WHERE id = ?', [id]);
   jsonOk(res, {
     ok: true,
     id,
-    stock,
+    stock: Number(depois?.stock ?? 0),
     applied: r.applied,
     ignored: r.ignored,
     warnings: r.warnings,

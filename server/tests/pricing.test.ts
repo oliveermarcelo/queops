@@ -19,6 +19,7 @@ import {
   calculateShipping,
   deliveryDaysFor,
   normalizeCep,
+  pesoDoProduto,
   pesoEmGramas,
   ufFromCep,
 } from '../src/pricing.ts';
@@ -141,11 +142,13 @@ test('arredondamento igual ao do PHP', () => {
 });
 
 /**
- * Peso do produto — campo de texto livre.
+ * Peso do produto — leitura do texto livre antigo.
  *
- * `products.weight` é VARCHAR: quem cadastra escreve "1,2 kg", "800g" ou
- * deixa vazio. O peso vira preço de frete nos Correios, então cada forma de
- * escrever precisa cair no número certo.
+ * `pesoEmGramas` deixou de ser a via principal: hoje o peso mora em
+ * `products.weight_kg`, numérico. Ele continua existindo, e continua testado,
+ * porque ainda lê o rótulo de medida de quem cadastrou "800g" ali antes da
+ * separação dos campos — e porque é ele que converte o texto que o ERP
+ * eventualmente mande no lugar do número.
  *
  * O caso que motivou o teste: "1.5 kg" era lido como 15 kg, porque o ponto
  * decimal estava sendo removido como se fosse separador de milhar. O frete
@@ -174,4 +177,53 @@ test('peso do produto em gramas', () => {
   assert.equal(pesoEmGramas('abc'), 500);
   assert.equal(pesoEmGramas('0'), 500);
   assert.equal(pesoEmGramas('a definir', 800), 800);
+});
+
+/**
+ * De onde sai o peso de um produto, e em que ordem.
+ *
+ * A ordem é o que este teste protege. Quando existem os dois — número e
+ * rótulo —, quem manda é o número: um produto com `weight_kg = 3` e o rótulo
+ * "Base 15cm" não pode ir para o frete como 15 cm interpretados como 15 kg.
+ * Foi para acabar com esse tipo de adivinhação que o campo numérico existe.
+ */
+test('peso vem do campo numérico; o rótulo é só reserva', () => {
+  // Número presente: manda ele, mesmo com rótulo que "parece" peso.
+  assert.deepEqual(pesoDoProduto({ weight_kg: 3, weight: '800g' }), {
+    gramas: 3000,
+    origem: 'weight_kg',
+  });
+
+  // Sem número, aproveita o que estiver escrito no rótulo.
+  assert.deepEqual(pesoDoProduto({ weight_kg: 0, weight: '800g' }), {
+    gramas: 800,
+    origem: 'rotulo',
+  });
+
+  /*
+   * Rótulo que é MEDIDA, não peso: cai no padrão.
+   *
+   * Este é o caso que mais importa. Sem a exigência de unidade de massa,
+   * "Base 15cm · cobre" era lido como 15 kg — o parser achava o 15, não achava
+   * unidade, e assumia quilo. Trinta vezes o peso real, a partir de um campo
+   * que nunca falou de peso, e sem erro nenhum aparecendo.
+   */
+  assert.deepEqual(pesoDoProduto({ weight_kg: 0, weight: 'Base 15cm · cobre' }), {
+    gramas: 500,
+    origem: 'padrao',
+  });
+  assert.equal(pesoDoProduto({ weight: '15cm' }).origem, 'padrao');
+  assert.equal(pesoDoProduto({ weight: 'tamanho 40' }).origem, 'padrao');
+
+  // Com unidade de massa escrita, o rótulo antigo continua valendo.
+  assert.equal(pesoDoProduto({ weight: '1,2 kg' }).gramas, 1200);
+  assert.equal(pesoDoProduto({ weight: '250 gramas' }).gramas, 250);
+
+  // Produto inexistente no mapa, ou sem nenhum dos dois campos.
+  assert.equal(pesoDoProduto(undefined).origem, 'padrao');
+  assert.equal(pesoDoProduto({}).gramas, 500);
+
+  // Fração de quilo sobrevive à conversão para gramas.
+  assert.equal(pesoDoProduto({ weight_kg: 0.2 }).gramas, 200);
+  assert.equal(pesoDoProduto({ weight_kg: 1.234 }).gramas, 1234);
 });
