@@ -290,6 +290,14 @@ var init_http = __esm({
   }
 });
 
+// server/src/erp-categorias.ts
+var init_erp_categorias = __esm({
+  "server/src/erp-categorias.ts"() {
+    "use strict";
+    init_db();
+  }
+});
+
 // server/src/store.ts
 async function configSet(key, value, exec = q) {
   await exec.run(
@@ -304,6 +312,7 @@ var init_store = __esm({
     "use strict";
     init_crypto();
     init_db();
+    init_erp_categorias();
     init_http();
     DEFAULT_SETTINGS = {
       name: "Qu\xE9ops Pir\xE2mides",

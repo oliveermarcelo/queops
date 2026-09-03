@@ -25,6 +25,7 @@
  */
 
 import { q, type Q, type Row } from './db.ts';
+import { traduzirCodigo } from './erp-categorias.ts';
 import { round2 } from './http.ts';
 import { pesoEmGramas } from './pricing.ts';
 import { safeImageUrl } from './routes/admin.ts';
@@ -52,8 +53,15 @@ const CAMPOS: Record<string, string> = {
   active: 'active',
 };
 
-/** Campos aceitos no corpo que não são coluna de produto. */
-const EXTRAS = new Set(['id']);
+/**
+ * Campos aceitos no corpo que não viram coluna diretamente.
+ *
+ * `categoryCode` está aqui porque é resolvido antes do laço: ele consulta a
+ * amarração e preenche `category` e `subcategory` juntos. Sem entrar nesta
+ * lista, o laço o trataria como campo desconhecido e devolveria um aviso
+ * dizendo que o campo pedido pelo próprio integrador não é gravável.
+ */
+const EXTRAS = new Set(['id', 'categoryCode']);
 
 export interface ResultadoGravacao {
   id: string;
@@ -262,6 +270,50 @@ export async function gravarProdutoDoErp(
 
   const colunas: string[] = [];
   const valores: unknown[] = [];
+
+  /*
+   * `categoryCode` — a categoria pelo código do ERP.
+   *
+   * Tratado fora do laço porque não é um campo: é uma tradução que consulta o
+   * banco e resolve DUAS colunas (category e subcategory) de uma vez.
+   *
+   * A regra que mais importa aqui é o que fazer quando o código não tem
+   * destino. A resposta é: aceitar o produto e NÃO mexer na categoria dele.
+   * Recusar travaria o ciclo inteiro do ERP por uma decisão que é do dono da
+   * loja; e apagar a categoria de um produto que já está na vitrine seria
+   * tirá-lo do ar por causa de uma amarração pendente. Produto novo entra sem
+   * categoria — invisível na loja, contado na tela de Categorias — e produto
+   * antigo fica onde está. Nos dois casos, com aviso.
+   */
+  const temCodigo = 'categoryCode' in dto
+    && dto.categoryCode !== null
+    && String(dto.categoryCode ?? '').trim() !== '';
+
+  if (temCodigo) {
+    if (travados.has('category')) {
+      resultado.ignored.push({ field: 'categoryCode', reason: 'locked_in_panel' });
+    } else {
+      const code = String(dto.categoryCode).trim();
+      const { destino, conhecido, nome } = await traduzirCodigo(code, exec);
+
+      if (destino !== null) {
+        colunas.push('category', 'subcategory');
+        valores.push(destino.category, destino.subcategory);
+        resultado.applied.push('categoryCode');
+      } else if (!conhecido) {
+        resultado.warnings.push(
+          `categoryCode "${code}" não veio em nenhuma carga de categorias. Envie `
+          + 'PUT /api/v1/categories antes dos produtos; a categoria deste produto não foi alterada.',
+        );
+      } else {
+        resultado.warnings.push(
+          `categoryCode "${code}" (${nome}) ainda não está amarrado a uma categoria da loja. `
+          + 'O produto foi gravado, mas só aparece na vitrine depois da amarração em '
+          + 'Painel → Categorias.',
+        );
+      }
+    }
+  }
 
   for (const [campo, valor] of Object.entries(dto)) {
     if (EXTRAS.has(campo)) continue;

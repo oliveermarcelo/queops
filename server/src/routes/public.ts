@@ -80,7 +80,7 @@ publicRoutes.get('/catalog', h(async (_req, res) => {
   }
 
   jsonOk(res, {
-    products: await fetchProducts(),
+    products: await fetchProducts({ exigirCategoria: true }),
     categories: parents.map((c) => ({ id: c.id, name: c.name, description: c.description })),
     menu: parents.map((c) => ({
       id: c.id,
@@ -95,7 +95,7 @@ publicRoutes.get('/catalog', h(async (_req, res) => {
 
 // GET /api/products
 publicRoutes.get('/products', h(async (_req, res) => {
-  jsonOk(res, { products: await fetchProducts() });
+  jsonOk(res, { products: await fetchProducts({ exigirCategoria: true }) });
 }));
 
 // GET /api/products/:id

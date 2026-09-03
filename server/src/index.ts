@@ -54,13 +54,13 @@ async function main(): Promise<void> {
   if (process.env.AUTO_MIGRAR !== 'false') {
     try {
       const { sincronizarEstrutura } = await import('./schema.ts');
-      const { colunas, indices, convertidas } = await sincronizarEstrutura(
+      const { tabelas, colunas, indices, convertidas } = await sincronizarEstrutura(
         (m) => console.log('[queops]' + m),
       );
-      if (colunas > 0 || indices > 0 || convertidas > 0) {
+      if (tabelas > 0 || colunas > 0 || indices > 0 || convertidas > 0) {
         console.log(
-          `[queops] banco atualizado na subida: ${colunas} coluna(s), ${indices} índice(s), `
-          + `${convertidas} coluna(s) convertida(s).`,
+          `[queops] banco atualizado na subida: ${tabelas} tabela(s), ${colunas} coluna(s), `
+          + `${indices} índice(s), ${convertidas} coluna(s) convertida(s).`,
         );
       }
     } catch (e) {

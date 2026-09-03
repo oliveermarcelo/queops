@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 2.3 — 3 de setembro de 2026'
+VERSAO = 'Versão 2.4 — 3 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -339,6 +339,85 @@ curl -s https://queopspiramides.com.br/api/v1/products \\
         f'Base: <font face="Courier">{BASE}/api/v1</font>. Todas as respostas são JSON. '
         'Valores monetários vêm como número em reais (não centavos), com duas casas.', P))
 
+    add(Paragraph('4.1 Categorias: código no ERP, slug na loja', H2))
+    add(Paragraph(
+        'Os dois sistemas identificam categoria de formas diferentes, e os dois têm razão para '
+        'isso. O ERP usa <b>código</b>, porque nome muda. A loja usa <b>slug</b>, porque ele está '
+        'na URL pública (<font face="Courier">/?categoria=piramides</font>) e no sitemap já '
+        'entregue ao Google — trocá-lo por <font face="Courier">/?categoria=0012</font> quebraria '
+        'o que está indexado, para resolver um problema que é de integração.', P))
+    add(Paragraph(
+        'Então os dois convivem: o ERP manda a lista dele, alguém diz na loja onde cada código '
+        'entra, e a partir daí produto vai e volta por código.', P))
+
+    for parte in endpoint('PUT', '/categories', 'Carga das categorias do ERP. Absoluta e idempotente: mande a lista inteira a cada ciclo.'):
+        add(parte)
+    add(bloco("""
+PUT /api/v1/categories
+{ "categories": [
+    { "code": "0001", "name": "Pirâmides" },
+    { "code": "0004", "name": "Pulseiras", "parentCode": "0003" },
+    { "code": "0005", "name": "Uso Interno", "active": false } ] }
+
+200 -> { "ok": true, "recebidas": 3, "criadas": 3, "atualizadas": 0,
+         "pendentes": 3, "warnings": [],
+         "message": "3 categoria(s) ainda sem destino na loja..." }
+422 -> invalid_batch (sem lista) | batch_too_large (mais de 2000)
+"""))
+    add(Paragraph(
+        'Item inválido não derruba o lote: ele vai para '
+        '<font face="Courier">warnings</font> e os outros são gravados. A carga <b>não apaga</b> o '
+        'que sumiu do lote — uma carga truncada por timeout apagaria categorias vivas e, com elas, '
+        'a amarração feita à mão. Para aposentar uma categoria, mande '
+        '<font face="Courier">active: false</font>.', P))
+    add(Spacer(1, 6))
+    add(aviso(
+        'A amarração é MANUAL, e é ela que libera o produto na vitrine',
+        'A loja não casa categoria por nome. Casar "Cristais" do ERP com "cristais" da loja parece '
+        'óbvio, mas o mesmo palpite erra em "Pulseiras" quando existem duas, e o resultado é '
+        'produto na seção errada da vitrine sem erro nenhum aparecer.<br/><br/>'
+        'Enquanto um código estiver pendente, produto enviado com ele é <b>aceito e gravado</b> — '
+        'a integração não trava —, mas fica <b>sem categoria e fora da vitrine</b>, e a resposta '
+        'do PUT do produto diz isso em <font face="Courier">warnings</font>. Depois que o dono da '
+        'loja amarrar (Painel → Categorias do ERP), <b>reenvie o produto</b>: a amarração vale '
+        'para as próximas gravações, ela não sai procurando produtos antigos.<br/><br/>'
+        '<font face="Courier">GET /categories</font> mostra o que está pendente e quantos produtos '
+        'estão parados por isso — dá para monitorar sem depender de alguém avisar.'))
+
+    for parte in endpoint('GET', '/categories', 'A árvore da loja com os códigos amarrados, mais a lista do ERP com o estado de cada um.'):
+        add(parte)
+    add(bloco("""
+200 -> {
+  "categories": [                        // a árvore da LOJA
+    { "id": "acessorios", "name": "Acessórios", "erpCode": "0003",
+      "subcategories": [
+        { "id": "pulseiras", "name": "Pulseiras", "erpCode": "0004" } ] } ],
+  "erpCategories": [                     // o que o ERP mandou
+    { "code": "0004", "name": "Pulseiras", "parentCode": "0003",
+      "active": true, "category": "acessorios",
+      "subcategory": "pulseiras", "linked": true } ],
+  "pending": 2,                          // ativas ainda sem destino
+  "productsWithoutCategory": 7           // produtos parados por isso
+}
+"""))
+
+    for parte in endpoint('PUT', '/categories/{code}/link', 'Amarra pela API, para quem já tem a correspondência pronta e não quer clicar.'):
+        add(parte)
+    add(bloco("""
+PUT /api/v1/categories/0004/link
+{ "category": "acessorios", "subcategory": "pulseiras" }
+
+200 -> { "ok": true }
+422 -> invalid_link   // slug inexistente, ou subcategoria que não é dessa categoria
+"""))
+    add(Paragraph(
+        '<font face="Courier">{"category": null}</font> desamarra. Esta rota existe por '
+        'conveniência; <b>o ciclo de sincronização não deve chamá-la</b> — se o ERP amarrasse '
+        'sozinho, a decisão manual perderia o sentido.', P))
+
+    add(PageBreak())
+    add(Paragraph('4.2 Produtos', H2))
+
     for parte in endpoint('GET', '/products', 'Catálogo completo, <b>apenas produtos ativos</b>, ordenados por posição e nome. Sem paginação: hoje devolve tudo numa resposta só.'):
         add(parte)
     add(bloco("""
@@ -348,7 +427,8 @@ curl -s https://queopspiramides.com.br/api/v1/products \\
       "id": "piramide-cobre-15cm-1001",     // chave natural, usada em todos os endpoints
       "sku": "PIR-CO-15",                   // código interno; pode casar com o do ERP
       "name": "Pirâmide de Cobre 15cm",
-      "category": "piramides",
+      "category": "piramides",              // slug da loja (está na URL pública)
+      "categoryCode": "0001",               // código no ERP, ou null se não amarrado
       "subcategory": "cobre",               // opcional
       "categoryLabel": "Pirâmides",
       "description": "texto curto",
@@ -407,7 +487,7 @@ curl -s https://queopspiramides.com.br/api/v1/products \\
 PUT /api/v1/products/piramide-cobre-15cm-1001
 { "sku": "PIR-CO-15", "name": "Pirâmide de Cobre 15cm", "price": 199.9,
   "oldPrice": 229.9, "stock": 12.5, "weight": 1.2,
-  "category": "piramides", "subcategory": "cobre", "active": true }
+  "categoryCode": "0001", "active": true }
 
 200 (ou 201 quando cria) →
 { "id": "piramide-cobre-15cm-1001",
@@ -737,6 +817,8 @@ GET /api/v1/products/{id} → { "product": { ..., "lockedFields": ["price"] } }
         ['Campo', 'Dono', 'Observação'],
         [
             ['stock', 'ERP', 'Absoluto, a cada ciclo. Aceita fração. Travável no painel.'],
+            ['categoryCode', 'ERP', 'Código da categoria no ERP. Precisa estar amarrado (seção 4.1).'],
+            ['category', 'Loja', 'Slug — está na URL pública. O ERP lê, mas manda categoryCode.'],
             ['price / oldPrice', 'ERP', 'Travável para promoção pontual da loja.'],
             ['sku', 'ERP', 'Chave de conciliação; a loja não deve alterar.'],
             ['name / description', 'ERP com sobrescrita', 'A loja costuma preferir o texto de vitrine ao do ERP.'],

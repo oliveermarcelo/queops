@@ -25,6 +25,7 @@
     "teste:cobranca": "node --env-file-if-exists=.env tests/cobranca-http.mjs",
     "teste:usuarios": "node --env-file-if-exists=.env tests/usuarios-http.mjs",
     "teste:produto-erp": "node --env-file-if-exists=.env tests/produto-erp-http.mjs",
+    "teste:categorias": "node --env-file-if-exists=.env tests/categorias-erp-http.mjs",
     "teste:e2e": "node tests/e2e/loja-e-painel.mjs && node tests/e2e/compra-completa.mjs && node tests/e2e/sincronia-painel-vitrine.mjs && node tests/e2e/usuarios-painel.mjs && node tests/e2e/teste-de-chave.mjs"
   },
   "dependencies": {

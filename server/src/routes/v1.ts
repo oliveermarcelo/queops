@@ -15,6 +15,9 @@ import { Router } from 'express';
 import { requireApiKey } from '../auth.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
+import {
+  amarrarCategoria, carregarCategorias, erpCategoriaParaApi, mapaDeCodigos, produtosSemCategoria,
+} from '../erp-categorias.ts';
 import { gravarProdutoDoErp } from '../erp-produtos.ts';
 import { body, bodyFloat, bodyInt, bodyStr, iso, jsonOk, queryStr } from '../http.ts';
 import { fireWebhooks } from '../providers.ts';
@@ -25,10 +28,141 @@ export const v1Routes = Router();
 
 const STATUS_PEDIDO = ['pending', 'paid', 'shipped', 'delivered', 'canceled'];
 
+/**
+ * Teto do lote de categorias.
+ *
+ * Mais alto que o de produtos (200) porque categoria é linha pequena e o ERP
+ * manda a lista inteira a cada ciclo — partir isso em páginas obrigaria a loja
+ * a saber quando o lote terminou para poder marcar ausências, complicação que
+ * não se paga num cadastro dessa ordem de grandeza.
+ */
+const LOTE_CATEGORIAS = 2000;
+
+// ------------------------------------------------------- categorias ----
+
+/**
+ * PUT /api/v1/categories — o ERP manda a lista inteira de categorias dele.
+ *
+ * Idempotente e absoluto: manda tudo a cada ciclo, como o estoque. Não apaga o
+ * que sumiu do lote — uma carga truncada por timeout apagaria categorias vivas
+ * e, com elas, a amarração feita à mão. `active: false` é o jeito de aposentar
+ * uma categoria, e é reversível.
+ */
+v1Routes.put('/categories', h(async (req, res) => {
+  await requireApiKey(req);
+  const b = body(req);
+  const lote = Array.isArray(b.categories) ? b.categories : null;
+  if (lote === null) {
+    fail('Envie "categories" como uma lista.', 422, 'invalid_batch');
+  }
+  if (lote.length > LOTE_CATEGORIAS) {
+    fail(`Lote grande demais (máximo de ${LOTE_CATEGORIAS}).`, 422, 'batch_too_large');
+  }
+
+  const r = await carregarCategorias(lote);
+  jsonOk(res, {
+    ok: true,
+    ...r,
+    /*
+     * O ERP precisa saber que gravar a categoria não é o mesmo que a loja
+     * poder usá-la. Enquanto houver pendente, produto com aquele código entra
+     * sem categoria e fica fora da vitrine — e isso é decisão do dono da loja,
+     * não falha da integração.
+     */
+    message: r.pendentes === 0
+      ? 'Todas as categorias ativas estão amarradas a uma categoria da loja.'
+      : `${r.pendentes} categoria(s) ainda sem destino na loja. Produto enviado com esses `
+        + 'códigos é aceito, mas fica fora da vitrine até alguém amarrá-los em '
+        + 'Painel → Categorias.',
+  });
+}));
+
+/**
+ * GET /api/v1/categories — o que a loja tem, e como isso se liga ao ERP.
+ *
+ * Devolve as duas listas de propósito: a árvore da loja (com o código do ERP
+ * amarrado a cada nó, quando existe) e a lista bruta do ERP com o estado da
+ * amarração. Só a primeira não bastaria — o ERP não teria como descobrir que
+ * um código que ele mandou está pendente.
+ */
+v1Routes.get('/categories', h(async (req, res) => {
+  await requireApiKey(req);
+
+  const erp = await q.all('SELECT * FROM erp_categories ORDER BY name ASC');
+  const porCategoria = new Map<string, Row[]>();
+  for (const e of erp) {
+    if (e.category_id === null) continue;
+    const chave = String(e.category_id);
+    const lista = porCategoria.get(chave);
+    if (lista) lista.push(e);
+    else porCategoria.set(chave, [e]);
+  }
+
+  const subs = new Map<string, Row[]>();
+  for (const s of await q.all('SELECT * FROM subcategories ORDER BY position ASC, name ASC')) {
+    const chave = String(s.parent_id);
+    const lista = subs.get(chave);
+    if (lista) lista.push(s);
+    else subs.set(chave, [s]);
+  }
+
+  const categorias = (await q.all('SELECT * FROM categories ORDER BY position ASC, name ASC'))
+    .map((c) => {
+      const id = String(c.id);
+      const amarradas = porCategoria.get(id) ?? [];
+      return {
+        id,
+        name: String(c.name),
+        // Código amarrado ao nível-mãe (sem subcategoria), quando houver.
+        erpCode: amarradas.find((e) => e.subcategory_id === null)?.code ?? null,
+        subcategories: (subs.get(id) ?? []).map((s) => ({
+          id: String(s.id),
+          name: String(s.name),
+          erpCode: amarradas.find((e) => String(e.subcategory_id) === String(s.id))?.code ?? null,
+        })),
+      };
+    });
+
+  jsonOk(res, {
+    categories: categorias,
+    erpCategories: erp.map(erpCategoriaParaApi),
+    pending: erp.filter((e) => e.category_id === null && Boolean(e.active)).length,
+    productsWithoutCategory: await produtosSemCategoria(),
+  });
+}));
+
+/**
+ * PUT /api/v1/categories/{code}/link — amarra pela API.
+ *
+ * A amarração é decisão do dono da loja e acontece no painel; esta rota existe
+ * para o caso em que ele já tem a correspondência pronta em planilha e não
+ * quer clicar cinquenta vezes. Não é a rota que o ciclo de sincronização deve
+ * chamar: se o ERP amarrasse sozinho, a decisão manual perderia o sentido.
+ */
+v1Routes.put('/categories/:code/link', h(async (req, res) => {
+  await requireApiKey(req);
+  const b = body(req);
+  const categoria = b.category === null ? null : bodyStr(b, 'category', '', 100);
+  const sub = b.subcategory === null || b.subcategory === undefined
+    ? null
+    : bodyStr(b, 'subcategory', '', 100);
+
+  const erro = await amarrarCategoria(String(req.params.code ?? ''), categoria, sub);
+  if (erro !== '') fail(erro, 422, 'invalid_link');
+  jsonOk(res, { ok: true });
+}));
+
 // GET /api/v1/products
 v1Routes.get('/products', h(async (req, res) => {
   await requireApiKey(req);
-  jsonOk(res, { products: await fetchProducts() });
+  /*
+   * Só a API do ERP recebe `categoryCode` — a vitrine não tem o que fazer com
+   * ele, e seria uma consulta a mais em cada carregamento da loja.
+   *
+   * E aqui os produtos sem categoria APARECEM, ao contrário da vitrine: são
+   * justamente os que o ERP precisa reenviar depois da amarração.
+   */
+  jsonOk(res, { products: await fetchProducts({ comCodigos: true }) });
 }));
 
 // GET /api/v1/products/:id
@@ -36,7 +170,7 @@ v1Routes.get('/products/:id', h(async (req, res) => {
   await requireApiKey(req);
   const row = await q.one('SELECT * FROM products WHERE id = ?', [req.params.id]);
   if (row === null) fail('Produto não encontrado.', 404, 'not_found');
-  jsonOk(res, { product: productRowToApi(row) });
+  jsonOk(res, { product: productRowToApi(row, await mapaDeCodigos()) });
 }));
 
 /**

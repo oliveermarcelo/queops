@@ -190,6 +190,22 @@ export interface PanelUser {
   isYou: boolean;
 }
 
+/**
+ * Uma categoria como o ERP a enviou, com o estado da amarração.
+ *
+ * `category` nulo significa pendente: o ERP mandou, ninguém decidiu onde ela
+ * entra na loja, e produto que chegar com este código fica fora da vitrine.
+ */
+export interface ErpCategory {
+  code: string;
+  name: string;
+  parentCode: string | null;
+  active: boolean;
+  category: string | null;
+  subcategory: string | null;
+  linked: boolean;
+}
+
 export interface AdminState {
   /** Taxonomia de categorias, para os seletores do painel. */
   menu: MenuCategory[];
@@ -205,4 +221,7 @@ export interface AdminState {
   webhooks: Webhook[];
   shipping: ShippingConfig;
   users: PanelUser[];
+  erpCategories: ErpCategory[];
+  /** Produtos sem categoria — invisíveis na vitrine até a amarração. */
+  productsWithoutCategory: number;
 }

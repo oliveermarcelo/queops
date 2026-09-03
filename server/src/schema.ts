@@ -73,6 +73,41 @@ function tabelaAusente(e: unknown): boolean {
 }
 
 /**
+ * Cria as tabelas do schema.sql que ainda não existem.
+ *
+ * Faltava, e a falta era do mesmo tipo que motivou este módulo: adicionar uma
+ * TABELA nova num deploy não quebra a subida — o servidor liga, a loja abre —
+ * e só falha quando alguém usa a função que depende dela. Numa hospedagem que
+ * publica por `git clone` e reinício, sem passo de migração, isso significa a
+ * funcionalidade nova respondendo erro em produção enquanto o código dela está
+ * lá, inteiro.
+ *
+ * `CREATE TABLE IF NOT EXISTS` é tão aditivo quanto `ADD COLUMN`: não toca em
+ * tabela que já existe e não olha para os dados. A ordem do arquivo é
+ * respeitada, que é o que mantém as chaves estrangeiras válidas.
+ */
+export async function createMissingTables(statements: string[], say: Log): Promise<number> {
+  let criadas = 0;
+  for (const stmt of statements) {
+    const m = /^CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/i.exec(stmt.trim());
+    if (!m) continue;
+    const tabela = m[1];
+
+    const existe = await q.one(
+      `SELECT 1 AS ok FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1`,
+      [tabela],
+    );
+    if (existe !== null) continue;
+
+    await q.run(stmt);
+    say(`  + tabela ${tabela}`);
+    criadas++;
+  }
+  return criadas;
+}
+
+/**
  * `CREATE TABLE IF NOT EXISTS` cria tabelas novas, mas ignora colunas novas em
  * tabelas que já existem — um deploy futuro que adicionasse uma coluna falharia
  * em silêncio até alguém abrir a tela que a usa. Aqui comparamos o schema.sql
@@ -234,11 +269,14 @@ export async function widenColumns(say: Log): Promise<number> {
  */
 export async function sincronizarEstrutura(
   say: Log,
-): Promise<{ colunas: number; indices: number; convertidas: number }> {
+): Promise<{ tabelas: number; colunas: number; indices: number; convertidas: number }> {
   const sql = readFileSync(path.join(dbDir(), 'schema.sql'), 'utf8');
-  const { noComments } = splitStatements(sql);
+  const { statements, noComments } = splitStatements(sql);
+  // Tabela primeiro: não adianta procurar coluna faltando numa tabela que
+  // ainda não existe.
+  const tabelas = await createMissingTables(statements, say);
   const colunas = await addMissingColumns(noComments, say);
   const indices = await addMissingIndexes(say);
   const convertidas = await widenColumns(say);
-  return { colunas, indices, convertidas };
+  return { tabelas, colunas, indices, convertidas };
 }

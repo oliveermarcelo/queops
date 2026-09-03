@@ -124,6 +124,42 @@ CREATE TABLE IF NOT EXISTS subcategories (
     REFERENCES categories (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------------------------------------------------------------------
+-- Categorias do ERP
+-- ---------------------------------------------------------------------
+-- A lista de categorias como o ERP a envia, MAIS a amarração com a árvore da
+-- loja. Duas listas separadas, e não uma só, por um motivo concreto: elas não
+-- são a mesma coisa.
+--
+-- O ERP identifica categoria por código e inclui coisas que não são vitrine
+-- ("Uso Interno", "Matéria Prima"). A loja identifica por slug — que está na
+-- URL pública (/?categoria=piramides) e no sitemap enviado ao Google — e tem
+-- dez categorias curadas, com ícone, ordem e destaque. Adotar o código do ERP
+-- como identidade da loja trocaria essas URLs por /?categoria=0012 e quebraria
+-- tudo o que já está indexado, para resolver um problema que é de integração.
+--
+-- Então: o código é a chave DA INTEGRAÇÃO, o slug continua sendo a identidade
+-- DA LOJA, e esta tabela é a tradução entre os dois.
+--
+-- `category_id` nulo significa "o ERP mandou, ninguém amarrou ainda". Produto
+-- que chegar com esse código é aceito e fica fora da vitrine até alguém
+-- decidir onde ele entra — decisão do dono da loja, não do ERP nem do código.
+CREATE TABLE IF NOT EXISTS erp_categories (
+  code           VARCHAR(60)  NOT NULL,        -- identificador no ERP
+  name           VARCHAR(160) NOT NULL,
+  parent_code    VARCHAR(60)  NULL,            -- hierarquia do lado do ERP
+  -- Amarração feita no painel. Nulo = pendente.
+  category_id    VARCHAR(100) NULL,
+  subcategory_id VARCHAR(100) NULL,
+  -- Desligada no ERP: continua aqui para traduzir produto antigo, mas não deve
+  -- ser oferecida como destino de amarração.
+  active         TINYINT(1)   NOT NULL DEFAULT 1,
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (code),
+  KEY idx_erpcat_mapeada (category_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS products (
   id                VARCHAR(100)  NOT NULL,
   sku               VARCHAR(64)   NOT NULL DEFAULT '',

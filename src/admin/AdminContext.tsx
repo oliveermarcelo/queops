@@ -62,6 +62,11 @@ interface AdminContextValue {
   setPanelUserActive: (id: string, active: boolean) => Promise<void>;
   resetPanelUserPassword: (id: string, password: string) => Promise<void>;
   changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<void>;
+
+  /** Amarra um código de categoria do ERP à árvore da loja. `null` desamarra. */
+  linkErpCategory: (
+    code: string, category: string | null, subcategory: string | null,
+  ) => Promise<void>;
 }
 
 const Ctx = createContext<AdminContextValue | null>(null);
@@ -78,6 +83,7 @@ const EMPTY: AdminState = {
   integrations: {} as AdminState['integrations'],
   abandonedCarts: [], recovery: { enabled: false, delayMinutes: 60, message: '', couponCode: '' },
   apiKeys: [], webhooks: [], users: [],
+  erpCategories: [], productsWithoutCategory: 0,
   shipping: {
     defaultPrice: 0, perState: {}, cepRanges: [],
     freeShipping: { enabled: false, minOrder: 0, states: [] },
@@ -288,6 +294,17 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       },
 
       changeOwnPassword: (atual, nova) => store.changeOwnPassword(atual, nova),
+
+      linkErpCategory: async (code, category, subcategory) => {
+        const r = await store.linkErpCategory(code, category, subcategory);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            erpCategories: r.erpCategories,
+            productsWithoutCategory: r.productsWithoutCategory,
+          }));
+        }
+      },
     }),
     [state, loading, error, mutate, refresh, aplicarUsuarios],
   );

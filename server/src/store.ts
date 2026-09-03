@@ -5,6 +5,7 @@
 
 import { decryptPayload } from './crypto.ts';
 import { placeholders, q, type Q, type Row } from './db.ts';
+import { codigoNoMapa, mapaDeCodigos } from './erp-categorias.ts';
 import { iso } from './http.ts';
 
 export interface StoreSettings {
@@ -181,8 +182,16 @@ export async function publicSettings(exec: Q = q): Promise<Record<string, unknow
 
 // ------------------------------------------------------------ Produtos ----
 
-/** Converte uma linha de `products` no objeto Product do front-end. */
-export function productRowToApi(r: Row): Record<string, unknown> {
+/**
+ * Converte uma linha de `products` no objeto Product do front-end.
+ *
+ * `codigos` é o mapa destino-da-loja → código do ERP (ver erp-categorias.ts).
+ * Vem de fora porque a conversão é síncrona e roda por produto: buscar o
+ * código de cada um daria uma consulta por item numa listagem de 1.400.
+ * Ausente, a resposta simplesmente não traz `categoryCode` — é o caso da
+ * vitrine, que não tem o que fazer com ele.
+ */
+export function productRowToApi(r: Row, codigos?: Map<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {
     id: r.id,
     sku: r.sku,
@@ -232,12 +241,56 @@ export function productRowToApi(r: Row): Record<string, unknown> {
    */
   const travados = String(r.locked_fields ?? '').split(',').filter((x) => x !== '');
   if (travados.length > 0) out.lockedFields = travados;
+
+  /*
+   * Código da categoria no ERP, quando a amarração existe.
+   *
+   * `null` explícito, e não campo ausente, quando a categoria do produto não
+   * está amarrada a nenhum código: para o ERP, "não sei traduzir" e "esqueci de
+   * mandar o campo" precisam ser distinguíveis.
+   */
+  if (codigos !== undefined) {
+    out.categoryCode = codigoNoMapa(codigos, r.category, r.subcategory);
+  }
   return out;
 }
 
-export async function fetchProducts(onlyActive = true, exec: Q = q): Promise<Record<string, unknown>[]> {
-  const sql = `SELECT * FROM products${onlyActive ? ' WHERE active = 1' : ''} ORDER BY position ASC, name ASC`;
-  return (await exec.all(sql)).map(productRowToApi);
+export interface OpcoesDeCatalogo {
+  /** Só os ativos. A vitrine e o ERP querem; o painel, não. */
+  onlyActive?: boolean;
+  /**
+   * Esconder produto sem categoria.
+   *
+   * Vale só para a VITRINE, e é o que torna verdadeira a promessa feita ao ERP:
+   * produto que chega com um código de categoria ainda não amarrado "fica fora
+   * da vitrine até alguém amarrar". Sem este filtro ele sumia dos menus (não
+   * pertence a seção nenhuma) mas continuava listado e comprável na home — o
+   * pior dos dois mundos, porque some para quem procura e aparece para quem
+   * não deveria.
+   *
+   * O painel e a API do ERP continuam vendo esses produtos: quem precisa
+   * resolver a pendência precisa enxergá-la.
+   */
+  exigirCategoria?: boolean;
+  /** Anexar `categoryCode` a cada produto. Só a API do ERP usa. */
+  comCodigos?: boolean;
+  exec?: Q;
+}
+
+export async function fetchProducts(
+  opcoes: OpcoesDeCatalogo = {},
+): Promise<Record<string, unknown>[]> {
+  const { onlyActive = true, exigirCategoria = false, comCodigos = false, exec = q } = opcoes;
+
+  const filtros: string[] = [];
+  if (onlyActive) filtros.push('active = 1');
+  if (exigirCategoria) filtros.push("category <> ''");
+  const where = filtros.length > 0 ? ` WHERE ${filtros.join(' AND ')}` : '';
+
+  // Uma consulta para o catálogo inteiro, não uma por produto.
+  const codigos = comCodigos ? await mapaDeCodigos(exec) : undefined;
+  return (await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`))
+    .map((r) => productRowToApi(r, codigos));
 }
 
 // ------------------------------------------------------------- Pedidos ----

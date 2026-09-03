@@ -488,6 +488,171 @@ var init_http = __esm({
   }
 });
 
+// server/src/erp-categorias.ts
+function normalizarCodigo(bruto) {
+  return String(bruto ?? "").trim().slice(0, 60);
+}
+function problemaNaCategoria(c) {
+  if (c === null || typeof c !== "object" || Array.isArray(c)) {
+    return "cada categoria precisa ser um objeto";
+  }
+  const obj = c;
+  if (normalizarCodigo(obj.code) === "") return "code \xE9 obrigat\xF3rio";
+  if (String(obj.name ?? "").trim() === "") return "name \xE9 obrigat\xF3rio";
+  return "";
+}
+async function carregarCategorias(lote, exec = q) {
+  const warnings = [];
+  const validas = [];
+  const vistos = /* @__PURE__ */ new Set();
+  for (const [i, bruta] of lote.entries()) {
+    const problema = problemaNaCategoria(bruta);
+    if (problema !== "") {
+      warnings.push(`categoria ${i}: ${problema}`);
+      continue;
+    }
+    const obj = bruta;
+    const code = normalizarCodigo(obj.code);
+    if (vistos.has(code)) {
+      warnings.push(`code "${code}" veio mais de uma vez no lote; usei a \xFAltima ocorr\xEAncia`);
+    }
+    vistos.add(code);
+    validas.push({
+      code,
+      name: String(obj.name).trim().slice(0, 160),
+      parentCode: normalizarCodigo(obj.parentCode) || null,
+      active: obj.active === void 0 ? true : Boolean(obj.active)
+    });
+  }
+  let criadas = 0;
+  let atualizadas = 0;
+  for (const c of validas) {
+    const existe = await exec.one("SELECT code FROM erp_categories WHERE code = ?", [c.code]);
+    if (existe === null) {
+      await exec.run(
+        "INSERT INTO erp_categories (code, name, parent_code, active) VALUES (?,?,?,?)",
+        [c.code, c.name, c.parentCode, c.active ? 1 : 0]
+      );
+      criadas++;
+    } else {
+      await exec.run(
+        "UPDATE erp_categories SET name = ?, parent_code = ?, active = ? WHERE code = ?",
+        [c.name, c.parentCode, c.active ? 1 : 0, c.code]
+      );
+      atualizadas++;
+    }
+  }
+  const pendentes = Number(
+    (await exec.one(
+      "SELECT COUNT(*) AS n FROM erp_categories WHERE category_id IS NULL AND active = 1"
+    ))?.n ?? 0
+  );
+  return { recebidas: lote.length, criadas, atualizadas, pendentes, warnings };
+}
+async function traduzirCodigo(code, exec = q) {
+  const c = normalizarCodigo(code);
+  if (c === "") return { destino: null, conhecido: false, nome: "" };
+  const row = await exec.one(
+    "SELECT name, category_id, subcategory_id FROM erp_categories WHERE code = ?",
+    [c]
+  );
+  if (row === null) return { destino: null, conhecido: false, nome: "" };
+  const categoria = row.category_id === null ? "" : String(row.category_id);
+  if (categoria === "") return { destino: null, conhecido: true, nome: String(row.name) };
+  return {
+    destino: {
+      category: categoria,
+      subcategory: row.subcategory_id === null ? null : String(row.subcategory_id)
+    },
+    conhecido: true,
+    nome: String(row.name)
+  };
+}
+async function mapaDeCodigos(exec = q) {
+  const mapa = /* @__PURE__ */ new Map();
+  const linhas = await exec.all(
+    "SELECT code, category_id, subcategory_id FROM erp_categories WHERE category_id IS NOT NULL"
+  );
+  for (const l of linhas) {
+    mapa.set(chaveDoDestino(String(l.category_id), l.subcategory_id), String(l.code));
+  }
+  return mapa;
+}
+function codigoNoMapa(mapa, categoria, sub) {
+  if (mapa === void 0) return null;
+  const cat = String(categoria ?? "");
+  if (cat === "") return null;
+  const s = sub === null || sub === void 0 ? "" : String(sub);
+  if (s !== "") {
+    const exato = mapa.get(chaveDoDestino(cat, s));
+    if (exato !== void 0) return exato;
+  }
+  return mapa.get(chaveDoDestino(cat, "")) ?? null;
+}
+function erpCategoriaParaApi(r) {
+  return {
+    code: String(r.code),
+    name: String(r.name),
+    parentCode: r.parent_code === null ? null : String(r.parent_code),
+    active: Boolean(r.active),
+    category: r.category_id === null ? null : String(r.category_id),
+    subcategory: r.subcategory_id === null ? null : String(r.subcategory_id),
+    linked: r.category_id !== null
+  };
+}
+async function amarrarCategoria(code, category, subcategory, exec = q) {
+  const c = normalizarCodigo(code);
+  const existe = await exec.one("SELECT code FROM erp_categories WHERE code = ?", [c]);
+  if (existe === null) return "Este c\xF3digo n\xE3o veio em nenhuma carga do ERP.";
+  if (category === null || category === "") {
+    await exec.run(
+      "UPDATE erp_categories SET category_id = NULL, subcategory_id = NULL WHERE code = ?",
+      [c]
+    );
+    return "";
+  }
+  const cat = await exec.one("SELECT id FROM categories WHERE id = ?", [category]);
+  if (cat === null) return `A loja n\xE3o tem a categoria "${category}".`;
+  let sub = null;
+  if (subcategory !== null && subcategory !== "") {
+    const achada = await exec.one(
+      "SELECT id FROM subcategories WHERE parent_id = ? AND id = ?",
+      [category, subcategory]
+    );
+    if (achada === null) {
+      return `A categoria "${category}" n\xE3o tem a subcategoria "${subcategory}".`;
+    }
+    sub = subcategory;
+  }
+  await exec.run(
+    "UPDATE erp_categories SET category_id = ?, subcategory_id = ? WHERE code = ?",
+    [category, sub, c]
+  );
+  return "";
+}
+async function produtosSemCategoria(exec = q) {
+  const r = await exec.one("SELECT COUNT(*) AS n FROM products WHERE category = ''");
+  return Number(r?.n ?? 0);
+}
+var SEPARADOR, chaveDoDestino;
+var init_erp_categorias = __esm({
+  "server/src/erp-categorias.ts"() {
+    "use strict";
+    init_db();
+    __name(normalizarCodigo, "normalizarCodigo");
+    __name(problemaNaCategoria, "problemaNaCategoria");
+    __name(carregarCategorias, "carregarCategorias");
+    __name(traduzirCodigo, "traduzirCodigo");
+    SEPARADOR = "\0";
+    chaveDoDestino = /* @__PURE__ */ __name((categoria, sub) => `${categoria}${SEPARADOR}${sub ?? ""}`, "chaveDoDestino");
+    __name(mapaDeCodigos, "mapaDeCodigos");
+    __name(codigoNoMapa, "codigoNoMapa");
+    __name(erpCategoriaParaApi, "erpCategoriaParaApi");
+    __name(amarrarCategoria, "amarrarCategoria");
+    __name(produtosSemCategoria, "produtosSemCategoria");
+  }
+});
+
 // server/src/store.ts
 var store_exports = {};
 __export(store_exports, {
@@ -560,7 +725,7 @@ async function publicSettings(exec = q) {
     shippingFrom: Number(sh.defaultPrice ?? 0) || 0
   };
 }
-function productRowToApi(r) {
+function productRowToApi(r, codigos) {
   const out = {
     id: r.id,
     sku: r.sku,
@@ -602,11 +767,19 @@ function productRowToApi(r) {
   if (r.highlight) out.highlight = true;
   const travados = String(r.locked_fields ?? "").split(",").filter((x) => x !== "");
   if (travados.length > 0) out.lockedFields = travados;
+  if (codigos !== void 0) {
+    out.categoryCode = codigoNoMapa(codigos, r.category, r.subcategory);
+  }
   return out;
 }
-async function fetchProducts(onlyActive = true, exec = q) {
-  const sql = `SELECT * FROM products${onlyActive ? " WHERE active = 1" : ""} ORDER BY position ASC, name ASC`;
-  return (await exec.all(sql)).map(productRowToApi);
+async function fetchProducts(opcoes = {}) {
+  const { onlyActive = true, exigirCategoria = false, comCodigos = false, exec = q } = opcoes;
+  const filtros = [];
+  if (onlyActive) filtros.push("active = 1");
+  if (exigirCategoria) filtros.push("category <> ''");
+  const where = filtros.length > 0 ? ` WHERE ${filtros.join(" AND ")}` : "";
+  const codigos = comCodigos ? await mapaDeCodigos(exec) : void 0;
+  return (await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`)).map((r) => productRowToApi(r, codigos));
 }
 function orderRowToApi(r, items) {
   return {
@@ -728,6 +901,7 @@ var init_store = __esm({
     "use strict";
     init_crypto();
     init_db();
+    init_erp_categorias();
     init_http();
     DEFAULT_SETTINGS = {
       name: "Qu\xE9ops Pir\xE2mides",
@@ -1610,6 +1784,7 @@ var schema_exports = {};
 __export(schema_exports, {
   addMissingColumns: () => addMissingColumns,
   addMissingIndexes: () => addMissingIndexes,
+  createMissingTables: () => createMissingTables,
   dbDir: () => dbDir,
   sincronizarEstrutura: () => sincronizarEstrutura,
   splitStatements: () => splitStatements,
@@ -1638,6 +1813,24 @@ function splitStatements(sql) {
 }
 function tabelaAusente(e) {
   return e?.code === "ER_NO_SUCH_TABLE";
+}
+async function createMissingTables(statements, say) {
+  let criadas = 0;
+  for (const stmt of statements) {
+    const m = /^CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/i.exec(stmt.trim());
+    if (!m) continue;
+    const tabela = m[1];
+    const existe = await q.one(
+      `SELECT 1 AS ok FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1`,
+      [tabela]
+    );
+    if (existe !== null) continue;
+    await q.run(stmt);
+    say(`  + tabela ${tabela}`);
+    criadas++;
+  }
+  return criadas;
 }
 async function addMissingColumns(noComments, say) {
   let adicionadas = 0;
@@ -1722,11 +1915,12 @@ async function widenColumns(say) {
 }
 async function sincronizarEstrutura(say) {
   const sql = (0, import_node_fs4.readFileSync)(import_node_path4.default.join(dbDir(), "schema.sql"), "utf8");
-  const { noComments } = splitStatements(sql);
+  const { statements, noComments } = splitStatements(sql);
+  const tabelas = await createMissingTables(statements, say);
   const colunas = await addMissingColumns(noComments, say);
   const indices = await addMissingIndexes(say);
   const convertidas = await widenColumns(say);
-  return { colunas, indices, convertidas };
+  return { tabelas, colunas, indices, convertidas };
 }
 var import_node_fs4, import_node_path4, TIPOS_SQL, INDICES, ALARGAMENTOS;
 var init_schema = __esm({
@@ -1739,6 +1933,7 @@ var init_schema = __esm({
     __name(splitStatements, "splitStatements");
     TIPOS_SQL = "VARCHAR|VARBINARY|BINARY|CHAR|TINYTEXT|TEXT|MEDIUMTEXT|LONGTEXT|TINYINT|SMALLINT|MEDIUMINT|BIGINT|INT|DECIMAL|NUMERIC|FLOAT|DOUBLE|DATETIME|TIMESTAMP|DATE|TIME|YEAR|ENUM|SET|JSON|BLOB|MEDIUMBLOB|LONGBLOB|BOOLEAN|BOOL";
     __name(tabelaAusente, "tabelaAusente");
+    __name(createMissingTables, "createMissingTables");
     __name(addMissingColumns, "addMissingColumns");
     INDICES = [
       {
@@ -2208,9 +2403,11 @@ init_config();
 init_crypto();
 init_db();
 init_errors();
+init_erp_categorias();
 
 // server/src/erp-produtos.ts
 init_db();
+init_erp_categorias();
 init_http();
 
 // server/src/pricing.ts
@@ -2646,7 +2843,7 @@ var CAMPOS = {
   highlight: "highlight",
   active: "active"
 };
-var EXTRAS = /* @__PURE__ */ new Set(["id"]);
+var EXTRAS = /* @__PURE__ */ new Set(["id", "categoryCode"]);
 function camposTravados(row) {
   const bruto = String(row?.locked_fields ?? "");
   return bruto.split(",").map((x) => x.trim()).filter((x) => x !== "");
@@ -2798,6 +2995,28 @@ async function gravarProdutoDoErp(id, dto, exec = q) {
   const criando = atual === null;
   const colunas = [];
   const valores = [];
+  const temCodigo = "categoryCode" in dto && dto.categoryCode !== null && String(dto.categoryCode ?? "").trim() !== "";
+  if (temCodigo) {
+    if (travados.has("category")) {
+      resultado.ignored.push({ field: "categoryCode", reason: "locked_in_panel" });
+    } else {
+      const code = String(dto.categoryCode).trim();
+      const { destino, conhecido, nome } = await traduzirCodigo(code, exec);
+      if (destino !== null) {
+        colunas.push("category", "subcategory");
+        valores.push(destino.category, destino.subcategory);
+        resultado.applied.push("categoryCode");
+      } else if (!conhecido) {
+        resultado.warnings.push(
+          `categoryCode "${code}" n\xE3o veio em nenhuma carga de categorias. Envie PUT /api/v1/categories antes dos produtos; a categoria deste produto n\xE3o foi alterada.`
+        );
+      } else {
+        resultado.warnings.push(
+          `categoryCode "${code}" (${nome}) ainda n\xE3o est\xE1 amarrado a uma categoria da loja. O produto foi gravado, mas s\xF3 aparece na vitrine depois da amarra\xE7\xE3o em Painel \u2192 Categorias.`
+        );
+      }
+    }
+  }
   for (const [campo, valor2] of Object.entries(dto)) {
     if (EXTRAS.has(campo)) continue;
     if (!(campo in CAMPOS)) {
@@ -3020,7 +3239,8 @@ adminRoutes.get("/state", h(async (req, res) => {
       featured: Boolean(c.featured),
       subcategories: subs.get(String(c.id)) ?? []
     })),
-    products: await fetchProducts(false),
+    // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
+    products: await fetchProducts({ onlyActive: false }),
     orders: await fetchOrders(),
     customers,
     coupons: (await q.all("SELECT * FROM coupons ORDER BY created_at DESC")).map((c) => ({
@@ -3064,7 +3284,23 @@ adminRoutes.get("/state", h(async (req, res) => {
       event: w.event,
       active: Boolean(w.active)
     })),
-    users: await listaDeUsuarios(eu.id)
+    users: await listaDeUsuarios(eu.id),
+    // Categorias que o ERP mandou, com o estado da amarração.
+    erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria()
+  });
+}));
+adminRoutes.put("/erp-categories/:code", h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+  const categoria = b.category === null || b.category === void 0 ? null : bodyStr(b, "category", "", 100);
+  const sub = b.subcategory === null || b.subcategory === void 0 ? null : bodyStr(b, "subcategory", "", 100);
+  const erro = await amarrarCategoria(String(req.params.code ?? ""), categoria, sub);
+  if (erro !== "") fail(erro, 422, "invalid_link");
+  jsonOk(res, {
+    ok: true,
+    erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria()
   });
 }));
 adminRoutes.post("/products", h(async (req, res) => {
@@ -3807,7 +4043,7 @@ publicRoutes.get("/catalog", h(async (_req, res) => {
     else children.set(key, [entry]);
   }
   jsonOk(res, {
-    products: await fetchProducts(),
+    products: await fetchProducts({ exigirCategoria: true }),
     categories: parents.map((c) => ({ id: c.id, name: c.name, description: c.description })),
     menu: parents.map((c) => ({
       id: c.id,
@@ -3820,7 +4056,7 @@ publicRoutes.get("/catalog", h(async (_req, res) => {
   });
 }));
 publicRoutes.get("/products", h(async (_req, res) => {
-  jsonOk(res, { products: await fetchProducts() });
+  jsonOk(res, { products: await fetchProducts({ exigirCategoria: true }) });
 }));
 publicRoutes.get("/products/:id", h(async (req, res) => {
   const row = await q.one("SELECT * FROM products WHERE id = ? AND active = 1", [req.params.id]);
@@ -4194,20 +4430,94 @@ publicRoutes.post("/carts/abandoned", h(async (req, res) => {
 var import_express4 = require("express");
 init_db();
 init_errors();
+init_erp_categorias();
 init_http();
 init_providers();
 init_store();
 var v1Routes = (0, import_express4.Router)();
 var STATUS_PEDIDO2 = ["pending", "paid", "shipped", "delivered", "canceled"];
+var LOTE_CATEGORIAS = 2e3;
+v1Routes.put("/categories", h(async (req, res) => {
+  await requireApiKey(req);
+  const b = body(req);
+  const lote = Array.isArray(b.categories) ? b.categories : null;
+  if (lote === null) {
+    fail('Envie "categories" como uma lista.', 422, "invalid_batch");
+  }
+  if (lote.length > LOTE_CATEGORIAS) {
+    fail(`Lote grande demais (m\xE1ximo de ${LOTE_CATEGORIAS}).`, 422, "batch_too_large");
+  }
+  const r = await carregarCategorias(lote);
+  jsonOk(res, {
+    ok: true,
+    ...r,
+    /*
+     * O ERP precisa saber que gravar a categoria não é o mesmo que a loja
+     * poder usá-la. Enquanto houver pendente, produto com aquele código entra
+     * sem categoria e fica fora da vitrine — e isso é decisão do dono da loja,
+     * não falha da integração.
+     */
+    message: r.pendentes === 0 ? "Todas as categorias ativas est\xE3o amarradas a uma categoria da loja." : `${r.pendentes} categoria(s) ainda sem destino na loja. Produto enviado com esses c\xF3digos \xE9 aceito, mas fica fora da vitrine at\xE9 algu\xE9m amarr\xE1-los em Painel \u2192 Categorias.`
+  });
+}));
+v1Routes.get("/categories", h(async (req, res) => {
+  await requireApiKey(req);
+  const erp = await q.all("SELECT * FROM erp_categories ORDER BY name ASC");
+  const porCategoria = /* @__PURE__ */ new Map();
+  for (const e of erp) {
+    if (e.category_id === null) continue;
+    const chave = String(e.category_id);
+    const lista = porCategoria.get(chave);
+    if (lista) lista.push(e);
+    else porCategoria.set(chave, [e]);
+  }
+  const subs = /* @__PURE__ */ new Map();
+  for (const s of await q.all("SELECT * FROM subcategories ORDER BY position ASC, name ASC")) {
+    const chave = String(s.parent_id);
+    const lista = subs.get(chave);
+    if (lista) lista.push(s);
+    else subs.set(chave, [s]);
+  }
+  const categorias = (await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC")).map((c) => {
+    const id = String(c.id);
+    const amarradas = porCategoria.get(id) ?? [];
+    return {
+      id,
+      name: String(c.name),
+      // Código amarrado ao nível-mãe (sem subcategoria), quando houver.
+      erpCode: amarradas.find((e) => e.subcategory_id === null)?.code ?? null,
+      subcategories: (subs.get(id) ?? []).map((s) => ({
+        id: String(s.id),
+        name: String(s.name),
+        erpCode: amarradas.find((e) => String(e.subcategory_id) === String(s.id))?.code ?? null
+      }))
+    };
+  });
+  jsonOk(res, {
+    categories: categorias,
+    erpCategories: erp.map(erpCategoriaParaApi),
+    pending: erp.filter((e) => e.category_id === null && Boolean(e.active)).length,
+    productsWithoutCategory: await produtosSemCategoria()
+  });
+}));
+v1Routes.put("/categories/:code/link", h(async (req, res) => {
+  await requireApiKey(req);
+  const b = body(req);
+  const categoria = b.category === null ? null : bodyStr(b, "category", "", 100);
+  const sub = b.subcategory === null || b.subcategory === void 0 ? null : bodyStr(b, "subcategory", "", 100);
+  const erro = await amarrarCategoria(String(req.params.code ?? ""), categoria, sub);
+  if (erro !== "") fail(erro, 422, "invalid_link");
+  jsonOk(res, { ok: true });
+}));
 v1Routes.get("/products", h(async (req, res) => {
   await requireApiKey(req);
-  jsonOk(res, { products: await fetchProducts() });
+  jsonOk(res, { products: await fetchProducts({ comCodigos: true }) });
 }));
 v1Routes.get("/products/:id", h(async (req, res) => {
   await requireApiKey(req);
   const row = await q.one("SELECT * FROM products WHERE id = ?", [req.params.id]);
   if (row === null) fail("Produto n\xE3o encontrado.", 404, "not_found");
-  jsonOk(res, { product: productRowToApi(row) });
+  jsonOk(res, { product: productRowToApi(row, await mapaDeCodigos()) });
 }));
 v1Routes.put("/products/:id", h(async (req, res) => {
   await requireApiKey(req);
@@ -4735,12 +5045,12 @@ async function main() {
   if (process.env.AUTO_MIGRAR !== "false") {
     try {
       const { sincronizarEstrutura: sincronizarEstrutura2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { colunas, indices, convertidas } = await sincronizarEstrutura2(
+      const { tabelas, colunas, indices, convertidas } = await sincronizarEstrutura2(
         (m) => console.log("[queops]" + m)
       );
-      if (colunas > 0 || indices > 0 || convertidas > 0) {
+      if (tabelas > 0 || colunas > 0 || indices > 0 || convertidas > 0) {
         console.log(
-          `[queops] banco atualizado na subida: ${colunas} coluna(s), ${indices} \xEDndice(s), ${convertidas} coluna(s) convertida(s).`
+          `[queops] banco atualizado na subida: ${tabelas} tabela(s), ${colunas} coluna(s), ${indices} \xEDndice(s), ${convertidas} coluna(s) convertida(s).`
         );
       }
     } catch (e) {

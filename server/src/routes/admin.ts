@@ -15,6 +15,9 @@ import { config } from '../config.ts';
 import { encryptPayload } from '../crypto.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
+import {
+  amarrarCategoria, erpCategoriaParaApi, produtosSemCategoria,
+} from '../erp-categorias.ts';
 import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
 import {
   body, bodyBool, bodyFloat, bodyInt, bodyStr, brl, digits, iso, jsonOk, queryStr,
@@ -119,7 +122,8 @@ adminRoutes.get('/state', h(async (req, res) => {
       featured: Boolean(c.featured),
       subcategories: subs.get(String(c.id)) ?? [],
     })),
-    products: await fetchProducts(false),
+    // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
+    products: await fetchProducts({ onlyActive: false }),
     orders: await fetchOrders(),
     customers,
     coupons: (await q.all('SELECT * FROM coupons ORDER BY created_at DESC')).map((c) => ({
@@ -164,6 +168,38 @@ adminRoutes.get('/state', h(async (req, res) => {
       active: Boolean(w.active),
     })),
     users: await listaDeUsuarios(eu.id),
+    // Categorias que o ERP mandou, com o estado da amarração.
+    erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
+      .map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria(),
+  });
+}));
+
+/**
+ * PUT /api/admin/erp-categories/:code — amarra um código do ERP.
+ *
+ * É aqui que a decisão "amarração manual" acontece de verdade. `category:
+ * null` desamarra: o código volta a ser pendente, e produto que chegar com ele
+ * volta a ficar fora da vitrine.
+ */
+adminRoutes.put('/erp-categories/:code', h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+  const categoria = b.category === null || b.category === undefined
+    ? null
+    : bodyStr(b, 'category', '', 100);
+  const sub = b.subcategory === null || b.subcategory === undefined
+    ? null
+    : bodyStr(b, 'subcategory', '', 100);
+
+  const erro = await amarrarCategoria(String(req.params.code ?? ''), categoria, sub);
+  if (erro !== '') fail(erro, 422, 'invalid_link');
+
+  jsonOk(res, {
+    ok: true,
+    erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
+      .map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria(),
   });
 }));
 

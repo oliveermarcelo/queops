@@ -15,7 +15,7 @@ import { Product } from '../types';
 import {
   AdminState, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
   IntegrationId, AbandonedStatus, RecoveryConfig, ShippingConfig, TrackingEvent, Webhook,
-  PanelUser,
+  PanelUser, ErpCategory,
 } from './types';
 
 /** Estado completo do painel numa requisição só. */
@@ -151,6 +151,24 @@ export function updatePanelUser(
   patch: { name?: string; email?: string; active?: boolean; password?: string },
 ): Promise<{ users: PanelUser[] }> {
   return api.patch<{ users: PanelUser[] }>(`/admin/users/${encodeURIComponent(id)}`, patch);
+}
+
+// ---------------------------------------------- categorias do ERP -----
+
+/**
+ * Amarra um código do ERP a uma categoria da loja. `category: null` desamarra.
+ *
+ * Devolve a lista inteira já atualizada, pelo mesmo motivo das rotas de
+ * usuário: nesta tela uma amarração muda a contagem de pendentes e pode tirar
+ * produtos do limbo, e o número na tela precisa acompanhar sem uma segunda
+ * viagem ao servidor.
+ */
+export function linkErpCategory(
+  code: string,
+  category: string | null,
+  subcategory: string | null,
+): Promise<{ erpCategories: ErpCategory[]; productsWithoutCategory: number }> {
+  return api.put(`/admin/erp-categories/${encodeURIComponent(code)}`, { category, subcategory });
 }
 
 /** Trocar a própria senha exige a atual — a sessão aberta não basta. */
