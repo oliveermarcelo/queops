@@ -192,11 +192,15 @@ adminRoutes.put('/erp-categories/:code', h(async (req, res) => {
     ? null
     : bodyStr(b, 'subcategory', '', 100);
 
-  const erro = await amarrarCategoria(String(req.params.code ?? ''), categoria, sub);
+  const { erro, liberados } = await amarrarCategoria(String(req.params.code ?? ''), categoria, sub);
   if (erro !== '') fail(erro, 422, 'invalid_link');
 
   jsonOk(res, {
     ok: true,
+    // Quantos produtos entraram na vitrine por causa deste clique. A tela
+    // mostra o número: é o resultado concreto de uma ação que, sem ele,
+    // pareceria não ter feito nada.
+    released: liberados,
     erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
       .map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria(),

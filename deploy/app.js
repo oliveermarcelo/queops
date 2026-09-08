@@ -603,16 +603,18 @@ function erpCategoriaParaApi(r) {
 async function amarrarCategoria(code, category, subcategory, exec = q) {
   const c = normalizarCodigo(code);
   const existe = await exec.one("SELECT code FROM erp_categories WHERE code = ?", [c]);
-  if (existe === null) return "Este c\xF3digo n\xE3o veio em nenhuma carga do ERP.";
+  if (existe === null) {
+    return { erro: "Este c\xF3digo n\xE3o veio em nenhuma carga do ERP.", liberados: 0 };
+  }
   if (category === null || category === "") {
     await exec.run(
       "UPDATE erp_categories SET category_id = NULL, subcategory_id = NULL WHERE code = ?",
       [c]
     );
-    return "";
+    return { erro: "", liberados: 0 };
   }
   const cat = await exec.one("SELECT id FROM categories WHERE id = ?", [category]);
-  if (cat === null) return `A loja n\xE3o tem a categoria "${category}".`;
+  if (cat === null) return { erro: `A loja n\xE3o tem a categoria "${category}".`, liberados: 0 };
   let sub = null;
   if (subcategory !== null && subcategory !== "") {
     const achada = await exec.one(
@@ -620,7 +622,10 @@ async function amarrarCategoria(code, category, subcategory, exec = q) {
       [category, subcategory]
     );
     if (achada === null) {
-      return `A categoria "${category}" n\xE3o tem a subcategoria "${subcategory}".`;
+      return {
+        erro: `A categoria "${category}" n\xE3o tem a subcategoria "${subcategory}".`,
+        liberados: 0
+      };
     }
     sub = subcategory;
   }
@@ -628,7 +633,13 @@ async function amarrarCategoria(code, category, subcategory, exec = q) {
     "UPDATE erp_categories SET category_id = ?, subcategory_id = ? WHERE code = ?",
     [category, sub, c]
   );
-  return "";
+  const liberados = await exec.run(
+    `UPDATE products
+        SET category = ?, subcategory = ?, pending_category_code = ''
+      WHERE pending_category_code = ? AND category = ''`,
+    [category, sub, c]
+  );
+  return { erro: "", liberados };
 }
 async function produtosSemCategoria(exec = q) {
   const r = await exec.one("SELECT COUNT(*) AS n FROM products WHERE category = ''");
@@ -3003,16 +3014,14 @@ async function gravarProdutoDoErp(id, dto, exec = q) {
       const code = String(dto.categoryCode).trim();
       const { destino, conhecido, nome } = await traduzirCodigo(code, exec);
       if (destino !== null) {
-        colunas.push("category", "subcategory");
-        valores.push(destino.category, destino.subcategory);
+        colunas.push("category", "subcategory", "pending_category_code");
+        valores.push(destino.category, destino.subcategory, "");
         resultado.applied.push("categoryCode");
-      } else if (!conhecido) {
-        resultado.warnings.push(
-          `categoryCode "${code}" n\xE3o veio em nenhuma carga de categorias. Envie PUT /api/v1/categories antes dos produtos; a categoria deste produto n\xE3o foi alterada.`
-        );
       } else {
+        colunas.push("pending_category_code");
+        valores.push(code.slice(0, 60));
         resultado.warnings.push(
-          `categoryCode "${code}" (${nome}) ainda n\xE3o est\xE1 amarrado a uma categoria da loja. O produto foi gravado, mas s\xF3 aparece na vitrine depois da amarra\xE7\xE3o em Painel \u2192 Categorias.`
+          !conhecido ? `categoryCode "${code}" n\xE3o veio em nenhuma carga de categorias. Envie PUT /api/v1/categories/{code} antes do produto. O produto foi gravado e entra na vitrine assim que o c\xF3digo existir e for amarrado \u2014 n\xE3o \xE9 preciso reenvi\xE1-lo.` : `categoryCode "${code}" (${nome}) ainda n\xE3o est\xE1 amarrado a uma categoria da loja. O produto foi gravado e fica fora da vitrine at\xE9 a amarra\xE7\xE3o em Painel \u2192 Categorias do ERP; quando ela acontecer, ele entra sozinho.`
         );
       }
     }
@@ -3295,10 +3304,14 @@ adminRoutes.put("/erp-categories/:code", h(async (req, res) => {
   const b = body(req);
   const categoria = b.category === null || b.category === void 0 ? null : bodyStr(b, "category", "", 100);
   const sub = b.subcategory === null || b.subcategory === void 0 ? null : bodyStr(b, "subcategory", "", 100);
-  const erro = await amarrarCategoria(String(req.params.code ?? ""), categoria, sub);
+  const { erro, liberados } = await amarrarCategoria(String(req.params.code ?? ""), categoria, sub);
   if (erro !== "") fail(erro, 422, "invalid_link");
   jsonOk(res, {
     ok: true,
+    // Quantos produtos entraram na vitrine por causa deste clique. A tela
+    // mostra o número: é o resultado concreto de uma ação que, sem ele,
+    // pareceria não ter feito nada.
+    released: liberados,
     erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria()
   });
@@ -4500,14 +4513,58 @@ v1Routes.get("/categories", h(async (req, res) => {
     productsWithoutCategory: await produtosSemCategoria()
   });
 }));
+v1Routes.put("/categories/:code", h(async (req, res) => {
+  await requireApiKey(req);
+  const code = String(req.params.code ?? "");
+  const b = body(req);
+  const r = await carregarCategorias([{
+    code,
+    name: b.name,
+    parentCode: b.parentCode,
+    active: b.active
+  }]);
+  if (r.criadas + r.atualizadas === 0) {
+    fail(
+      r.warnings[0] ?? 'Categoria inv\xE1lida. Informe "name".',
+      422,
+      "invalid_category"
+    );
+  }
+  const { destino, nome } = await traduzirCodigo(code);
+  jsonOk(res, {
+    ok: true,
+    code: normalizarCodigo(code),
+    name: nome,
+    created: r.criadas === 1,
+    linked: destino !== null,
+    category: destino?.category ?? null,
+    subcategory: destino?.subcategory ?? null,
+    message: destino !== null ? "Categoria amarrada. Produto enviado com este c\xF3digo j\xE1 entra na vitrine." : "Categoria registrada, mas ainda SEM destino na loja. O produto \xE9 aceito e fica fora da vitrine at\xE9 algu\xE9m amarrar em Painel \u2192 Categorias do ERP \u2014 e entra sozinho quando isso acontecer, sem precisar reenviar."
+  });
+}));
+v1Routes.get("/categories/:code", h(async (req, res) => {
+  await requireApiKey(req);
+  const code = normalizarCodigo(String(req.params.code ?? ""));
+  const row = await q.one("SELECT * FROM erp_categories WHERE code = ?", [code]);
+  if (row === null) fail("Categoria n\xE3o encontrada.", 404, "not_found");
+  const esperando = await q.one(
+    "SELECT COUNT(*) AS n FROM products WHERE pending_category_code = ?",
+    [code]
+  );
+  jsonOk(res, {
+    ...erpCategoriaParaApi(row),
+    /** Produtos parados esperando a amarração deste código. */
+    productsWaiting: Number(esperando?.n ?? 0)
+  });
+}));
 v1Routes.put("/categories/:code/link", h(async (req, res) => {
   await requireApiKey(req);
   const b = body(req);
   const categoria = b.category === null ? null : bodyStr(b, "category", "", 100);
   const sub = b.subcategory === null || b.subcategory === void 0 ? null : bodyStr(b, "subcategory", "", 100);
-  const erro = await amarrarCategoria(String(req.params.code ?? ""), categoria, sub);
+  const { erro, liberados } = await amarrarCategoria(String(req.params.code ?? ""), categoria, sub);
   if (erro !== "") fail(erro, 422, "invalid_link");
-  jsonOk(res, { ok: true });
+  jsonOk(res, { ok: true, released: liberados });
 }));
 v1Routes.get("/products", h(async (req, res) => {
   await requireApiKey(req);

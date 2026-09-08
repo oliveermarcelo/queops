@@ -191,6 +191,14 @@ CREATE TABLE IF NOT EXISTS products (
   -- É o que concilia "o ERP é a fonte da verdade" com "o painel precisa ter
   -- autonomia": sem isto, o ajuste manual volta sozinho no próximo ciclo.
   locked_fields     VARCHAR(255)  NOT NULL DEFAULT '',
+  -- Código de categoria que o ERP mandou e a loja ainda não sabia traduzir.
+  --
+  -- Guardar isto é o que permite ao produto entrar na vitrine sozinho no
+  -- instante da amarração, sem o ERP reenviar. Sem a coluna, a loja não teria
+  -- como saber quais produtos estavam esperando por qual código, e um ERP que
+  -- guarda "essa categoria eu já mandei" nunca mais tocaria no assunto — os
+  -- produtos ficariam invisíveis para sempre, sem erro em lugar nenhum.
+  pending_category_code VARCHAR(60) NOT NULL DEFAULT '',
   position          INT           NOT NULL DEFAULT 0,
   created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

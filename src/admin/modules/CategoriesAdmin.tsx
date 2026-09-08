@@ -29,19 +29,23 @@ function LinhaDaCategoria({ c }: { c: ErpCategory; key?: React.Key }) {
   const [erro, setErro] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [salvo, setSalvo] = useState(false);
+  const [liberados, setLiberados] = useState(0);
 
   const escolher = async (valor: string) => {
     setErro('');
+    setLiberados(0);
     setSalvando(true);
     try {
-      if (valor === '') {
-        await linkErpCategory(c.code, null, null);
-      } else {
-        const [cat, sub] = valor.split('/');
-        await linkErpCategory(c.code, cat, sub ?? null);
-      }
+      const n = valor === ''
+        ? await linkErpCategory(c.code, null, null)
+        : await linkErpCategory(c.code, valor.split('/')[0], valor.split('/')[1] ?? null);
+
       setSalvo(true);
+      setLiberados(n);
+      // O aviso de produtos liberados fica mais tempo que o tique: é
+      // informação, não confirmação.
       setTimeout(() => setSalvo(false), 2500);
+      if (n > 0) setTimeout(() => setLiberados(0), 8000);
     } catch (e) {
       setErro(msgDoErro(e));
     } finally {
@@ -102,6 +106,13 @@ function LinhaDaCategoria({ c }: { c: ErpCategory; key?: React.Key }) {
       {erro !== '' && (
         <p className="mt-2 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {erro}
+        </p>
+      )}
+
+      {liberados > 0 && (
+        <p className="mt-2 text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+          <b>{liberados} produto(s) entraram na vitrine agora.</b> Estavam esperando por esta
+          categoria desde que o ERP os enviou.
         </p>
       )}
     </div>

@@ -167,7 +167,7 @@ export function linkErpCategory(
   code: string,
   category: string | null,
   subcategory: string | null,
-): Promise<{ erpCategories: ErpCategory[]; productsWithoutCategory: number }> {
+): Promise<{ erpCategories: ErpCategory[]; productsWithoutCategory: number; released: number }> {
   return api.put(`/admin/erp-categories/${encodeURIComponent(code)}`, { category, subcategory });
 }
 

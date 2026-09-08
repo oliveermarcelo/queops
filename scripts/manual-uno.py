@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 2.4 — 3 de setembro de 2026'
+VERSAO = 'Versão 2.5 — 8 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -378,11 +378,53 @@ PUT /api/v1/categories
         'produto na seção errada da vitrine sem erro nenhum aparecer.<br/><br/>'
         'Enquanto um código estiver pendente, produto enviado com ele é <b>aceito e gravado</b> — '
         'a integração não trava —, mas fica <b>sem categoria e fora da vitrine</b>, e a resposta '
-        'do PUT do produto diz isso em <font face="Courier">warnings</font>. Depois que o dono da '
-        'loja amarrar (Painel → Categorias do ERP), <b>reenvie o produto</b>: a amarração vale '
-        'para as próximas gravações, ela não sai procurando produtos antigos.<br/><br/>'
-        '<font face="Courier">GET /categories</font> mostra o que está pendente e quantos produtos '
-        'estão parados por isso — dá para monitorar sem depender de alguém avisar.'))
+        'do PUT do produto diz isso em <font face="Courier">warnings</font>.<br/><br/>'
+        '<b>Você NÃO precisa reenviar o produto depois.</b> A loja guarda qual código cada produto '
+        'estava esperando; no instante em que alguém amarra, os produtos represados entram na '
+        'vitrine sozinhos, e a resposta da amarração diz quantos foram '
+        '(<font face="Courier">released</font>).'))
+
+    add(Paragraph('Fluxo síncrono: uma categoria por produto', H3))
+    add(Paragraph(
+        'Se o ERP prefere garantir a ordem — mandar a categoria do produto imediatamente antes do '
+        'produto, e guardar no banco dele que aquela categoria já foi integrada —, use o PUT de '
+        'categoria única abaixo. É o mesmo efeito da carga em lote, para um item.', P))
+
+    for parte in endpoint('PUT', '/categories/{code}', 'Uma categoria só. Para mandar a categoria logo antes do produto.'):
+        add(parte)
+    add(bloco("""
+PUT /api/v1/categories/0004
+{ "name": "Pulseiras", "parentCode": "0003" }
+
+200 -> { "ok": true, "code": "0004", "name": "Pulseiras",
+         "created": true,
+         "linked": false,              // <- é ISTO que o cache deve guardar
+         "category": null, "subcategory": null,
+         "message": "Categoria registrada, mas ainda SEM destino na loja..." }
+422 -> invalid_category   // sem "name"
+"""))
+    add(Spacer(1, 6))
+    add(aviso(
+        'Guarde "linked", não o 200',
+        'O 200 aqui significa "a loja registrou a categoria" — <b>não</b> significa "o produto vai '
+        'aparecer na loja". Entre uma coisa e outra existe uma decisão humana: alguém precisa dizer '
+        'em que categoria da vitrine aquele código entra.<br/><br/>'
+        'Um ERP que grave "categoria 0004 integrada" ao ver o 200 e nunca mais toque no assunto vai '
+        'concluir que está tudo certo enquanto os produtos dela estão fora da vitrine. Guardando '
+        '<font face="Courier">linked</font>, o próprio ERP sabe quais códigos ainda dependem da '
+        'loja e pode reconsultar de vez em quando com o GET abaixo.<br/><br/>'
+        'Vale dizer: mesmo no pior caso, nada se perde. Os produtos entram sozinhos na hora da '
+        'amarração, sem reenvio.'))
+
+    for parte in endpoint('GET', '/categories/{code}', 'O estado de um código só — consulta barata para conferir o cache.'):
+        add(parte)
+    add(bloco("""
+200 -> { "code": "0004", "name": "Pulseiras", "parentCode": "0003",
+         "active": true, "linked": true,
+         "category": "acessorios", "subcategory": "pulseiras",
+         "productsWaiting": 0 }      // produtos parados esperando este código
+404 -> not_found   // código que a loja nunca recebeu
+"""))
 
     for parte in endpoint('GET', '/categories', 'A árvore da loja com os códigos amarrados, mais a lista do ERP com o estado de cada um.'):
         add(parte)
@@ -407,7 +449,7 @@ PUT /api/v1/categories
 PUT /api/v1/categories/0004/link
 { "category": "acessorios", "subcategory": "pulseiras" }
 
-200 -> { "ok": true }
+200 -> { "ok": true, "released": 12 }   // produtos que entraram na vitrine agora
 422 -> invalid_link   // slug inexistente, ou subcategoria que não é dessa categoria
 """))
     add(Paragraph(

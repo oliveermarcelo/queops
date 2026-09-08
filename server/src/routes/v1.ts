@@ -16,7 +16,8 @@ import { requireApiKey } from '../auth.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
 import {
-  amarrarCategoria, carregarCategorias, erpCategoriaParaApi, mapaDeCodigos, produtosSemCategoria,
+  amarrarCategoria, carregarCategorias, erpCategoriaParaApi, mapaDeCodigos, normalizarCodigo,
+  produtosSemCategoria, traduzirCodigo,
 } from '../erp-categorias.ts';
 import { gravarProdutoDoErp } from '../erp-produtos.ts';
 import { body, bodyFloat, bodyInt, bodyStr, iso, jsonOk, queryStr } from '../http.ts';
@@ -132,6 +133,80 @@ v1Routes.get('/categories', h(async (req, res) => {
 }));
 
 /**
+ * PUT /api/v1/categories/{code} — uma categoria só.
+ *
+ * Existe para o fluxo síncrono: antes de mandar um produto, o ERP manda a
+ * categoria dele e só então o produto, garantindo a ordem. Faz o mesmo que a
+ * carga em lote, para um item.
+ *
+ * A resposta traz `linked` porque 200 aqui NÃO significa que o produto vai
+ * aparecer na loja. Um ERP que guarda "já integrei essa categoria" para não
+ * repetir precisa guardar `linked`, e não o 200 — senão ele marca como
+ * resolvido algo que ainda depende de uma decisão humana do outro lado.
+ */
+v1Routes.put('/categories/:code', h(async (req, res) => {
+  await requireApiKey(req);
+  const code = String(req.params.code ?? '');
+  const b = body(req);
+
+  const r = await carregarCategorias([{
+    code,
+    name: b.name,
+    parentCode: b.parentCode,
+    active: b.active,
+  }]);
+
+  // Item único: o problema dele é o problema da requisição, e vira 422.
+  if (r.criadas + r.atualizadas === 0) {
+    fail(
+      r.warnings[0] ?? 'Categoria inválida. Informe "name".',
+      422,
+      'invalid_category',
+    );
+  }
+
+  const { destino, nome } = await traduzirCodigo(code);
+  jsonOk(res, {
+    ok: true,
+    code: normalizarCodigo(code),
+    name: nome,
+    created: r.criadas === 1,
+    linked: destino !== null,
+    category: destino?.category ?? null,
+    subcategory: destino?.subcategory ?? null,
+    message: destino !== null
+      ? 'Categoria amarrada. Produto enviado com este código já entra na vitrine.'
+      : 'Categoria registrada, mas ainda SEM destino na loja. O produto é aceito e fica fora da '
+        + 'vitrine até alguém amarrar em Painel → Categorias do ERP — e entra sozinho quando isso '
+        + 'acontecer, sem precisar reenviar.',
+  });
+}));
+
+/**
+ * GET /api/v1/categories/{code} — o estado de um código só.
+ *
+ * Consulta barata para o ERP conferir antes de confiar no cache dele: se
+ * guardou "já integrei" quando `linked` era falso, é aqui que ele descobre que
+ * a amarração saiu, sem varrer a lista inteira.
+ */
+v1Routes.get('/categories/:code', h(async (req, res) => {
+  await requireApiKey(req);
+  const code = normalizarCodigo(String(req.params.code ?? ''));
+  const row = await q.one('SELECT * FROM erp_categories WHERE code = ?', [code]);
+  if (row === null) fail('Categoria não encontrada.', 404, 'not_found');
+
+  const esperando = await q.one(
+    'SELECT COUNT(*) AS n FROM products WHERE pending_category_code = ?',
+    [code],
+  );
+  jsonOk(res, {
+    ...erpCategoriaParaApi(row),
+    /** Produtos parados esperando a amarração deste código. */
+    productsWaiting: Number(esperando?.n ?? 0),
+  });
+}));
+
+/**
  * PUT /api/v1/categories/{code}/link — amarra pela API.
  *
  * A amarração é decisão do dono da loja e acontece no painel; esta rota existe
@@ -147,9 +222,9 @@ v1Routes.put('/categories/:code/link', h(async (req, res) => {
     ? null
     : bodyStr(b, 'subcategory', '', 100);
 
-  const erro = await amarrarCategoria(String(req.params.code ?? ''), categoria, sub);
+  const { erro, liberados } = await amarrarCategoria(String(req.params.code ?? ''), categoria, sub);
   if (erro !== '') fail(erro, 422, 'invalid_link');
-  jsonOk(res, { ok: true });
+  jsonOk(res, { ok: true, released: liberados });
 }));
 
 // GET /api/v1/products

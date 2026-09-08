@@ -297,19 +297,30 @@ export async function gravarProdutoDoErp(
       const { destino, conhecido, nome } = await traduzirCodigo(code, exec);
 
       if (destino !== null) {
-        colunas.push('category', 'subcategory');
-        valores.push(destino.category, destino.subcategory);
+        colunas.push('category', 'subcategory', 'pending_category_code');
+        valores.push(destino.category, destino.subcategory, '');
         resultado.applied.push('categoryCode');
-      } else if (!conhecido) {
-        resultado.warnings.push(
-          `categoryCode "${code}" não veio em nenhuma carga de categorias. Envie `
-          + 'PUT /api/v1/categories antes dos produtos; a categoria deste produto não foi alterada.',
-        );
       } else {
+        /*
+         * Código sem destino: o produto guarda qual código estava esperando.
+         *
+         * É o que permite liberá-lo sozinho no instante da amarração, sem o
+         * ERP reenviar nada. E isso importa porque o ERP guarda "essa
+         * categoria eu já mandei" para não mandar de novo: se depender de
+         * reenvio, ele nunca reenvia, e o produto fica invisível para sempre —
+         * sem erro em lugar nenhum, que é a pior forma de quebrar.
+         */
+        colunas.push('pending_category_code');
+        valores.push(code.slice(0, 60));
+
         resultado.warnings.push(
-          `categoryCode "${code}" (${nome}) ainda não está amarrado a uma categoria da loja. `
-          + 'O produto foi gravado, mas só aparece na vitrine depois da amarração em '
-          + 'Painel → Categorias.',
+          !conhecido
+            ? `categoryCode "${code}" não veio em nenhuma carga de categorias. Envie `
+              + 'PUT /api/v1/categories/{code} antes do produto. O produto foi gravado e entra na '
+              + 'vitrine assim que o código existir e for amarrado — não é preciso reenviá-lo.'
+            : `categoryCode "${code}" (${nome}) ainda não está amarrado a uma categoria da loja. `
+              + 'O produto foi gravado e fica fora da vitrine até a amarração em '
+              + 'Painel → Categorias do ERP; quando ela acontecer, ele entra sozinho.',
         );
       }
     }

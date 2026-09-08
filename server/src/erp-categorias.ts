@@ -283,15 +283,24 @@ export function erpCategoriaParaApi(r: Row): Record<string, unknown> {
  * produto apontando para uma seção que a vitrine não tem — invisível na loja e
  * difícil de perceber, porque o painel mostraria a amarração como feita.
  */
+export interface ResultadoDaAmarracao {
+  /** Motivo da recusa, ou string vazia quando deu certo. */
+  erro: string;
+  /** Produtos que estavam esperando este código e entraram na vitrine agora. */
+  liberados: number;
+}
+
 export async function amarrarCategoria(
   code: string,
   category: string | null,
   subcategory: string | null,
   exec: Q = q,
-): Promise<string> {
+): Promise<ResultadoDaAmarracao> {
   const c = normalizarCodigo(code);
   const existe = await exec.one('SELECT code FROM erp_categories WHERE code = ?', [c]);
-  if (existe === null) return 'Este código não veio em nenhuma carga do ERP.';
+  if (existe === null) {
+    return { erro: 'Este código não veio em nenhuma carga do ERP.', liberados: 0 };
+  }
 
   // Desamarrar: volta a ser pendente.
   if (category === null || category === '') {
@@ -299,11 +308,11 @@ export async function amarrarCategoria(
       'UPDATE erp_categories SET category_id = NULL, subcategory_id = NULL WHERE code = ?',
       [c],
     );
-    return '';
+    return { erro: '', liberados: 0 };
   }
 
   const cat = await exec.one('SELECT id FROM categories WHERE id = ?', [category]);
-  if (cat === null) return `A loja não tem a categoria "${category}".`;
+  if (cat === null) return { erro: `A loja não tem a categoria "${category}".`, liberados: 0 };
 
   let sub: string | null = null;
   if (subcategory !== null && subcategory !== '') {
@@ -312,7 +321,10 @@ export async function amarrarCategoria(
       [category, subcategory],
     );
     if (achada === null) {
-      return `A categoria "${category}" não tem a subcategoria "${subcategory}".`;
+      return {
+        erro: `A categoria "${category}" não tem a subcategoria "${subcategory}".`,
+        liberados: 0,
+      };
     }
     sub = subcategory;
   }
@@ -321,7 +333,28 @@ export async function amarrarCategoria(
     'UPDATE erp_categories SET category_id = ?, subcategory_id = ? WHERE code = ?',
     [category, sub, c],
   );
-  return '';
+
+  /*
+   * Os produtos que estavam esperando este código entram na vitrine agora.
+   *
+   * Sem isto, a amarração valeria só para as PRÓXIMAS gravações, e quem já
+   * tinha chegado dependeria de o ERP reenviar. O ERP do cliente guarda "essa
+   * categoria eu já integrei" justamente para não repetir trabalho — então ele
+   * não reenviaria, e os produtos ficariam invisíveis indefinidamente. Uma
+   * dependência que só falha em silêncio e semanas depois é o tipo de coisa que
+   * o código precisa resolver, não a documentação.
+   *
+   * `category = ''` no WHERE limita a quem está de fato esperando: produto que
+   * alguém já posicionou no painel não é movido por uma amarração posterior.
+   */
+  const liberados = await exec.run(
+    `UPDATE products
+        SET category = ?, subcategory = ?, pending_category_code = ''
+      WHERE pending_category_code = ? AND category = ''`,
+    [category, sub, c],
+  );
+
+  return { erro: '', liberados };
 }
 
 /**

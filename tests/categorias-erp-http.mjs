@@ -147,21 +147,22 @@ const amarrou = await erp('PUT', `/api/v1/categories/${COD_PUL}/link`, {
 ok(amarrou.status === 200, 'amarração válida é aceita', JSON.stringify(amarrou.json));
 
 /*
- * O produto já gravado entra na vitrine sozinho? NÃO — e isso é intencional.
+ * O produto represado entra na vitrine SOZINHO, sem o ERP reenviar.
  *
- * A amarração diz para onde vão os PRÓXIMOS produtos daquele código; ela não
- * sabe quais produtos antigos chegaram com ele, porque o produto sem categoria
- * não guarda o código que tentou usar. O ERP reenvia e o produto entra. O
- * teste existe para que isso seja uma decisão registrada, e não uma surpresa.
+ * Esta é a verificação mais importante do arquivo. O ERP do cliente guarda no
+ * banco dele "essa categoria eu já integrei" para não repetir trabalho — o que
+ * é correto. Mas significa que, se a entrada do produto na loja dependesse de
+ * um reenvio, esse reenvio nunca aconteceria: o ERP não tem motivo para tocar
+ * de novo num produto que não mudou. Os produtos ficariam invisíveis
+ * indefinidamente, sem erro em lugar nenhum.
  */
-const reenvio = await erp('PUT', `/api/v1/products/${produtoId}`, { categoryCode: COD_PUL });
-ok(reenvio.status === 200, 'o reenvio do produto é aceito', String(reenvio.status));
-ok((reenvio.json?.applied ?? []).includes('categoryCode'),
-  'e agora a categoria é aplicada de verdade',
-  JSON.stringify(reenvio.json?.applied));
+ok(amarrou.json?.released === 1,
+  'a amarração informa quantos produtos represados foram liberados',
+  JSON.stringify(amarrou.json?.released));
 
 const depois = await erp('GET', `/api/v1/products/${produtoId}`);
-ok(depois.json?.product?.category === 'acessorios', 'o produto foi para a categoria certa',
+ok(depois.json?.product?.category === 'acessorios',
+  'o produto foi para a categoria certa SEM reenvio',
   String(depois.json?.product?.category));
 ok(depois.json?.product?.subcategory === 'pulseiras', 'e para a subcategoria certa',
   String(depois.json?.product?.subcategory));
@@ -172,8 +173,69 @@ ok(depois.json?.product?.categoryCode === COD_PUL,
 const vitrineDepois = await cliente().chamar('GET', '/api/catalog');
 ok(
   (vitrineDepois.json?.products ?? []).some((p) => p.id === produtoId),
-  'agora ele aparece na vitrine',
+  'e ele aparece na vitrine, sem o ERP fazer mais nada',
 );
+
+// ------------------------------------- fluxo síncrono, uma por vez ----
+
+/*
+ * O jeito que o integrador do UNO vai usar: antes de cada produto, manda a
+ * categoria dele; guarda no banco do ERP que já mandou; nas próximas vezes,
+ * pula.
+ *
+ * O risco desse desenho é o cache guardar a coisa errada. Um 200 aqui diz
+ * "categoria registrada", não "produto vai aparecer na loja" — por isso a
+ * resposta traz `linked`, que é o que o cache dele precisa guardar.
+ */
+const COD_SINC = `T-SINC-${marca}`;
+const produtoSinc = `teste-sinc-${marca}`;
+
+const uma = await erp('PUT', `/api/v1/categories/${COD_SINC}`, { name: 'Difusores' });
+ok(uma.status === 200, 'PUT de categoria única funciona', JSON.stringify(uma.json).slice(0, 140));
+ok(uma.json?.created === true, 'e informa que criou', String(uma.json?.created));
+ok(uma.json?.linked === false,
+  'e diz que ela ainda NÃO está amarrada — é isso que o ERP deve guardar, não o 200',
+  String(uma.json?.linked));
+ok(/fora da vitrine/.test(String(uma.json?.message)),
+  'a mensagem explica a consequência',
+  String(uma.json?.message));
+
+const dedeNovo = await erp('PUT', `/api/v1/categories/${COD_SINC}`, { name: 'Difusores' });
+ok(dedeNovo.json?.created === false, 'reenviar a mesma categoria não duplica',
+  String(dedeNovo.json?.created));
+
+const semNome = await erp('PUT', `/api/v1/categories/${COD_SINC}-x`, {});
+ok(semNome.status === 422, 'categoria única sem name é 422, não 200 mudo', String(semNome.status));
+
+await erp('PUT', `/api/v1/products/${produtoSinc}`, {
+  name: 'Produto do fluxo síncrono', price: 10, categoryCode: COD_SINC,
+});
+
+const consulta = await erp('GET', `/api/v1/categories/${COD_SINC}`);
+ok(consulta.status === 200, 'dá para consultar o estado de um código só', String(consulta.status));
+ok(consulta.json?.productsWaiting === 1,
+  'e a consulta diz quantos produtos estão esperando a amarração',
+  String(consulta.json?.productsWaiting));
+
+const amarrouSinc = await erp('PUT', `/api/v1/categories/${COD_SINC}/link`, {
+  category: 'incensos', subcategory: 'difusores',
+});
+ok(amarrouSinc.json?.released === 1,
+  'ao amarrar, o produto do fluxo síncrono é liberado sem reenvio',
+  JSON.stringify(amarrouSinc.json));
+
+const sincNaLoja = await erp('GET', `/api/v1/products/${produtoSinc}`);
+ok(sincNaLoja.json?.product?.categoryCode === COD_SINC,
+  'e passa a devolver o código que o ERP mandou',
+  String(sincNaLoja.json?.product?.categoryCode));
+
+const depoisDeAmarrar = await erp('GET', `/api/v1/categories/${COD_SINC}`);
+ok(depoisDeAmarrar.json?.linked === true, 'a consulta passa a dizer linked: true',
+  String(depoisDeAmarrar.json?.linked));
+ok(depoisDeAmarrar.json?.productsWaiting === 0, 'e ninguém mais esperando',
+  String(depoisDeAmarrar.json?.productsWaiting));
+
+await erp('PUT', `/api/v1/products/${produtoSinc}`, { active: false });
 
 // -------------------------------------- código que nunca foi enviado ----
 

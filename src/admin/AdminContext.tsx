@@ -63,10 +63,13 @@ interface AdminContextValue {
   resetPanelUserPassword: (id: string, password: string) => Promise<void>;
   changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<void>;
 
-  /** Amarra um código de categoria do ERP à árvore da loja. `null` desamarra. */
+  /**
+   * Amarra um código de categoria do ERP à árvore da loja. `null` desamarra.
+   * Devolve quantos produtos represados entraram na vitrine com a amarração.
+   */
   linkErpCategory: (
     code: string, category: string | null, subcategory: string | null,
-  ) => Promise<void>;
+  ) => Promise<number>;
 }
 
 const Ctx = createContext<AdminContextValue | null>(null);
@@ -304,6 +307,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
             productsWithoutCategory: r.productsWithoutCategory,
           }));
         }
+        // Quantos produtos entraram na vitrine com este clique — a tela avisa.
+        return r.released;
       },
     }),
     [state, loading, error, mutate, refresh, aplicarUsuarios],
