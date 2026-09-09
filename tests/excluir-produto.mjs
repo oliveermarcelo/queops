@@ -102,9 +102,15 @@ ok(noPainel(await estado(), novo) === undefined,
 // -------------------------------------- produto que já foi vendido ----
 
 /*
- * A trava que protege o histórico: apagar um produto vendido deixaria o pedido
- * de quem comprou sem o item. Vale mais um produto inativo pendurado na lista
- * do que um pedido antigo ilegível.
+ * A trava vale enquanto o pedido vale.
+ *
+ * Ela existe para não tirar um produto dos relatórios no meio de uma venda em
+ * andamento — e NÃO, como a mensagem antiga afirmava, para impedir que o
+ * pedido fique sem o item: `order_items` guarda cópia própria do nome, da
+ * quantidade e do preço, e não referencia `products`. Isso é verificado
+ * explicitamente mais abaixo, porque foi a crença errada que tornou a trava
+ * intransponível: contando qualquer pedido, cancelar não liberava nada e um
+ * produto de teste vendido uma vez ficava na lista para sempre.
  */
 /*
  * A venda é criada aqui, direto no banco, em vez de depender de a base ter um
@@ -129,29 +135,119 @@ await q.run(
   [pedido, vendido],
 );
 
-const comVenda = (await estado()).productsWithOrders ?? [];
+const comVenda = (await estado()).productsWithActiveOrders ?? [];
 ok(comVenda.includes(vendido),
-  'o painel enxerga que este produto tem venda');
+  'o painel enxerga que este produto está preso a um pedido que vale');
 
 const bloqueado = await painel.chamar('DELETE', `/api/admin/products/${vendido}?definitivo=1`);
-ok(bloqueado.status === 409, 'produto vendido NÃO é apagado', String(bloqueado.status));
-ok(/pedido/i.test(String(bloqueado.json?.error?.message)),
-  'e a recusa explica o motivo, em vez de um erro genérico',
+ok(bloqueado.status === 409, 'produto em pedido que vale NÃO é apagado', String(bloqueado.status));
+ok(/cancele/i.test(String(bloqueado.json?.error?.message)),
+  'e a recusa diz COMO sair dela, em vez de ser um beco sem saída',
   JSON.stringify(bloqueado.json?.error?.message));
 
 ok(noPainel(await estado(), vendido) !== undefined,
   'ele continua existindo, com o histórico do pedido intacto');
 
-// Limpeza do que este teste criou no banco.
-await q.run('DELETE FROM order_items WHERE order_id = ?', [pedido]);
-await q.run('DELETE FROM orders WHERE id = ?', [pedido]);
-await q.run('DELETE FROM products WHERE id = ?', [vendido]);
+// ------------------------------- cancelar o pedido libera o produto ----
 
-// O painel sabe quem já foi vendido, para não oferecer um botão que a rota nega.
+/*
+ * O relato que motivou esta parte: "mesmo colocando todos os pedidos para
+ * cancelado, não consegui deletar o produto". A trava contava qualquer pedido,
+ * então não havia nada que a pessoa pudesse fazer para sair dela.
+ */
+await painel.chamar('PATCH', `/api/admin/orders/${pedido}`, { status: 'canceled' });
+
+const depoisDeCancelar = (await estado()).productsWithActiveOrders ?? [];
+ok(!depoisDeCancelar.includes(vendido),
+  'cancelado o pedido, o painel deixa de mostrar o produto como preso');
+
+const liberado = await painel.chamar('DELETE', `/api/admin/products/${vendido}?definitivo=1`);
+ok(liberado.status === 200, 'e agora o produto é apagado de verdade', String(liberado.status));
+ok(noPainel(await estado(), vendido) === undefined, 'ele some da lista do painel');
+
+/*
+ * A verificação que derruba a justificativa antiga: com o produto apagado, o
+ * pedido continua mostrando o item, o nome e o preço do dia da compra.
+ */
+const itensDoPedido = await q.all(
+  'SELECT name, quantity, unit_price FROM order_items WHERE order_id = ?',
+  [pedido],
+);
+ok(itensDoPedido.length === 1, 'o pedido continua com o item', String(itensDoPedido.length));
+ok(String(itensDoPedido[0]?.name) === 'Produto já vendido',
+  'e o item ainda tem nome — apagar o produto não deixou o pedido ilegível',
+  String(itensDoPedido[0]?.name));
+ok(Number(itensDoPedido[0]?.unit_price) === 40,
+  'e o preço do dia da compra, que é o que importa no histórico',
+  String(itensDoPedido[0]?.unit_price));
+
+// ------------------------------------------------- apagar o pedido ----
+
+const apagaCancelado = await painel.chamar('DELETE', `/api/admin/orders/${pedido}`);
+ok(apagaCancelado.status === 200, 'pedido cancelado e não pago é apagado',
+  String(apagaCancelado.status));
+const sobrou = await q.all('SELECT id FROM orders WHERE id = ?', [pedido]);
+ok(sobrou.length === 0, 'a linha some do banco');
+const itensOrfaos = await q.all('SELECT id FROM order_items WHERE order_id = ?', [pedido]);
+ok(itensOrfaos.length === 0, 'e os itens caem junto, sem deixar órfão', String(itensOrfaos.length));
+
+/*
+ * Pedido PAGO nunca some — é o registro de dinheiro que entrou, e não existe
+ * como reconstruí-lo depois.
+ */
+const pago = `TSP-${String(marca).slice(-9)}`;
+await q.run(
+  `INSERT INTO orders (id, customer_name, customer_email, subtotal, total, status, payment, paid_at)
+   VALUES (?, 'Teste', 'teste@exemplo.com', 40, 40, 'paid', 'pix', NOW())`,
+  [pago],
+);
+const recusaPago = await painel.chamar('DELETE', `/api/admin/orders/${pago}`);
+ok(recusaPago.status === 409, 'pedido pago NÃO é apagado', String(recusaPago.status));
+
+/*
+ * E marcar o pago como "cancelado" na tela não abre a porta.
+ *
+ * `status` é editável no painel; `paid_at` é o fato. Se a regra olhasse só o
+ * status, dois cliques apagariam justamente o que ela existe para proteger.
+ */
+await painel.chamar('PATCH', `/api/admin/orders/${pago}`, { status: 'canceled' });
+const aindaRecusa = await painel.chamar('DELETE', `/api/admin/orders/${pago}`);
+ok(aindaRecusa.status === 409,
+  'e marcá-lo como cancelado na tela não libera — o que vale é o pagamento',
+  String(aindaRecusa.status));
+await q.run('DELETE FROM orders WHERE id = ?', [pago]);
+
+/*
+ * Cobrança em aberto segura o pedido. Sem isso, o Pix pago depois chegaria por
+ * webhook sem pedido a que se referir: dinheiro dentro, pedido nenhum.
+ */
+const comPix = `TSX-${String(marca).slice(-9)}`;
+await q.run(
+  `INSERT INTO orders (id, customer_name, customer_email, subtotal, total, status, payment,
+                       payment_ref)
+   VALUES (?, 'Teste', 'teste@exemplo.com', 40, 40, 'pending', 'pix', ?)`,
+  [comPix, `ref-${marca}`],
+);
+const recusaAberta = await painel.chamar('DELETE', `/api/admin/orders/${comPix}`);
+ok(recusaAberta.status === 409, 'pedido com cobrança em aberto NÃO é apagado',
+  String(recusaAberta.status));
+ok(/cancelado/i.test(String(recusaAberta.json?.error?.message)),
+  'e a recusa aponta o caminho: cancelar primeiro',
+  JSON.stringify(recusaAberta.json?.error?.message));
+
+await painel.chamar('PATCH', `/api/admin/orders/${comPix}`, { status: 'canceled' });
+const agoraVai = await painel.chamar('DELETE', `/api/admin/orders/${comPix}`);
+ok(agoraVai.status === 200, 'cancelado, ele pode ser apagado', String(agoraVai.status));
+
+// O painel sabe quem está preso, para não oferecer um botão que a rota nega.
 const s = await estado();
-ok(Array.isArray(s.productsWithOrders),
-  'o painel recebe a lista de produtos com venda',
-  typeof s.productsWithOrders);
+ok(Array.isArray(s.productsWithActiveOrders),
+  'o painel recebe a lista de produtos presos a pedido que vale',
+  typeof s.productsWithActiveOrders);
+
+// Limpeza do que este teste criou no banco.
+await q.run('DELETE FROM orders WHERE id IN (?, ?, ?)', [pedido, pago, comPix]);
+await q.run('DELETE FROM products WHERE id = ?', [vendido]);
 
 await closePool();
 console.log(falhas === 0 ? '\ntodos os testes passaram' : `\n${falhas} falha(s)`);

@@ -4,11 +4,29 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Loader2, Package, Search } from 'lucide-react';
+import { Loader2, Package, Search, Trash2 } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
 import { fetchOrderTracking, setOrderTracking } from '../store';
-import { OrderStatus, TrackingEvent } from '../types';
-import { brl, fmtDate, Card, inputCls } from '../ui';
+import { Order, OrderStatus, TrackingEvent } from '../types';
+import { brl, fmtDate, Card, ConfirmDialog, inputCls } from '../ui';
+
+/**
+ * Por que este pedido não pode ser apagado — vazio quando pode.
+ *
+ * A mesma regra do servidor, escrita uma vez e usada tanto para desabilitar o
+ * botão quanto para explicar no título dele. Duplicar a condição solta pela
+ * tela é como o botão de excluir produto passou a prometer o que a rota
+ * recusava.
+ */
+function motivoParaNaoApagar(o: Order): string {
+  if (o.paidAt || o.status === 'paid' || o.status === 'shipped' || o.status === 'delivered') {
+    return 'Pedido pago não pode ser apagado — é o registro de dinheiro que entrou';
+  }
+  if (o.hasOpenCharge && o.status !== 'canceled') {
+    return 'Tem cobrança em aberto. Marque como cancelado antes de apagar';
+  }
+  return '';
+}
 
 const STATUSES: { id: OrderStatus | 'all'; label: string }[] = [
   { id: 'all', label: 'Todos' },
@@ -144,9 +162,10 @@ function TrackingRow({
 }
 
 export default function OrdersAdmin() {
-  const { state, setOrderStatus } = useAdmin();
+  const { state, setOrderStatus, deleteOrder } = useAdmin();
   const [filter, setFilter] = useState<OrderStatus | 'all'>('all');
   const [query, setQuery] = useState('');
+  const [apagando, setApagando] = useState<Order | null>(null);
 
   const orders = useMemo(() => {
     const q = query.toLowerCase();
@@ -189,6 +208,7 @@ export default function OrdersAdmin() {
                 <th className="py-3 px-4 font-semibold">Data</th>
                 <th className="py-3 px-4 font-semibold text-right">Total</th>
                 <th className="py-3 px-4 font-semibold">Status</th>
+                <th className="py-3 px-4 font-semibold w-10" />
               </tr>
             </thead>
             <tbody>
@@ -217,11 +237,26 @@ export default function OrdersAdmin() {
                       <option value="canceled">Cancelado</option>
                     </select>
                   </td>
+                  <td className="py-2.5 px-4">
+                    {/*
+                      O botão fica sempre visível, mesmo quando não dá para
+                      apagar: desabilitado com o motivo no título ensina a
+                      regra; sumir só faz procurar um botão que não existe.
+                    */}
+                    <button
+                      onClick={() => setApagando(o)}
+                      disabled={motivoParaNaoApagar(o) !== ''}
+                      title={motivoParaNaoApagar(o) || 'Apagar pedido'}
+                      className="p-2 rounded-lg text-gray-400 enabled:hover:text-brand-red enabled:hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
                 </tr>
                 {/* Rastreio: só a partir do pago — antes disso não há o que despachar. */}
                 {(o.status === 'paid' || o.status === 'shipped' || o.status === 'delivered') && (
                   <tr className="border-b border-gray-50 bg-gray-50/30">
-                    <td colSpan={6} className="py-2 px-4">
+                    <td colSpan={7} className="py-2 px-4">
                       <TrackingRow
                         orderId={o.id}
                         initialCode={o.trackingCode ?? ''}
@@ -233,12 +268,30 @@ export default function OrdersAdmin() {
                 </React.Fragment>
               ))}
               {orders.length === 0 && (
-                <tr><td colSpan={6} className="py-10 text-center text-gray-400 text-sm">Nenhum pedido neste filtro.</td></tr>
+                <tr><td colSpan={7} className="py-10 text-center text-gray-400 text-sm">Nenhum pedido neste filtro.</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </Card>
+
+      {apagando && (
+        <ConfirmDialog
+          title="Apagar pedido"
+          message={
+            `O pedido ${apagando.id}, de ${apagando.customerName}, será apagado do banco com os `
+            + 'itens dele, e não volta.\n\n'
+            + 'Nenhum pagamento foi confirmado nele, então não se perde registro de dinheiro. '
+            + 'Se o produto desse pedido estava travado para exclusão, ele libera.'
+          }
+          confirmLabel="Apagar pedido"
+          onCancel={() => setApagando(null)}
+          onConfirm={() => {
+            void deleteOrder(apagando.id);
+            setApagando(null);
+          }}
+        />
+      )}
     </div>
   );
 }

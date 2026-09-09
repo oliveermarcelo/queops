@@ -126,16 +126,29 @@ adminRoutes.get('/state', h(async (req, res) => {
     // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
     products: await fetchProducts({ onlyActive: false }),
     /*
-     * Quais produtos já foram vendidos alguma vez.
+     * Quais produtos estão presos em pedido que ainda vale.
      *
      * O painel usa isso para saber, ANTES de perguntar, se o botão de excluir
      * vai apagar de verdade ou só tirar da vitrine. Sem esse dado a tela teria
      * que prometer uma coisa e fazer outra — foi o que aconteceu: o botão
      * dizia "Excluir", o produto continuava na lista, e a conclusão de quem
      * clicou foi que a exclusão não funcionava.
+     *
+     * Pedido CANCELADO não prende. Antes prendia, e a trava era intransponível
+     * na prática: cancelar os pedidos não liberava nada, então um produto de
+     * teste vendido uma vez ficava para sempre na lista. A justificativa que a
+     * tela dava ("o pedido ficaria sem o item") também não se sustenta —
+     * `order_items` guarda cópia própria do nome, da quantidade e do preço, e
+     * não tem chave estrangeira para `products`. O histórico continua legível
+     * com o produto apagado. O que se perde é o produto nos relatórios, e isso
+     * só importa enquanto o pedido vale.
      */
-    productsWithOrders: (await q.all('SELECT DISTINCT product_id FROM order_items'))
-      .map((r) => String(r.product_id)),
+    productsWithActiveOrders: (await q.all(
+      `SELECT DISTINCT i.product_id
+         FROM order_items i
+         JOIN orders o ON o.id = i.order_id
+        WHERE o.status <> 'canceled'`,
+    )).map((r) => String(r.product_id)),
     orders: await fetchOrders(),
     customers,
     coupons: (await q.all('SELECT * FROM coupons ORDER BY created_at DESC')).map((c) => ({
@@ -383,11 +396,21 @@ adminRoutes.post('/midia', h(async (req, res) => {
  * ele. Apagar de verdade um produto já vendido tornaria ilegível o histórico
  * de quem comprou.
  *
- * Com `?definitivo=1` a linha é apagada — mas só se o produto NUNCA foi
- * vendido. É o caso real de quem criou um item errado, ou dos produtos de
- * teste que um ERP em integração deixa para trás: não há histórico a
- * preservar, e esconder em vez de apagar só acumula lixo que reaparece em toda
- * listagem do painel.
+ * Com `?definitivo=1` a linha é apagada — mas só se nenhum pedido que ainda
+ * vale contiver o produto. É o caso real de quem criou um item errado, ou dos
+ * produtos de teste que um ERP em integração deixa para trás: não há histórico
+ * a preservar, e esconder em vez de apagar só acumula lixo que reaparece em
+ * toda listagem do painel.
+ *
+ * Pedido CANCELADO não segura o produto.
+ *
+ * A regra antiga contava qualquer pedido, e por isso era intransponível: um
+ * produto vendido uma vez em teste não tinha como sair da lista nunca mais,
+ * nem cancelando o pedido. Pior, a razão que a tela dava era falsa — apagar o
+ * produto NÃO deixa o pedido sem o item, porque `order_items` guarda cópia
+ * própria de nome, quantidade e preço e não referencia `products`. O que
+ * realmente se perde é o produto nos relatórios, e enquanto o pedido vale isso
+ * é motivo suficiente para segurar; depois de cancelado, não é.
  */
 adminRoutes.delete('/products/:id', h(async (req, res) => {
   await requireAdmin(req);
@@ -395,14 +418,17 @@ adminRoutes.delete('/products/:id', h(async (req, res) => {
 
   if (queryStr(req, 'definitivo', '', 1) === '1') {
     const vendas = await q.one(
-      'SELECT COUNT(*) AS n FROM order_items WHERE product_id = ?',
+      `SELECT COUNT(*) AS n
+         FROM order_items i
+         JOIN orders o ON o.id = i.order_id
+        WHERE i.product_id = ? AND o.status <> 'canceled'`,
       [id],
     );
     const n = Number(vendas?.n ?? 0);
     if (n > 0) {
       fail(
-        `Este produto está em ${n} pedido(s) e não pode ser apagado — o histórico de quem comprou `
-        + 'ficaria sem o item. Ele foi mantido fora da vitrine.',
+        `Este produto está em ${n} pedido(s) que ainda valem e não pode ser apagado. `
+        + 'Cancele esses pedidos e tente de novo — ou deixe o produto fora da vitrine.',
         409,
         'product_has_orders',
       );
@@ -426,6 +452,64 @@ adminRoutes.patch('/orders/:id', h(async (req, res) => {
   }
   fireWebhooks('order.status_changed', { orderId: req.params.id, status });
   jsonOk(res, { ok: true });
+}));
+
+/**
+ * DELETE /api/admin/orders/:id — apaga o pedido e os itens dele.
+ *
+ * Existe para limpar o que a integração e os testes deixam para trás. Serve
+ * também de segundo passo para apagar um produto: o produto só sai enquanto
+ * nenhum pedido que vale o contiver.
+ *
+ * PEDIDO PAGO NUNCA É APAGADO. `paid_at` preenchido é dinheiro que entrou, e
+ * apagar a linha destrói o único registro que a loja tem de quem pagou o quê —
+ * dado que ninguém consegue reconstruir depois. `status` sozinho não bastaria:
+ * ele é editável na tela, então marcar "cancelado" num pedido pago liberaria a
+ * exclusão do que a regra existe para proteger. As duas condições são checadas.
+ *
+ * Cobrança em aberto também segura. Um Pix gerado e não pago ainda pode cair a
+ * qualquer momento: se o pedido tivesse sumido, o webhook chegaria, não
+ * encontraria a que pedido se referir e o dinheiro entraria sem pedido nenhum.
+ * Cancelar o pedido primeiro é o caminho — o cancelamento é o que declara que
+ * aquela cobrança não vale mais.
+ */
+adminRoutes.delete('/orders/:id', h(async (req, res) => {
+  await requireAdmin(req);
+  const id = String(req.params.id ?? '');
+
+  const pedido = await q.one(
+    'SELECT id, status, paid_at, payment_ref FROM orders WHERE id = ?',
+    [id],
+  );
+  if (!pedido) fail('Pedido não encontrado.', 404, 'not_found');
+
+  const status = String(pedido!.status ?? '');
+  const pago = pedido!.paid_at !== null && pedido!.paid_at !== undefined;
+
+  if (pago || ['paid', 'shipped', 'delivered'].includes(status)) {
+    fail(
+      'Este pedido foi pago e não pode ser apagado — é o registro de dinheiro que entrou. '
+      + 'Se ele não deve mais valer, marque como cancelado.',
+      409,
+      'order_is_paid',
+    );
+  }
+
+  const temCobrancaAberta = pedido!.payment_ref !== null
+    && String(pedido!.payment_ref ?? '') !== ''
+    && status !== 'canceled';
+  if (temCobrancaAberta) {
+    fail(
+      'Este pedido tem uma cobrança em aberto. Se alguém pagar depois de ele sumir, o dinheiro '
+      + 'entra sem pedido correspondente. Marque como cancelado primeiro e apague em seguida.',
+      409,
+      'order_has_open_charge',
+    );
+  }
+
+  // `order_items` cai junto pela chave estrangeira ON DELETE CASCADE.
+  await q.run('DELETE FROM orders WHERE id = ?', [id]);
+  jsonOk(res, { ok: true, apagado: true });
 }));
 
 // POST /api/admin/coupons

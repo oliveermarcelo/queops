@@ -56,6 +56,17 @@ export function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
   return api.patch(`/admin/orders/${encodeURIComponent(id)}`, { status });
 }
 
+/**
+ * Apaga o pedido e os itens dele, de vez.
+ *
+ * O servidor recusa com 409 se o pedido foi pago ou se tem cobrança em aberto:
+ * a linha de um pedido pago é o único registro de dinheiro que entrou, e um Pix
+ * ainda pagável cairia depois sem pedido a que se referir.
+ */
+export function deleteOrder(id: string): Promise<void> {
+  return api.del(`/admin/orders/${encodeURIComponent(id)}`);
+}
+
 /** Grava o código de rastreio. String vazia limpa o que estava lá. */
 export function setOrderTracking(id: string, trackingCode: string): Promise<void> {
   return api.put(`/admin/orders/${encodeURIComponent(id)}/tracking`, { trackingCode });

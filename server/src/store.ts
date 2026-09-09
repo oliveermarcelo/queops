@@ -401,6 +401,24 @@ export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
     deliveryEta: r.delivery_eta ? String(r.delivery_eta).slice(0, 10) : null,
     trackingCode: String(r.tracking_code ?? ''),
     trackingStatus: String(r.tracking_status ?? ''),
+    /*
+     * Quando o dinheiro entrou, ou null.
+     *
+     * É o fato que separa "pedido que pode sumir" de "registro de pagamento".
+     * `status` não serve para isso: é editável na tela, então um pedido pago
+     * marcado como cancelado continuaria parecendo descartável. Vai também na
+     * API v1 — o ERP precisa da data do pagamento para a nota.
+     */
+    paidAt: r.paid_at ? iso(r.paid_at) : null,
+    /*
+     * Existe cobrança gerada que ainda pode ser paga.
+     *
+     * O painel usa para não oferecer a exclusão de um pedido cujo Pix ainda
+     * pode cair: sem o pedido, o webhook chegaria sem saber a que se referir e
+     * o dinheiro entraria sem pedido nenhum. Só o booleano sai daqui — a
+     * referência da cobrança no provedor não tem por que circular.
+     */
+    hasOpenCharge: String(r.payment_ref ?? '') !== '' && !r.paid_at,
   };
 }
 

@@ -32,9 +32,15 @@ export default function ProductsAdmin() {
   const { state, upsertProduct, deleteProduct } = useAdmin();
   const [confirming, setConfirming] = useState<Product | null>(null);
   const [apagando, setApagando] = useState<Product | null>(null);
-  // Quem já foi vendido não pode ser apagado — a tela precisa saber antes de
-  // oferecer o botão, para não prometer o que a rota vai recusar.
-  const vendidos = useMemo(() => new Set(state.productsWithOrders), [state.productsWithOrders]);
+  /*
+   * Quem está em pedido que ainda vale não pode ser apagado — a tela precisa
+   * saber antes de oferecer o botão, para não prometer o que a rota vai
+   * recusar. Pedido cancelado não conta, então cancelar libera.
+   */
+  const presos = useMemo(
+    () => new Set(state.productsWithActiveOrders),
+    [state.productsWithActiveOrders],
+  );
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Product | null>(null);
 
@@ -160,8 +166,8 @@ export default function ProductsAdmin() {
                         <button
                           onClick={() => setApagando(p)}
                           className="p-2 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100"
-                          title={vendidos.has(p.id)
-                            ? 'Não dá para apagar: o produto está em pedidos'
+                          title={presos.has(p.id)
+                            ? 'Não dá para apagar: o produto está em pedidos que ainda valem'
                             : 'Apagar em definitivo'}
                         >
                           <Trash2 size={15} />
@@ -207,19 +213,30 @@ export default function ProductsAdmin() {
 
       {apagando && (
         <ConfirmDialog
-          title={vendidos.has(apagando.id) ? 'Não dá para apagar' : 'Apagar em definitivo'}
+          title={presos.has(apagando.id) ? 'Ainda não dá para apagar' : 'Apagar em definitivo'}
+          /*
+           * A recusa diz o que fazer para sair dela.
+           *
+           * O texto anterior era um beco sem saída: afirmava que o produto "só
+           * pode ficar fora da vitrine", sem dizer que cancelar os pedidos
+           * resolve — e a razão que dava era falsa, porque o pedido guarda
+           * cópia própria do item e não fica sem nada.
+           */
           message={
-            vendidos.has(apagando.id)
-              ? `“${apagando.name}” já foi vendido. Apagar deixaria o pedido de quem comprou sem `
-                + 'o item, então ele só pode ficar fora da vitrine.'
-              : `“${apagando.name}” será apagado do banco e não volta. Ele nunca foi vendido, `
-                + 'então não há histórico a perder.'
+            presos.has(apagando.id)
+              ? `“${apagando.name}” está em pedidos que ainda valem, e sair dos relatórios no meio `
+                + 'de uma venda em andamento atrapalha.\n\n'
+                + 'Cancele esses pedidos em Pedidos (ou apague os de teste) e volte aqui — aí o '
+                + 'botão libera. Os pedidos continuam mostrando o item de qualquer forma: eles '
+                + 'guardam o nome e o preço do dia da compra.'
+              : `“${apagando.name}” será apagado do banco e não volta. Nenhum pedido que ainda vale `
+                + 'depende dele.'
           }
-          confirmLabel={vendidos.has(apagando.id) ? 'Entendi' : 'Apagar'}
-          danger={!vendidos.has(apagando.id)}
+          confirmLabel={presos.has(apagando.id) ? 'Entendi' : 'Apagar'}
+          danger={!presos.has(apagando.id)}
           onCancel={() => setApagando(null)}
           onConfirm={() => {
-            if (!vendidos.has(apagando.id)) void deleteProduct(apagando.id, true);
+            if (!presos.has(apagando.id)) void deleteProduct(apagando.id, true);
             setApagando(null);
           }}
         />

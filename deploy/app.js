@@ -998,7 +998,25 @@ function orderRowToApi(r, items) {
     /** Previsão de entrega calculada na compra (AAAA-MM-DD), ou null. */
     deliveryEta: r.delivery_eta ? String(r.delivery_eta).slice(0, 10) : null,
     trackingCode: String(r.tracking_code ?? ""),
-    trackingStatus: String(r.tracking_status ?? "")
+    trackingStatus: String(r.tracking_status ?? ""),
+    /*
+     * Quando o dinheiro entrou, ou null.
+     *
+     * É o fato que separa "pedido que pode sumir" de "registro de pagamento".
+     * `status` não serve para isso: é editável na tela, então um pedido pago
+     * marcado como cancelado continuaria parecendo descartável. Vai também na
+     * API v1 — o ERP precisa da data do pagamento para a nota.
+     */
+    paidAt: r.paid_at ? iso(r.paid_at) : null,
+    /*
+     * Existe cobrança gerada que ainda pode ser paga.
+     *
+     * O painel usa para não oferecer a exclusão de um pedido cujo Pix ainda
+     * pode cair: sem o pedido, o webhook chegaria sem saber a que se referir e
+     * o dinheiro entraria sem pedido nenhum. Só o booleano sai daqui — a
+     * referência da cobrança no provedor não tem por que circular.
+     */
+    hasOpenCharge: String(r.payment_ref ?? "") !== "" && !r.paid_at
   };
 }
 async function fetchOrders(limit = 500, exec = q) {
@@ -3463,15 +3481,29 @@ adminRoutes.get("/state", h(async (req, res) => {
     // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
     products: await fetchProducts({ onlyActive: false }),
     /*
-     * Quais produtos já foram vendidos alguma vez.
+     * Quais produtos estão presos em pedido que ainda vale.
      *
      * O painel usa isso para saber, ANTES de perguntar, se o botão de excluir
      * vai apagar de verdade ou só tirar da vitrine. Sem esse dado a tela teria
      * que prometer uma coisa e fazer outra — foi o que aconteceu: o botão
      * dizia "Excluir", o produto continuava na lista, e a conclusão de quem
      * clicou foi que a exclusão não funcionava.
+     *
+     * Pedido CANCELADO não prende. Antes prendia, e a trava era intransponível
+     * na prática: cancelar os pedidos não liberava nada, então um produto de
+     * teste vendido uma vez ficava para sempre na lista. A justificativa que a
+     * tela dava ("o pedido ficaria sem o item") também não se sustenta —
+     * `order_items` guarda cópia própria do nome, da quantidade e do preço, e
+     * não tem chave estrangeira para `products`. O histórico continua legível
+     * com o produto apagado. O que se perde é o produto nos relatórios, e isso
+     * só importa enquanto o pedido vale.
      */
-    productsWithOrders: (await q.all("SELECT DISTINCT product_id FROM order_items")).map((r) => String(r.product_id)),
+    productsWithActiveOrders: (await q.all(
+      `SELECT DISTINCT i.product_id
+         FROM order_items i
+         JOIN orders o ON o.id = i.order_id
+        WHERE o.status <> 'canceled'`
+    )).map((r) => String(r.product_id)),
     orders: await fetchOrders(),
     customers,
     coupons: (await q.all("SELECT * FROM coupons ORDER BY created_at DESC")).map((c) => ({
@@ -3632,13 +3664,16 @@ adminRoutes.delete("/products/:id", h(async (req, res) => {
   const id = String(req.params.id ?? "");
   if (queryStr(req, "definitivo", "", 1) === "1") {
     const vendas = await q.one(
-      "SELECT COUNT(*) AS n FROM order_items WHERE product_id = ?",
+      `SELECT COUNT(*) AS n
+         FROM order_items i
+         JOIN orders o ON o.id = i.order_id
+        WHERE i.product_id = ? AND o.status <> 'canceled'`,
       [id]
     );
     const n = Number(vendas?.n ?? 0);
     if (n > 0) {
       fail(
-        `Este produto est\xE1 em ${n} pedido(s) e n\xE3o pode ser apagado \u2014 o hist\xF3rico de quem comprou ficaria sem o item. Ele foi mantido fora da vitrine.`,
+        `Este produto est\xE1 em ${n} pedido(s) que ainda valem e n\xE3o pode ser apagado. Cancele esses pedidos e tente de novo \u2014 ou deixe o produto fora da vitrine.`,
         409,
         "product_has_orders"
       );
@@ -3659,6 +3694,34 @@ adminRoutes.patch("/orders/:id", h(async (req, res) => {
   }
   fireWebhooks("order.status_changed", { orderId: req.params.id, status });
   jsonOk(res, { ok: true });
+}));
+adminRoutes.delete("/orders/:id", h(async (req, res) => {
+  await requireAdmin(req);
+  const id = String(req.params.id ?? "");
+  const pedido = await q.one(
+    "SELECT id, status, paid_at, payment_ref FROM orders WHERE id = ?",
+    [id]
+  );
+  if (!pedido) fail("Pedido n\xE3o encontrado.", 404, "not_found");
+  const status = String(pedido.status ?? "");
+  const pago = pedido.paid_at !== null && pedido.paid_at !== void 0;
+  if (pago || ["paid", "shipped", "delivered"].includes(status)) {
+    fail(
+      "Este pedido foi pago e n\xE3o pode ser apagado \u2014 \xE9 o registro de dinheiro que entrou. Se ele n\xE3o deve mais valer, marque como cancelado.",
+      409,
+      "order_is_paid"
+    );
+  }
+  const temCobrancaAberta = pedido.payment_ref !== null && String(pedido.payment_ref ?? "") !== "" && status !== "canceled";
+  if (temCobrancaAberta) {
+    fail(
+      "Este pedido tem uma cobran\xE7a em aberto. Se algu\xE9m pagar depois de ele sumir, o dinheiro entra sem pedido correspondente. Marque como cancelado primeiro e apague em seguida.",
+      409,
+      "order_has_open_charge"
+    );
+  }
+  await q.run("DELETE FROM orders WHERE id = ?", [id]);
+  jsonOk(res, { ok: true, apagado: true });
 }));
 adminRoutes.post("/coupons", h(async (req, res) => {
   await requireAdmin(req);

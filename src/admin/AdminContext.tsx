@@ -32,6 +32,7 @@ interface AdminContextValue {
   upsertProduct: (p: Product) => Promise<void>;
   deleteProduct: (id: string, definitivo?: boolean) => Promise<void>;
   setOrderStatus: (id: string, status: OrderStatus) => Promise<void>;
+  deleteOrder: (id: string) => Promise<void>;
   upsertCoupon: (c: Coupon) => Promise<void>;
   deleteCoupon: (id: string) => Promise<void>;
   updateSettings: (patch: Partial<StoreSettings>) => Promise<void>;
@@ -95,7 +96,7 @@ const EMPTY: AdminState = {
   integrations: {} as AdminState['integrations'],
   abandonedCarts: [], recovery: { enabled: false, delayMinutes: 60, message: '', couponCode: '' },
   apiKeys: [], webhooks: [], users: [],
-  erpCategories: [], productsWithoutCategory: 0, productsWithOrders: [],
+  erpCategories: [], productsWithoutCategory: 0, productsWithActiveOrders: [],
   shipping: {
     defaultPrice: 0, perState: {}, cepRanges: [],
     freeShipping: { enabled: false, minOrder: 0, states: [] },
@@ -201,6 +202,33 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
             orders: s.orders.map((o: Order) => (o.id === id ? { ...o, status } : o)),
           }),
           () => store.setOrderStatus(id, status),
+        ),
+
+      /*
+       * Apagar pedido tira a linha da lista E libera o produto.
+       *
+       * O segundo efeito é o que faz a tela não mentir: apagar o último pedido
+       * que segurava um produto tem de destravar o botão de excluir dele na
+       * mesma hora. Sem isso a pessoa apagaria o pedido, voltaria em Produtos e
+       * encontraria a mesma recusa de antes, sem entender que já podia.
+       */
+      deleteOrder: (id) =>
+        mutate(
+          (s) => {
+            const restantes = s.orders.filter((o: Order) => o.id !== id);
+            const aindaPresos = new Set<string>();
+            for (const o of restantes) {
+              if (o.status === 'canceled') continue;
+              for (const item of o.items) aindaPresos.add(item.productId);
+            }
+            return {
+              ...s,
+              orders: restantes,
+              productsWithActiveOrders: s.productsWithActiveOrders
+                .filter((pid) => aindaPresos.has(pid)),
+            };
+          },
+          () => store.deleteOrder(id),
         ),
 
       upsertCoupon: (c) =>

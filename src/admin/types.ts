@@ -38,6 +38,16 @@ export interface Order {
   trackingCode?: string;
   /** Último status consultado, para não bater na API a cada abertura da tela. */
   trackingStatus?: string;
+  /**
+   * Quando o pagamento entrou (ISO), ou null.
+   *
+   * É o que decide se o pedido pode ser apagado — e não `status`, que é
+   * editável no próprio painel: marcar um pedido pago como cancelado não
+   * desfaz o pagamento.
+   */
+  paidAt?: string | null;
+  /** Cobrança gerada e ainda pagável — apagar o pedido perderia esse dinheiro. */
+  hasOpenCharge?: boolean;
 }
 
 /** Um evento do rastreio dos Correios. */
@@ -223,13 +233,14 @@ export interface AdminState {
   users: PanelUser[];
   erpCategories: ErpCategory[];
   /**
-   * Ids de produtos que já apareceram em algum pedido.
+   * Ids de produtos presos em algum pedido que ainda vale.
    *
-   * Decide se "excluir" apaga de verdade ou só tira da vitrine: produto com
-   * histórico de venda não pode sumir, senão o pedido de quem comprou fica sem
-   * o item.
+   * Decide se "excluir" apaga de verdade ou só tira da vitrine. Pedido
+   * CANCELADO não entra: o nome era `productsWithOrders` e contava qualquer
+   * pedido, o que tornava a trava intransponível — cancelar os pedidos não
+   * liberava nada e o produto ficava na lista para sempre.
    */
-  productsWithOrders: string[];
+  productsWithActiveOrders: string[];
   /** Produtos sem categoria — invisíveis na vitrine até a amarração. */
   productsWithoutCategory: number;
 }
