@@ -222,6 +222,14 @@ export interface AdminState {
   shipping: ShippingConfig;
   users: PanelUser[];
   erpCategories: ErpCategory[];
+  /**
+   * Ids de produtos que já apareceram em algum pedido.
+   *
+   * Decide se "excluir" apaga de verdade ou só tira da vitrine: produto com
+   * histórico de venda não pode sumir, senão o pedido de quem comprou fica sem
+   * o item.
+   */
+  productsWithOrders: string[];
   /** Produtos sem categoria — invisíveis na vitrine até a amarração. */
   productsWithoutCategory: number;
 }

@@ -30,7 +30,7 @@ interface AdminContextValue {
   refresh: () => Promise<void>;
 
   upsertProduct: (p: Product) => Promise<void>;
-  deleteProduct: (id: string) => Promise<void>;
+  deleteProduct: (id: string, definitivo?: boolean) => Promise<void>;
   setOrderStatus: (id: string, status: OrderStatus) => Promise<void>;
   upsertCoupon: (c: Coupon) => Promise<void>;
   deleteCoupon: (id: string) => Promise<void>;
@@ -95,7 +95,7 @@ const EMPTY: AdminState = {
   integrations: {} as AdminState['integrations'],
   abandonedCarts: [], recovery: { enabled: false, delayMinutes: 60, message: '', couponCode: '' },
   apiKeys: [], webhooks: [], users: [],
-  erpCategories: [], productsWithoutCategory: 0,
+  erpCategories: [], productsWithoutCategory: 0, productsWithOrders: [],
   shipping: {
     defaultPrice: 0, perState: {}, cepRanges: [],
     freeShipping: { enabled: false, minOrder: 0, states: [] },
@@ -174,10 +174,24 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           () => store.upsertProduct(p),
         ),
 
-      deleteProduct: (id) =>
+      /*
+       * A resposta otimista precisa mostrar o que REALMENTE vai acontecer.
+       *
+       * Antes ela tirava a linha da lista em qualquer caso. Como a exclusão
+       * padrão é suave e o painel lista também os inativos, o `refresh()`
+       * seguinte trazia o produto de volta: a linha piscava e voltava, e a
+       * leitura óbvia de quem clicou era "o botão não funciona". Ele
+       * funcionava; a tela é que contava outra história.
+       */
+      deleteProduct: (id, definitivo = false) =>
         mutate(
-          (s) => ({ ...s, products: s.products.filter((x) => x.id !== id) }),
-          () => store.deleteProduct(id),
+          (s) => ({
+            ...s,
+            products: definitivo
+              ? s.products.filter((x) => x.id !== id)
+              : s.products.map((x) => (x.id === id ? { ...x, active: false } : x)),
+          }),
+          () => store.deleteProduct(id, definitivo),
         ),
 
       setOrderStatus: (id, status) =>

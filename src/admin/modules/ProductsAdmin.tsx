@@ -4,7 +4,7 @@
  */
 
 import React, { useMemo, useRef, useState } from 'react';
-import { Plus, Search, Pencil, Trash2, X, ImagePlus, Upload } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, X, ImagePlus, Upload, EyeOff, RotateCcw } from 'lucide-react';
 import { MenuCategory, Product } from '../../types';
 import { useAdmin } from '../AdminContext';
 import { brl, Card, Btn, ConfirmDialog, Field, inputCls } from '../ui';
@@ -27,6 +27,10 @@ const blank = (): Product => ({
 export default function ProductsAdmin() {
   const { state, upsertProduct, deleteProduct } = useAdmin();
   const [confirming, setConfirming] = useState<Product | null>(null);
+  const [apagando, setApagando] = useState<Product | null>(null);
+  // Quem já foi vendido não pode ser apagado — a tela precisa saber antes de
+  // oferecer o botão, para não prometer o que a rota vai recusar.
+  const vendidos = useMemo(() => new Set(state.productsWithOrders), [state.productsWithOrders]);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Product | null>(null);
 
@@ -75,7 +79,12 @@ export default function ProductsAdmin() {
             </thead>
             <tbody>
               {filtered.map((p) => (
-                <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                <tr
+                  key={p.id}
+                  className={`border-b border-gray-50 hover:bg-gray-50/50 ${
+                    p.active === false ? 'bg-gray-50/60' : ''
+                  }`}
+                >
                   <td className="py-2.5 px-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -86,7 +95,23 @@ export default function ProductsAdmin() {
                           : <span className="text-[9px] text-gray-300">s/ img</span>}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-semibold text-gray-800 truncate max-w-[260px]">{p.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className={`font-semibold truncate max-w-[260px] ${
+                            p.active === false ? 'text-gray-400' : 'text-gray-800'
+                          }`}>
+                            {p.name}
+                          </p>
+                          {/*
+                            Sem este selo, "excluir" parecia não fazer nada: o
+                            produto saía da vitrine e continuava na lista, igual
+                            aos outros.
+                          */}
+                          {p.active === false && (
+                            <span className="text-[10px] font-bold bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full whitespace-nowrap">
+                              fora da vitrine
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[11px] text-gray-400 font-mono">{p.sku || '—'}</p>
                       </div>
                     </div>
@@ -105,12 +130,39 @@ export default function ProductsAdmin() {
                       <button onClick={() => setEditing(p)} className="p-2 text-gray-400 hover:text-primary-blue rounded-lg hover:bg-gray-100" title="Editar">
                         <Pencil size={15} />
                       </button>
-                      <button
-                        onClick={() => setConfirming(p)}
-                        className="p-2 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100" title="Excluir"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      {p.active === false ? (
+                        <button
+                          onClick={() => void upsertProduct({ ...p, active: true })}
+                          className="p-2 text-gray-400 hover:text-emerald-600 rounded-lg hover:bg-gray-100"
+                          title="Colocar de volta na vitrine"
+                        >
+                          <RotateCcw size={15} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setConfirming(p)}
+                          className="p-2 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100"
+                          title="Tirar da vitrine"
+                        >
+                          <EyeOff size={15} />
+                        </button>
+                      )}
+                      {/*
+                        Apagar de vez só aparece para quem já está fora da
+                        vitrine: é o segundo passo de uma decisão, não uma
+                        alternativa ao primeiro clique.
+                      */}
+                      {p.active === false && (
+                        <button
+                          onClick={() => setApagando(p)}
+                          className="p-2 text-gray-400 hover:text-brand-red rounded-lg hover:bg-gray-100"
+                          title={vendidos.has(p.id)
+                            ? 'Não dá para apagar: o produto está em pedidos'
+                            : 'Apagar em definitivo'}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -134,13 +186,37 @@ export default function ProductsAdmin() {
 
       {confirming && (
         <ConfirmDialog
-          title="Excluir produto"
-          message={`“${confirming.name}” sai da vitrine. Os pedidos já feitos continuam mostrando o item normalmente.`}
-          confirmLabel="Excluir"
+          title="Tirar da vitrine"
+          message={
+            `“${confirming.name}” deixa de aparecer na loja, mas continua nesta lista, marcado `
+            + 'como "fora da vitrine" — dá para colocar de volta a qualquer momento.\n\n'
+            + 'Os pedidos já feitos continuam mostrando o item normalmente.'
+          }
+          confirmLabel="Tirar da vitrine"
           onCancel={() => setConfirming(null)}
           onConfirm={() => {
             void deleteProduct(confirming.id);
             setConfirming(null);
+          }}
+        />
+      )}
+
+      {apagando && (
+        <ConfirmDialog
+          title={vendidos.has(apagando.id) ? 'Não dá para apagar' : 'Apagar em definitivo'}
+          message={
+            vendidos.has(apagando.id)
+              ? `“${apagando.name}” já foi vendido. Apagar deixaria o pedido de quem comprou sem `
+                + 'o item, então ele só pode ficar fora da vitrine.'
+              : `“${apagando.name}” será apagado do banco e não volta. Ele nunca foi vendido, `
+                + 'então não há histórico a perder.'
+          }
+          confirmLabel={vendidos.has(apagando.id) ? 'Entendi' : 'Apagar'}
+          danger={!vendidos.has(apagando.id)}
+          onCancel={() => setApagando(null)}
+          onConfirm={() => {
+            if (!vendidos.has(apagando.id)) void deleteProduct(apagando.id, true);
+            setApagando(null);
           }}
         />
       )}

@@ -29,8 +29,14 @@ export function upsertProduct(product: Product): Promise<{ product: Product }> {
   return api.post<{ product: Product }>('/admin/products', product);
 }
 
-export function deleteProduct(id: string): Promise<void> {
-  return api.del(`/admin/products/${encodeURIComponent(id)}`);
+/**
+ * Sem `definitivo`, tira o produto da vitrine (exclusão suave) e o mantém no
+ * painel. Com `definitivo`, apaga a linha — o servidor recusa com 409 se o
+ * produto já foi vendido, porque o pedido de quem comprou ficaria sem o item.
+ */
+export function deleteProduct(id: string, definitivo = false): Promise<void> {
+  const rota = `/admin/products/${encodeURIComponent(id)}`;
+  return api.del(definitivo ? `${rota}?definitivo=1` : rota);
 }
 
 // -------------------------------------------------------------- pedidos ----

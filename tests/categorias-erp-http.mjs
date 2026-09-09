@@ -286,8 +286,17 @@ const semCodigo = await erp('GET', `/api/v1/products/${produtoId}`);
 ok(semCodigo.json?.product?.category === DESTINO.categoria,
   'e o produto continua na categoria onde já estava',
   String(semCodigo.json?.product?.category));
-ok(semCodigo.json?.product?.categoryCode === null,
-  'mas o código deixa de ser devolvido, porque a tradução não existe mais',
+/*
+ * O código DESAMARRADO deixa de ser devolvido — mas outro pode aparecer no
+ * lugar, e isso é correto.
+ *
+ * Amarrar mais de um código do ERP à mesma categoria da loja é permitido (ERPs
+ * costumam ter divisão mais fina que a vitrine). Se sobrou outro código
+ * apontando para a mesma categoria, ele é uma tradução legítima. A afirmação
+ * verificável é a estreita: aquele código específico não volta mais.
+ */
+ok(semCodigo.json?.product?.categoryCode !== COD_PUL,
+  'o código desamarrado deixa de ser devolvido',
   JSON.stringify(semCodigo.json?.product?.categoryCode));
 
 // Limpeza.

@@ -3379,6 +3379,16 @@ adminRoutes.get("/state", h(async (req, res) => {
     })),
     // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
     products: await fetchProducts({ onlyActive: false }),
+    /*
+     * Quais produtos já foram vendidos alguma vez.
+     *
+     * O painel usa isso para saber, ANTES de perguntar, se o botão de excluir
+     * vai apagar de verdade ou só tirar da vitrine. Sem esse dado a tela teria
+     * que prometer uma coisa e fazer outra — foi o que aconteceu: o botão
+     * dizia "Excluir", o produto continuava na lista, e a conclusão de quem
+     * clicou foi que a exclusão não funcionava.
+     */
+    productsWithOrders: (await q.all("SELECT DISTINCT product_id FROM order_items")).map((r) => String(r.product_id)),
     orders: await fetchOrders(),
     customers,
     coupons: (await q.all("SELECT * FROM coupons ORDER BY created_at DESC")).map((c) => ({
@@ -3517,8 +3527,26 @@ adminRoutes.delete("/products/:id/locks", h(async (req, res) => {
 }));
 adminRoutes.delete("/products/:id", h(async (req, res) => {
   await requireAdmin(req);
-  await q.run("UPDATE products SET active = 0 WHERE id = ?", [req.params.id]);
-  jsonOk(res, { ok: true });
+  const id = String(req.params.id ?? "");
+  if (queryStr(req, "definitivo", "", 1) === "1") {
+    const vendas = await q.one(
+      "SELECT COUNT(*) AS n FROM order_items WHERE product_id = ?",
+      [id]
+    );
+    const n = Number(vendas?.n ?? 0);
+    if (n > 0) {
+      fail(
+        `Este produto est\xE1 em ${n} pedido(s) e n\xE3o pode ser apagado \u2014 o hist\xF3rico de quem comprou ficaria sem o item. Ele foi mantido fora da vitrine.`,
+        409,
+        "product_has_orders"
+      );
+    }
+    await q.run("DELETE FROM products WHERE id = ?", [id]);
+    jsonOk(res, { ok: true, apagado: true });
+    return;
+  }
+  await q.run("UPDATE products SET active = 0 WHERE id = ?", [id]);
+  jsonOk(res, { ok: true, apagado: false });
 }));
 adminRoutes.patch("/orders/:id", h(async (req, res) => {
   await requireAdmin(req);
