@@ -10,8 +10,35 @@ const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromi
 const page = await (await browser.newContext()).newPage();
 
 await page.goto(BASE, { waitUntil: 'networkidle' });
-// escolhe um produto caro para passar do mínimo de frete grátis / cupom
-await page.evaluate(() => localStorage.setItem('queops_cart_v1', JSON.stringify([{ id: 'cruz-de-cristal-fume-20cm-1011', qty: 1 }])));
+
+/*
+ * O produto do carrinho é DESCOBERTO, não fixo.
+ *
+ * Antes havia um id escrito à mão aqui. Quando o catálogo do ambiente muda —
+ * e ele muda, porque outros testes criam e apagam produtos — o carrinho ficava
+ * vazio e o teste falhava lá adiante, no botão "Finalizar", acusando um defeito
+ * no checkout que não existia. Pega-se o mais caro em estoque: é o que passa do
+ * mínimo de frete grátis e do valor mínimo do cupom.
+ */
+const escolhido = await page.evaluate(async () => {
+  const r = await fetch('/api/products');
+  const lista = (await r.json()).products ?? [];
+  const bons = lista.filter((p) => p.active !== false && Number(p.stock) > 0);
+  bons.sort((a, b) => Number(b.price) - Number(a.price));
+  return bons[0] ?? null;
+});
+
+if (escolhido === null) {
+  console.log('FALHA não há produto ativo com estoque na loja — nada a comprar');
+  await browser.close();
+  process.exit(1);
+}
+ok(`produto escolhido: ${escolhido.name} (R$ ${escolhido.price})`);
+
+await page.evaluate(
+  (id) => localStorage.setItem('queops_cart_v1', JSON.stringify([{ id, qty: 1 }])),
+  escolhido.id,
+);
 await page.reload({ waitUntil: 'networkidle' });
 
 await page.locator('header button').filter({ hasText: /R\$/ }).first().click().catch(async () => {

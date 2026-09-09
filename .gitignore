@@ -35,3 +35,7 @@ dist-subtest/
 queops-demo-hostinger/
 _to_delete/
 _transfer/
+
+# Imagens enviadas pelo painel. Conteúdo do cliente, não código: fica fora do
+# repositório e não pode ser apagado num deploy.
+midia/

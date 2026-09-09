@@ -208,6 +208,26 @@ CREATE TABLE IF NOT EXISTS products (
   KEY idx_prod_tag (tag)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Fotos extras do produto, além da capa (`products.image`).
+--
+-- Tabela separada, e não uma coluna com lista, porque a ordem importa (é a
+-- ordem em que aparecem na página) e porque uma lista dentro de uma coluna
+-- vira texto que ninguém consegue consultar nem manter consistente.
+--
+-- A capa continua em `products.image`: ela é usada na vitrine, no carrinho e
+-- no e-mail de pedido, e mudar isso mexeria em tudo para resolver nada.
+CREATE TABLE IF NOT EXISTS product_images (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  product_id VARCHAR(100)    NOT NULL,
+  url        VARCHAR(500)    NOT NULL,
+  position   INT             NOT NULL DEFAULT 0,
+  created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_prodimg (product_id, position),
+  CONSTRAINT fk_prodimg_produto FOREIGN KEY (product_id)
+    REFERENCES products (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------------
 -- Pedidos
 --

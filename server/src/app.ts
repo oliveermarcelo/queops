@@ -19,6 +19,7 @@ import { config } from './config.ts';
 import { CSP_API, CSP_LOJA } from './csp.ts';
 import { ApiError } from './errors.ts';
 import { jsonOk } from './http.ts';
+import { pastaDeMidia } from './midia.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { publicRoutes } from './routes/public.ts';
@@ -83,6 +84,16 @@ export function createApp(): express.Express {
 
   const api = express.Router();
 
+  /*
+   * Corpo de até 1 MB — exceto o envio de imagem, que tem teto próprio.
+   *
+   * O limite pequeno é defesa: nenhum endpoint da loja precisa de mais que
+   * isso, e um corpo gigante é caminho fácil para consumir memória do
+   * servidor. A imagem é a única exceção legítima: 3 MB de arquivo viram cerca
+   * de 4 MB em base64, e o limite geral recusaria com um 413 que a tela
+   * mostraria como "erro ao salvar", sem dizer que o problema era o tamanho.
+   */
+  api.use('/admin/midia', express.json({ limit: '6mb' }));
   api.use(express.json({ limit: '1mb' }));
   // Corpo inválido responde no formato de erro da API, não no HTML do Express.
   api.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
@@ -123,6 +134,26 @@ export function createApp(): express.Express {
   app.use('/api', api);
 
   // -------------------------------------------------- vitrine estática ----
+
+  /*
+   * Imagens enviadas pelo painel, servidas de uma pasta própria.
+   *
+   * Separada de `public/` porque as duas têm ciclos de vida opostos: `public/`
+   * é a vitrine compilada, substituída inteira a cada publicação de código;
+   * `midia/` é conteúdo que alguém cadastrou à mão e não pode sumir num
+   * deploy. O nome de cada arquivo é o hash do conteúdo, então o cache pode
+   * ser longo sem risco de servir versão velha.
+   */
+  app.use(
+    '/midia',
+    express.static(pastaDeMidia(), {
+      index: false,
+      fallthrough: true,
+      setHeaders(res) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      },
+    }),
+  );
 
   const publicDir = path.resolve(process.cwd(), config.publicDir);
   const indexHtml = path.join(publicDir, 'index.html');

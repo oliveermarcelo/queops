@@ -29,6 +29,15 @@ export interface Product {
   weight: number;
   /** Medida/formato exibido na vitrine, ex.: 'Base 15cm · cobre'. Só texto. */
   weightLabel?: string;
+  /**
+   * Fotos extras, além da capa (`image`), na ordem de exibição.
+   *
+   * A capa NÃO entra aqui: ela é usada sozinha na vitrine, no carrinho e no
+   * e-mail de pedido. Repeti-la obrigaria cada um desses lugares a saber que o
+   * primeiro item é especial, e alguém acabaria mostrando a mesma foto duas
+   * vezes.
+   */
+  images?: string[];
   sku: string;
   /** Materiais e composição da peça. */
   ingredients?: string;

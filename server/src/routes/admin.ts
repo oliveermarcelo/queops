@@ -22,10 +22,11 @@ import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
 import {
   body, bodyBool, bodyFloat, bodyInt, bodyStr, brl, digits, iso, jsonOk, queryStr,
 } from '../http.ts';
+import { guardarImagem } from '../midia.ts';
 import { fireWebhooks, isInternalHost, providerSendWhatsapp, providerTest } from '../providers.ts';
 import {
   configGet, configMerge, configSet, DEFAULT_RECOVERY, DEFAULT_SETTINGS, DEFAULT_SHIPPING,
-  fetchIntegrations, fetchOrders, fetchProducts, getRecovery, getSettings, getShipping,
+  fetchIntegrations, fetchOrders, fetchProducts, galeriasDe, getRecovery, getSettings, getShipping,
   integrationSecrets, integrationToApi, INTEGRATION_IDS, INTEGRATION_SECRET_FIELDS,
   productRowToApi,
 } from '../store.ts';
@@ -310,8 +311,31 @@ adminRoutes.post('/products', h(async (req, res) => {
    */
   const travados = await travarCamposEditados(id, b, atual);
 
+  /*
+   * Fotos extras: a lista enviada substitui a que estava lá.
+   *
+   * Só mexe quando o campo VEM no corpo. O ERP grava produto pela API v1 e não
+   * conhece galeria — se a ausência do campo fosse tratada como lista vazia,
+   * o primeiro ciclo do ERP apagaria as fotos que alguém subiu à mão aqui.
+   */
+  if (Array.isArray(b.images)) {
+    const urls = (b.images as unknown[])
+      .map((u) => String(u ?? '').trim())
+      .filter((u) => u !== '' && safeImageUrl(u))
+      .slice(0, 12);
+
+    await q.run('DELETE FROM product_images WHERE product_id = ?', [id]);
+    for (const [i, url] of urls.entries()) {
+      await q.run(
+        'INSERT INTO product_images (product_id, url, position) VALUES (?,?,?)',
+        [id, url.slice(0, 500), i],
+      );
+    }
+  }
+
   const row = await q.one('SELECT * FROM products WHERE id = ?', [id]);
-  jsonOk(res, { product: productRowToApi(row!), lockedFields: travados });
+  const galeria = (await galeriasDe([id])).get(id);
+  jsonOk(res, { product: productRowToApi(row!, undefined, galeria), lockedFields: travados });
 }));
 
 /**
@@ -331,6 +355,24 @@ adminRoutes.delete('/products/:id/locks', h(async (req, res) => {
     pedidos.length > 0 ? pedidos : null,
   );
   jsonOk(res, { ok: true, lockedFields: restantes });
+}));
+
+/**
+ * POST /api/admin/midia — recebe uma imagem e devolve a URL dela.
+ *
+ * O painel manda os bytes uma vez, aqui, e depois grava só a URL no produto.
+ * Antes a imagem viajava embutida no corpo do produto como data URL e era
+ * cortada pelo tamanho da coluna, salvando uma imagem quebrada sem erro
+ * nenhum.
+ */
+adminRoutes.post('/midia', h(async (req, res) => {
+  await requireAdmin(req);
+  const dataUrl = typeof body(req).dataUrl === 'string' ? String(body(req).dataUrl) : '';
+  if (dataUrl === '') fail('Envie a imagem no campo "dataUrl".', 422, 'missing_image');
+
+  const r = await guardarImagem(dataUrl);
+  if (r.erro !== '') fail(r.erro, 422, 'invalid_image');
+  jsonOk(res, { ok: true, url: r.url, bytes: r.bytes, reaproveitada: r.reaproveitada }, 201);
 }));
 
 /**

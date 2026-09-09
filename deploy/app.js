@@ -111,6 +111,7 @@ var init_config = __esm({
       appUrl: env("APP_URL", "https://queopspiramides.com.br"),
       secureCookies: envBool("SECURE_COOKIES", true),
       publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
+      midiaDir: env("MIDIA_DIR", "midia"),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");
@@ -807,6 +808,7 @@ __export(store_exports, {
   fetchIntegrations: () => fetchIntegrations,
   fetchOrders: () => fetchOrders,
   fetchProducts: () => fetchProducts,
+  galeriasDe: () => galeriasDe,
   getRecovery: () => getRecovery,
   getSettings: () => getSettings,
   getShipping: () => getShipping,
@@ -865,7 +867,7 @@ async function publicSettings(exec = q) {
     shippingFrom: Number(sh.defaultPrice ?? 0) || 0
   };
 }
-function productRowToApi(r, codigos) {
+function productRowToApi(r, codigos, galeria) {
   const out = {
     id: r.id,
     sku: r.sku,
@@ -910,7 +912,25 @@ function productRowToApi(r, codigos) {
   if (codigos !== void 0) {
     out.categoryCode = codigoNoMapa(codigos, r.category, r.subcategory);
   }
+  if (galeria !== void 0 && galeria.length > 0) out.images = galeria;
   return out;
+}
+async function galeriasDe(ids, exec = q) {
+  const mapa = /* @__PURE__ */ new Map();
+  if (ids.length === 0) return mapa;
+  const linhas = await exec.all(
+    `SELECT product_id, url FROM product_images
+      WHERE product_id IN (${placeholders(ids.length)})
+      ORDER BY position ASC, id ASC`,
+    ids
+  );
+  for (const l of linhas) {
+    const chave = String(l.product_id);
+    const lista = mapa.get(chave);
+    if (lista) lista.push(String(l.url));
+    else mapa.set(chave, [String(l.url)]);
+  }
+  return mapa;
 }
 async function fetchProducts(opcoes = {}) {
   const { onlyActive = true, exigirCategoria = false, comCodigos = false, exec = q } = opcoes;
@@ -919,7 +939,9 @@ async function fetchProducts(opcoes = {}) {
   if (exigirCategoria) filtros.push("category <> ''");
   const where = filtros.length > 0 ? ` WHERE ${filtros.join(" AND ")}` : "";
   const codigos = comCodigos ? await mapaDeCodigos(exec) : void 0;
-  return (await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`)).map((r) => productRowToApi(r, codigos));
+  const linhas = await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`);
+  const galerias = await galeriasDe(linhas.map((r) => String(r.id)), exec);
+  return linhas.map((r) => productRowToApi(r, codigos, galerias.get(String(r.id))));
 }
 function orderRowToApi(r, items) {
   return {
@@ -1113,6 +1135,7 @@ var init_store = __esm({
     getRecovery = /* @__PURE__ */ __name((exec = q) => configGet("recovery", DEFAULT_RECOVERY, exec), "getRecovery");
     __name(publicSettings, "publicSettings");
     __name(productRowToApi, "productRowToApi");
+    __name(galeriasDe, "galeriasDe");
     __name(fetchProducts, "fetchProducts");
     __name(orderRowToApi, "orderRowToApi");
     __name(fetchOrders, "fetchOrders");
@@ -1932,12 +1955,12 @@ __export(schema_exports, {
 });
 function dbDir() {
   const candidatos2 = [
-    import_node_path4.default.resolve(process.cwd(), "server/db"),
-    import_node_path4.default.resolve(process.cwd(), "db")
+    import_node_path5.default.resolve(process.cwd(), "server/db"),
+    import_node_path5.default.resolve(process.cwd(), "db")
   ];
   for (const c of candidatos2) {
     try {
-      (0, import_node_fs4.readFileSync)(import_node_path4.default.join(c, "schema.sql"));
+      (0, import_node_fs5.readFileSync)(import_node_path5.default.join(c, "schema.sql"));
       return c;
     } catch {
     }
@@ -2054,7 +2077,7 @@ async function widenColumns(say) {
   return convertidas;
 }
 async function sincronizarEstrutura(say) {
-  const sql = (0, import_node_fs4.readFileSync)(import_node_path4.default.join(dbDir(), "schema.sql"), "utf8");
+  const sql = (0, import_node_fs5.readFileSync)(import_node_path5.default.join(dbDir(), "schema.sql"), "utf8");
   const { statements, noComments } = splitStatements(sql);
   const tabelas = await createMissingTables(statements, say);
   const colunas = await addMissingColumns(noComments, say);
@@ -2062,12 +2085,12 @@ async function sincronizarEstrutura(say) {
   const convertidas = await widenColumns(say);
   return { tabelas, colunas, indices, convertidas };
 }
-var import_node_fs4, import_node_path4, TIPOS_SQL, INDICES, ALARGAMENTOS;
+var import_node_fs5, import_node_path5, TIPOS_SQL, INDICES, ALARGAMENTOS;
 var init_schema = __esm({
   "server/src/schema.ts"() {
     "use strict";
-    import_node_fs4 = require("node:fs");
-    import_node_path4 = __toESM(require("node:path"), 1);
+    import_node_fs5 = require("node:fs");
+    import_node_path5 = __toESM(require("node:path"), 1);
     init_db();
     __name(dbDir, "dbDir");
     __name(splitStatements, "splitStatements");
@@ -2101,8 +2124,8 @@ var init_schema = __esm({
 });
 
 // server/src/app.ts
-var import_node_fs3 = require("node:fs");
-var import_node_path3 = __toESM(require("node:path"), 1);
+var import_node_fs4 = require("node:fs");
+var import_node_path4 = __toESM(require("node:path"), 1);
 var import_compression = __toESM(require("compression"), 1);
 var import_express6 = __toESM(require("express"), 1);
 
@@ -2295,6 +2318,66 @@ var CSP_API = "default-src 'none'; frame-ancestors 'none'";
 // server/src/app.ts
 init_errors();
 init_http();
+
+// server/src/midia.ts
+var import_node_crypto3 = require("node:crypto");
+var import_node_fs3 = require("node:fs");
+var import_node_path3 = __toESM(require("node:path"), 1);
+init_config();
+var TIPOS = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/avif": "avif",
+  "image/gif": "gif"
+};
+var TAMANHO_MAXIMO = 3 * 1024 * 1024;
+function pastaDeMidia() {
+  return import_node_path3.default.resolve(process.cwd(), config.midiaDir);
+}
+__name(pastaDeMidia, "pastaDeMidia");
+var VAZIO = Buffer.alloc(0);
+var falhaAoLer = /* @__PURE__ */ __name((erro) => ({ erro, bytes: VAZIO, extensao: "" }), "falhaAoLer");
+function lerDataUrl(dataUrl) {
+  const m = /^data:([a-z/+-]+);base64,(.+)$/is.exec(String(dataUrl).trim());
+  if (m === null) return falhaAoLer("Envie a imagem como data URL base64.");
+  const tipo = m[1].toLowerCase();
+  const extensao = TIPOS[tipo];
+  if (extensao === void 0) {
+    return falhaAoLer(`Formato ${tipo} n\xE3o \xE9 aceito. Use PNG, JPG, WEBP, AVIF ou GIF.`);
+  }
+  let bytes;
+  try {
+    bytes = Buffer.from(m[2], "base64");
+  } catch {
+    return falhaAoLer("A imagem chegou corrompida.");
+  }
+  if (bytes.length === 0) return falhaAoLer("A imagem chegou vazia.");
+  if (bytes.length > TAMANHO_MAXIMO) {
+    return falhaAoLer(
+      `Imagem muito grande (${Math.round(bytes.length / 1024)} KB; m\xE1ximo 3 MB).`
+    );
+  }
+  return { erro: "", bytes, extensao };
+}
+__name(lerDataUrl, "lerDataUrl");
+async function guardarImagem(dataUrl) {
+  const lido = lerDataUrl(dataUrl);
+  if (lido.erro !== "") return { erro: lido.erro, url: "", bytes: 0, reaproveitada: false };
+  const pasta = pastaDeMidia();
+  await import_node_fs3.promises.mkdir(pasta, { recursive: true });
+  const hash = (0, import_node_crypto3.createHash)("sha256").update(lido.bytes).digest("hex").slice(0, 24);
+  const nome = `${hash}.${lido.extensao}`;
+  const destino = import_node_path3.default.join(pasta, nome);
+  if ((0, import_node_fs3.existsSync)(destino)) {
+    return { erro: "", url: `/midia/${nome}`, bytes: lido.bytes.length, reaproveitada: true };
+  }
+  const temporario = import_node_path3.default.join(pasta, `.tmp-${(0, import_node_crypto3.randomBytes)(8).toString("hex")}`);
+  await import_node_fs3.promises.writeFile(temporario, lido.bytes);
+  await import_node_fs3.promises.rename(temporario, destino);
+  return { erro: "", url: `/midia/${nome}`, bytes: lido.bytes.length, reaproveitada: false };
+}
+__name(guardarImagem, "guardarImagem");
 
 // server/src/routes/account.ts
 var import_express = require("express");
@@ -2537,7 +2620,7 @@ accountRoutes.put("/favorites", h(async (req, res) => {
 }));
 
 // server/src/routes/admin.ts
-var import_node_crypto3 = require("node:crypto");
+var import_node_crypto4 = require("node:crypto");
 var import_express2 = require("express");
 init_config();
 init_crypto();
@@ -3307,7 +3390,7 @@ __name(nomeValido, "nomeValido");
 // server/src/routes/admin.ts
 var adminRoutes = (0, import_express2.Router)();
 var STATUS_PEDIDO = ["pending", "paid", "shipped", "delivered", "canceled"];
-var rid = /* @__PURE__ */ __name((prefix, bytes) => prefix + (0, import_node_crypto3.randomBytes)(bytes).toString("hex"), "rid");
+var rid = /* @__PURE__ */ __name((prefix, bytes) => prefix + (0, import_node_crypto4.randomBytes)(bytes).toString("hex"), "rid");
 adminRoutes.post("/login", h(async (req, res) => {
   const b = body(req);
   const user = await adminLogin(req, bodyStr(b, "email", "", 190), typeof b.password === "string" ? b.password : "");
@@ -3513,8 +3596,19 @@ adminRoutes.post("/products", h(async (req, res) => {
     ]
   );
   const travados = await travarCamposEditados(id, b, atual);
+  if (Array.isArray(b.images)) {
+    const urls = b.images.map((u) => String(u ?? "").trim()).filter((u) => u !== "" && safeImageUrl(u)).slice(0, 12);
+    await q.run("DELETE FROM product_images WHERE product_id = ?", [id]);
+    for (const [i, url] of urls.entries()) {
+      await q.run(
+        "INSERT INTO product_images (product_id, url, position) VALUES (?,?,?)",
+        [id, url.slice(0, 500), i]
+      );
+    }
+  }
   const row = await q.one("SELECT * FROM products WHERE id = ?", [id]);
-  jsonOk(res, { product: productRowToApi(row), lockedFields: travados });
+  const galeria = (await galeriasDe([id])).get(id);
+  jsonOk(res, { product: productRowToApi(row, void 0, galeria), lockedFields: travados });
 }));
 adminRoutes.delete("/products/:id/locks", h(async (req, res) => {
   await requireAdmin(req);
@@ -3524,6 +3618,14 @@ adminRoutes.delete("/products/:id/locks", h(async (req, res) => {
     pedidos.length > 0 ? pedidos : null
   );
   jsonOk(res, { ok: true, lockedFields: restantes });
+}));
+adminRoutes.post("/midia", h(async (req, res) => {
+  await requireAdmin(req);
+  const dataUrl = typeof body(req).dataUrl === "string" ? String(body(req).dataUrl) : "";
+  if (dataUrl === "") fail('Envie a imagem no campo "dataUrl".', 422, "missing_image");
+  const r = await guardarImagem(dataUrl);
+  if (r.erro !== "") fail(r.erro, 422, "invalid_image");
+  jsonOk(res, { ok: true, url: r.url, bytes: r.bytes, reaproveitada: r.reaproveitada }, 201);
 }));
 adminRoutes.delete("/products/:id", h(async (req, res) => {
   await requireAdmin(req);
@@ -3721,7 +3823,7 @@ adminRoutes.post("/carts/:id/remind", h(async (req, res) => {
 adminRoutes.post("/api-keys", h(async (req, res) => {
   await requireAdmin(req);
   const name = bodyStr(body(req), "name", "Nova chave", 120);
-  const token = "qp_live_" + (0, import_node_crypto3.randomBytes)(20).toString("hex");
+  const token = "qp_live_" + (0, import_node_crypto4.randomBytes)(20).toString("hex");
   const id = rid("k-", 6);
   await q.run("INSERT INTO api_keys (id, name, token_prefix, token_hash) VALUES (?,?,?,?)", [
     id,
@@ -4990,14 +5092,14 @@ webhookRoutes.post("/mercadopago", h(async (req, res) => {
 }));
 
 // server/src/session.ts
-var import_node_crypto4 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
 init_config();
 init_db();
 var COOKIE_NAME = "qp_session";
 var ROTATE_AFTER_MS = 30 * 60 * 1e3;
 var GC_DAYS = 14;
 function newId() {
-  return (0, import_node_crypto4.randomBytes)(32).toString("hex");
+  return (0, import_node_crypto5.randomBytes)(32).toString("hex");
 }
 __name(newId, "newId");
 var Session = class {
@@ -5149,6 +5251,7 @@ function createApp() {
     next();
   });
   const api = import_express6.default.Router();
+  api.use("/admin/midia", import_express6.default.json({ limit: "6mb" }));
   api.use(import_express6.default.json({ limit: "1mb" }));
   api.use((err, _req, res, next) => {
     if (err instanceof SyntaxError) {
@@ -5172,8 +5275,18 @@ function createApp() {
     next(new ApiError("Endpoint n\xE3o encontrado.", 404, "not_found"));
   });
   app.use("/api", api);
-  const publicDir = import_node_path3.default.resolve(process.cwd(), config.publicDir);
-  const indexHtml = import_node_path3.default.join(publicDir, "index.html");
+  app.use(
+    "/midia",
+    import_express6.default.static(pastaDeMidia(), {
+      index: false,
+      fallthrough: true,
+      setHeaders(res) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+    })
+  );
+  const publicDir = import_node_path4.default.resolve(process.cwd(), config.publicDir);
+  const indexHtml = import_node_path4.default.join(publicDir, "index.html");
   app.use(
     import_express6.default.static(publicDir, {
       index: false,
@@ -5202,7 +5315,7 @@ function createApp() {
       next();
       return;
     }
-    if (!(0, import_node_fs3.existsSync)(indexHtml)) {
+    if (!(0, import_node_fs4.existsSync)(indexHtml)) {
       res.status(500).type("text/plain").send(
         `Front-end n\xE3o encontrado. Rode \`npm run build\` e confirme que a pasta "${config.publicDir}" est\xE1 ao lado do servidor.`
       );

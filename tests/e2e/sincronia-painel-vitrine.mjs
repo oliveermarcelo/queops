@@ -13,45 +13,63 @@ await p.fill('#admin-pass',ADMIN_PASS);
 await p.click('button[type=submit]');
 await p.waitForTimeout(2500);
 
+/*
+ * O produto de teste é descoberto na hora, não cravado aqui.
+ *
+ * Este arquivo apontava para `placa-de-cobre-m-1001`, um id do catálogo
+ * original. Ele falha em qualquer base que não tenha exatamente aquele
+ * produto — e passou a falhar por isso, não por um defeito na sincronia que é
+ * o que ele testa.
+ */
+const ALVO = await p.evaluate(async () => {
+  const st = await (await fetch('/api/admin/state')).json();
+  const prod = (st.products ?? []).find((x) => x.active !== false && x.category);
+  return prod ? prod.id : null;
+});
+if (ALVO === null) {
+  console.log('FALHA a base não tem nenhum produto ativo com categoria');
+  process.exit(1);
+}
+
 const novoPreco = 1234.56;
-const res = await p.evaluate(async (preco) => {
+const res = await p.evaluate(async ([preco, alvo]) => {
   const s = await (await fetch('/api/session')).json();
   const st = await (await fetch('/api/admin/state')).json();
-  const prod = st.products.find(x => x.id === 'placa-de-cobre-m-1001');
+  const prod = st.products.find(x => x.id === alvo);
   const r = await fetch('/api/admin/products', {
     method:'POST',
     headers:{'Content-Type':'application/json','X-CSRF-Token':s.csrfToken},
     body: JSON.stringify({ ...prod, price: preco }),
   });
   return { status: r.status, antes: prod.price, body: await r.json() };
-}, novoPreco);
+}, [novoPreco, ALVO]);
 res.status === 200 ? ok(`preço alterado no painel: R$ ${res.antes} → R$ ${novoPreco}`) : fail('falha ao salvar: '+res.status);
 
 // 2) a vitrine (outra "aba") reflete o novo preço
 await p.goto(BASE,{waitUntil:'networkidle'});
 await p.waitForTimeout(1200);
-const catalogo = await p.evaluate(async()=> (await (await fetch('/api/catalog')).json()).products.find(x=>x.id==='placa-de-cobre-m-1001'));
+const catalogo = await p.evaluate(async(alvo)=> (await (await fetch('/api/catalog')).json()).products.find(x=>x.id===alvo), ALVO);
 catalogo.price === novoPreco ? ok('vitrine lê o preço novo do banco') : fail('vitrine ainda em '+catalogo.price);
 
 const texto = await p.locator('body').innerText();
 texto.includes('1.234,56') ? ok('preço novo renderizado na home') : fail('preço não apareceu na home');
 
 // 3) exclusão some da vitrine
-const del = await p.evaluate(async()=>{
+const del = await p.evaluate(async(alvo)=>{
   const s = await (await fetch('/api/session')).json();
-  const r = await fetch('/api/admin/products/placa-de-cobre-m-1001',{method:'DELETE',headers:{'X-CSRF-Token':s.csrfToken}});
+  const r = await fetch(`/api/admin/products/${alvo}`,{method:'DELETE',headers:{'X-CSRF-Token':s.csrfToken}});
   const cat = await (await fetch('/api/catalog')).json();
-  return { status:r.status, aindaExiste: cat.products.some(x=>x.id==='placa-de-cobre-m-1001') };
-});
+  return { status:r.status, aindaExiste: cat.products.some(x=>x.id===alvo) };
+}, ALVO);
 !del.aindaExiste ? ok('produto excluído some do catálogo público') : fail('produto continua na vitrine');
 
 // restaura
-await p.evaluate(async(preco)=>{
+await p.evaluate(async([preco, alvo])=>{
   const s = await (await fetch('/api/session')).json();
   const st = await (await fetch('/api/admin/state')).json();
-  const prod = st.products.find(x=>x.id==='placa-de-cobre-m-1001');
+  const prod = st.products.find(x=>x.id===alvo);
   await fetch('/api/admin/products',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':s.csrfToken},body:JSON.stringify({...prod,price:preco,active:true})});
-}, res.antes);
+}, [res.antes, ALVO]);
 ok('estado original restaurado');
 
 await b.close();

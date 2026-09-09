@@ -39,6 +39,17 @@ export function deleteProduct(id: string, definitivo = false): Promise<void> {
   return api.del(definitivo ? `${rota}?definitivo=1` : rota);
 }
 
+/**
+ * Envia uma imagem e recebe a URL dela.
+ *
+ * A foto sobe uma vez, aqui, e o produto guarda só a URL. Antes ela viajava
+ * embutida no corpo do produto como data URL e era cortada pelo tamanho da
+ * coluna — salvava com 200 e não aparecia.
+ */
+export function uploadImagem(dataUrl: string): Promise<{ url: string; bytes: number }> {
+  return api.post<{ url: string; bytes: number }>('/admin/midia', { dataUrl });
+}
+
 // -------------------------------------------------------------- pedidos ----
 
 export function setOrderStatus(id: string, status: OrderStatus): Promise<void> {

@@ -111,6 +111,7 @@ var init_config = __esm({
       appUrl: env("APP_URL", "https://queopspiramides.com.br"),
       secureCookies: envBool("SECURE_COOKIES", true),
       publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
+      midiaDir: env("MIDIA_DIR", "midia"),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");

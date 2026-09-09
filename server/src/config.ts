@@ -63,6 +63,15 @@ export interface AppConfig {
   secureCookies: boolean;
   /** Pasta com o front-end compilado (index.html + assets). */
   publicDir: string;
+  /**
+   * Pasta das imagens enviadas pelo painel, servida em `/midia`.
+   *
+   * Fica FORA de `public/` de propósito. `public/` é a vitrine compilada, que
+   * o deploy substitui inteira a cada publicação — foto de produto enviada à
+   * mão lá dentro sumiria numa atualização de código, e ninguém ligaria uma
+   * coisa à outra. Aqui é uma pasta só de conteúdo, que o deploy não toca.
+   */
+  midiaDir: string;
   /** Confia em X-Forwarded-* (Passenger/nginx na Hostinger sempre põe). */
   trustProxy: boolean;
 }
@@ -85,6 +94,7 @@ export const config: AppConfig = {
   appUrl: env('APP_URL', 'https://queopspiramides.com.br'),
   secureCookies: envBool('SECURE_COOKIES', true),
   publicDir: env('PUBLIC_DIR', '') || detectPublicDir(),
+  midiaDir: env('MIDIA_DIR', 'midia'),
   trustProxy: envBool('TRUST_PROXY', true),
 } as AppConfig;
 

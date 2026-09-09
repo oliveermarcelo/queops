@@ -190,8 +190,15 @@ export async function publicSettings(exec: Q = q): Promise<Record<string, unknow
  * código de cada um daria uma consulta por item numa listagem de 1.400.
  * Ausente, a resposta simplesmente não traz `categoryCode` — é o caso da
  * vitrine, que não tem o que fazer com ele.
+ *
+ * `galeria` chega pelo mesmo motivo: as fotos extras moram em outra tabela, e
+ * buscá-las produto a produto daria uma consulta por item.
  */
-export function productRowToApi(r: Row, codigos?: Map<string, string>): Record<string, unknown> {
+export function productRowToApi(
+  r: Row,
+  codigos?: Map<string, string>,
+  galeria?: string[],
+): Record<string, unknown> {
   const out: Record<string, unknown> = {
     id: r.id,
     sku: r.sku,
@@ -252,7 +259,49 @@ export function productRowToApi(r: Row, codigos?: Map<string, string>): Record<s
   if (codigos !== undefined) {
     out.categoryCode = codigoNoMapa(codigos, r.category, r.subcategory);
   }
+
+  /*
+   * Fotos extras, sem a capa.
+   *
+   * A capa continua em `image`, sozinha, porque é o que a vitrine, o carrinho
+   * e o e-mail de pedido usam. Repeti-la aqui obrigaria cada um desses lugares
+   * a saber que o primeiro item da lista é especial — e alguém acabaria
+   * mostrando a mesma foto duas vezes.
+   *
+   * Só aparece quando existe: array vazio em cada um dos 1.400 produtos é
+   * ruído em toda resposta da loja.
+   */
+  if (galeria !== undefined && galeria.length > 0) out.images = galeria;
   return out;
+}
+
+/**
+ * Fotos extras de vários produtos de uma vez.
+ *
+ * Uma consulta para o catálogo inteiro, não uma por produto: a listagem tem
+ * centenas de itens, e uma consulta por item transformaria a abertura da
+ * vitrine em centenas de idas ao banco.
+ */
+export async function galeriasDe(
+  ids: string[],
+  exec: Q = q,
+): Promise<Map<string, string[]>> {
+  const mapa = new Map<string, string[]>();
+  if (ids.length === 0) return mapa;
+
+  const linhas = await exec.all(
+    `SELECT product_id, url FROM product_images
+      WHERE product_id IN (${placeholders(ids.length)})
+      ORDER BY position ASC, id ASC`,
+    ids,
+  );
+  for (const l of linhas) {
+    const chave = String(l.product_id);
+    const lista = mapa.get(chave);
+    if (lista) lista.push(String(l.url));
+    else mapa.set(chave, [String(l.url)]);
+  }
+  return mapa;
 }
 
 export interface OpcoesDeCatalogo {
@@ -289,8 +338,9 @@ export async function fetchProducts(
 
   // Uma consulta para o catálogo inteiro, não uma por produto.
   const codigos = comCodigos ? await mapaDeCodigos(exec) : undefined;
-  return (await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`))
-    .map((r) => productRowToApi(r, codigos));
+  const linhas = await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`);
+  const galerias = await galeriasDe(linhas.map((r) => String(r.id)), exec);
+  return linhas.map((r) => productRowToApi(r, codigos, galerias.get(String(r.id))));
 }
 
 // ------------------------------------------------------------- Pedidos ----

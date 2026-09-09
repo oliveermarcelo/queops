@@ -4,9 +4,13 @@
  */
 
 import React, { useMemo, useRef, useState } from 'react';
-import { Plus, Search, Pencil, Trash2, X, ImagePlus, Upload, EyeOff, RotateCcw } from 'lucide-react';
+import {
+  Plus, Search, Pencil, Trash2, X, ImagePlus, EyeOff, RotateCcw,
+  ChevronLeft, ChevronRight, Star,
+} from 'lucide-react';
 import { MenuCategory, Product } from '../../types';
 import { useAdmin } from '../AdminContext';
+import { uploadImagem } from '../store';
 import { brl, Card, Btn, ConfirmDialog, Field, inputCls } from '../ui';
 import { safeImageSrc } from '../../utils/safeUrl';
 
@@ -230,6 +234,11 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
   const [p, setP] = useState<Product>(initial);
   const set = (patch: Partial<Product>) => setP((cur) => ({ ...cur, ...patch }));
 
+  const subcategorias = useMemo(
+    () => menu.find((c) => c.id === p.category)?.subcategories ?? [],
+    [menu, p.category],
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
@@ -246,24 +255,74 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
             <input required value={p.name} onChange={(e) => set({ name: e.target.value })} className={inputCls} />
           </Field>
 
+          {/*
+            Todas as categorias aparecem.
+            O filtro anterior mostrava só as que TÊM subcategoria — era um jeito
+            de esconder "Destaques" e "Novidades", que são vitrines e não
+            categorias de catálogo. O efeito colateral apareceu quando a árvore
+            passou a vir do ERP: a maioria das categorias de lá não tem filhas,
+            e sumiram todas do seletor. Agora o filtro é pelo que essas duas
+            realmente são — entradas de vitrine, marcadas com `featured`.
+          */}
           <div className="grid grid-cols-2 gap-4">
             <Field label="Categoria">
               <select
                 value={p.category}
                 onChange={(e) => {
                   const cat = menu.find((c) => c.id === e.target.value);
-                  set({ category: e.target.value, categoryLabel: cat?.name ?? e.target.value });
+                  set({
+                    category: e.target.value,
+                    categoryLabel: cat?.name ?? e.target.value,
+                    // Trocar de categoria invalida a subcategoria: a antiga não
+                    // pertence à nova, e deixá-la gravada colocaria o produto
+                    // numa seção que não existe.
+                    subcategory: undefined,
+                  });
                 }}
                 className={inputCls}
               >
-                {/* 'Destaques' é uma vitrine, não uma categoria de catálogo: fica de fora. */}
-                {menu.filter((c) => c.subcategories.length > 0).map((c) => (
+                <option value="">— sem categoria (fica fora da vitrine) —</option>
+                {menu.filter((c) => !c.featured).map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </Field>
+            <Field label="Subcategoria">
+              <select
+                value={p.subcategory ?? ''}
+                onChange={(e) => set({ subcategory: e.target.value || undefined })}
+                className={inputCls}
+                disabled={subcategorias.length === 0}
+              >
+                <option value="">
+                  {subcategorias.length === 0 ? '— esta categoria não tem —' : '— nenhuma —'}
+                </option>
+                {subcategorias.map((sub) => (
+                  <option key={sub.id} value={sub.id}>{sub.name}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          {/*
+            Produto sem categoria não aparece na vitrine. Sem este aviso, salvar
+            um cadastro novo sem escolher categoria produz um produto invisível
+            e silencioso — o mesmo tipo de falha que o ERP já provocava.
+          */}
+          {(p.category ?? '') === '' && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 -mt-2">
+              Sem categoria, este produto <b>não aparece na vitrine</b> — nem no menu, nem na
+              listagem. Escolha uma acima para ele entrar na loja.
+            </p>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
             <Field label="SKU">
               <input value={p.sku} onChange={(e) => set({ sku: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Tag (aparece como selo na vitrine)">
+              <input value={p.tag ?? ''} placeholder="DESTAQUE, NOVIDADE, OFERTA"
+                onChange={(e) => set({ tag: e.target.value || undefined })} className={inputCls} />
             </Field>
           </div>
 
@@ -286,7 +345,11 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
             </Field>
           </div>
 
-          <ImageUploader value={p.image} onChange={(img) => set({ image: img })} />
+          <EditorDeFotos
+            cover={p.image}
+            images={p.images ?? []}
+            onChange={(cover, images) => set({ image: cover, images })}
+          />
 
           <div className="grid grid-cols-2 gap-4">
             {/*
@@ -312,9 +375,33 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
             </p>
           )}
 
-          <Field label="Descrição">
-            <textarea value={p.description} onChange={(e) => set({ description: e.target.value })} rows={3} className={inputCls} />
+          <Field label="Descrição curta (aparece na listagem)">
+            <textarea value={p.description} onChange={(e) => set({ description: e.target.value })} rows={2} className={inputCls} />
           </Field>
+
+          {/*
+            A página do produto já mostrava este texto quando ele existia — só
+            que não havia como escrevê-lo pelo painel, então ele só entrava pelo
+            ERP.
+          */}
+          <Field label="Descrição completa (aparece na página do produto)">
+            <textarea value={p.longDescription ?? ''} rows={5} className={inputCls}
+              placeholder="Materiais, medidas, modo de uso, história da peça…"
+              onChange={(e) => set({ longDescription: e.target.value || undefined })} />
+          </Field>
+
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={p.highlight === true}
+              onChange={(e) => set({ highlight: e.target.checked || undefined })}
+              className="w-4 h-4 accent-primary-blue"
+            />
+            <span className="text-sm text-gray-700">
+              Destacar na home
+              <span className="text-gray-400"> — entra nos trilhos de destaque da vitrine</span>
+            </span>
+          </label>
 
           <div className="flex justify-end gap-2 pt-2">
             <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
@@ -326,82 +413,184 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
   );
 }
 
-function ImageUploader({ value, onChange }: { value: string; onChange: (img: string) => void }) {
+/**
+ * Fotos do produto: capa e galeria, numa lista só.
+ *
+ * A primeira foto É a capa. Modelar como "capa + galeria" em dois controles
+ * separados obrigaria quem cadastra a entender a diferença e a mover arquivo
+ * de um lado para o outro; uma lista ordenada onde a primeira posição tem um
+ * nome resolve igual e explica sozinha.
+ */
+function EditorDeFotos({ cover, images, onChange }: {
+  cover: string;
+  images: string[];
+  onChange: (cover: string, images: string[]) => void;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState('');
+  const [erro, setErro] = useState('');
+  const [enviando, setEnviando] = useState(0);
+  const [url, setUrl] = useState('');
 
-  const handleFile = (file?: File) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) { setError('Selecione um arquivo de imagem.'); return; }
-    if (file.size > 2 * 1024 * 1024) { setError('Imagem muito grande (máx. 2MB).'); return; }
-    setError('');
-    const reader = new FileReader();
-    reader.onload = () => onChange(reader.result as string); // dataURL
-    reader.readAsDataURL(file);
+  // A capa é a posição 0. Vazia não entra: uma lista com buraco no meio
+  // desalinharia as ações de mover.
+  const fotos = [cover, ...images].filter((f) => f !== '');
+  const aplicar = (lista: string[]) => onChange(lista[0] ?? '', lista.slice(1));
+
+  const MAX = 12;
+
+  const enviarArquivos = async (arquivos: FileList | File[] | null | undefined) => {
+    if (!arquivos) return;
+    const lista = Array.from(arquivos);
+    if (lista.length === 0) return;
+
+    setErro('');
+    const aceitas: string[] = [];
+
+    for (const file of lista) {
+      if (fotos.length + aceitas.length >= MAX) {
+        setErro(`Máximo de ${MAX} fotos por produto.`);
+        break;
+      }
+      if (!file.type.startsWith('image/')) { setErro('Selecione arquivos de imagem.'); continue; }
+      if (file.size > 2 * 1024 * 1024) {
+        setErro(`"${file.name}" tem mais de 2 MB. Reduza a imagem antes de enviar.`);
+        continue;
+      }
+
+      setEnviando((n) => n + 1);
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error('Não consegui ler o arquivo.'));
+          reader.readAsDataURL(file);
+        });
+        /*
+         * O servidor devolve uma URL curta. É ela que vai para o produto — a
+         * data URL fica só neste envio e nunca chega ao banco.
+         */
+        const { url: salva } = await uploadImagem(dataUrl);
+        aceitas.push(salva);
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : 'Falha ao enviar a imagem.');
+      } finally {
+        setEnviando((n) => n - 1);
+      }
+    }
+
+    if (aceitas.length > 0) aplicar([...fotos, ...aceitas]);
+  };
+
+  const adicionarUrl = () => {
+    const v = url.trim();
+    if (v === '') return;
+    if (!safeImageSrc(v)) { setErro('URL de imagem inválida (use http ou https).'); return; }
+    if (fotos.length >= MAX) { setErro(`Máximo de ${MAX} fotos por produto.`); return; }
+    setErro('');
+    aplicar([...fotos, v]);
+    setUrl('');
+  };
+
+  const mover = (de: number, para: number) => {
+    if (para < 0 || para >= fotos.length) return;
+    const lista = [...fotos];
+    const [f] = lista.splice(de, 1);
+    lista.splice(para, 0, f);
+    aplicar(lista);
   };
 
   return (
-    <Field label="Imagem do produto">
-      <div className="flex items-start gap-4">
-        {/* Preview / dropzone */}
+    <Field label="Fotos do produto">
+      <div className="space-y-3">
         <div
-          onClick={() => fileRef.current?.click()}
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]); }}
-          className="w-24 h-24 rounded-xl border-2 border-dashed border-gray-200 hover:border-primary-blue bg-gray-50 flex items-center justify-center overflow-hidden cursor-pointer flex-shrink-0 transition-colors group"
-          title="Clique ou arraste uma imagem"
+          onDrop={(e) => { e.preventDefault(); void enviarArquivos(e.dataTransfer.files); }}
+          className="grid grid-cols-4 sm:grid-cols-6 gap-2"
         >
-          {value ? (
-            <img src={safeImageSrc(value)} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
-          ) : (
-            <ImagePlus size={26} className="text-gray-300 group-hover:text-primary-blue" />
-          )}
-        </div>
+          {fotos.map((foto, i) => (
+            <div
+              key={`${foto}-${i}`}
+              className={`relative group aspect-square rounded-xl border overflow-hidden bg-gray-50 ${
+                i === 0 ? 'border-primary-blue ring-2 ring-primary-blue/20' : 'border-gray-200'
+              }`}
+            >
+              <img
+                src={safeImageSrc(foto)}
+                alt=""
+                className="w-full h-full object-contain"
+                referrerPolicy="no-referrer"
+              />
+              {i === 0 && (
+                <span className="absolute top-1 left-1 text-[9px] font-bold bg-primary-blue text-white px-1.5 py-0.5 rounded">
+                  CAPA
+                </span>
+              )}
+              <div className="absolute inset-x-0 bottom-0 flex justify-center gap-0.5 bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity py-1">
+                <button type="button" title="Mover para a esquerda" onClick={() => mover(i, i - 1)}
+                  className="text-white/80 hover:text-white px-1 disabled:opacity-30" disabled={i === 0}>
+                  <ChevronLeft size={13} />
+                </button>
+                <button type="button" title="Usar como capa" onClick={() => mover(i, 0)}
+                  className="text-white/80 hover:text-white px-1 disabled:opacity-30" disabled={i === 0}>
+                  <Star size={13} />
+                </button>
+                <button type="button" title="Remover"
+                  onClick={() => aplicar(fotos.filter((_, j) => j !== i))}
+                  className="text-white/80 hover:text-brand-red px-1">
+                  <Trash2 size={13} />
+                </button>
+                <button type="button" title="Mover para a direita" onClick={() => mover(i, i + 1)}
+                  className="text-white/80 hover:text-white px-1 disabled:opacity-30"
+                  disabled={i === fotos.length - 1}>
+                  <ChevronRight size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
 
-        <div className="flex-1 space-y-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => handleFile(e.target.files?.[0] ?? undefined)}
-          />
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-blue/5 text-primary-blue text-xs font-bold hover:bg-primary-blue/10 transition-colors"
+            className="aspect-square rounded-xl border-2 border-dashed border-gray-200 hover:border-primary-blue bg-gray-50 flex flex-col items-center justify-center gap-1 text-gray-300 hover:text-primary-blue transition-colors"
+            title="Clique, ou arraste arquivos aqui"
           >
-            <Upload size={14} /> Enviar imagem
+            <ImagePlus size={20} />
+            <span className="text-[9px] font-bold">ADICIONAR</span>
           </button>
-          {value && (
-            <button
-              type="button"
-              onClick={() => onChange('')}
-              className="ml-2 text-xs font-bold text-gray-400 hover:text-brand-red"
-            >
-              Remover
-            </button>
-          )}
+        </div>
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => { void enviarArquivos(e.target.files); e.target.value = ''; }}
+        />
+
+        <div className="flex gap-2">
           <input
-            value={value.startsWith('data:') ? '' : value}
-            onChange={(e) => {
-              const v = e.target.value.trim();
-              // Reject unsafe schemes (javascript:, data:text/html, etc.) before
-              // they can be saved to state/localStorage and later rendered.
-              if (v && !safeImageSrc(v)) {
-                setError('URL de imagem inválida ou não permitida (use http(s)).');
-                return;
-              }
-              setError('');
-              onChange(v);
-            }}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); adicionarUrl(); } }}
             placeholder="ou cole uma URL: https://..."
             className={`${inputCls} text-xs`}
           />
-          {error && <p className="text-[11px] text-brand-red font-medium">{error}</p>}
-          <p className="text-[11px] text-gray-400">PNG, JPG ou WEBP · até 2MB</p>
+          <Btn variant="ghost" onClick={adicionarUrl}>Adicionar</Btn>
         </div>
+
+        {enviando > 0 && (
+          <p className="text-[11px] text-primary-blue font-medium">
+            Enviando {enviando} imagem(ns)…
+          </p>
+        )}
+        {erro !== '' && <p className="text-[11px] text-brand-red font-medium">{erro}</p>}
+        <p className="text-[11px] text-gray-400">
+          A primeira foto é a capa — é ela que aparece na listagem e no carrinho. PNG, JPG ou WEBP,
+          até 2 MB cada, no máximo {MAX}.
+        </p>
       </div>
     </Field>
   );
 }
+

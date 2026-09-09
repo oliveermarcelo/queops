@@ -106,6 +106,19 @@ export default function ProductDetailPage({
   const pixPrice = product.price * (1 - pixPct / 100);
 
   /*
+   * Fotos do produto: a capa e as extras, nessa ordem.
+   *
+   * `fotoAtivaSegura` existe porque o índice guardado pode ficar maior que a
+   * lista quando o visitante troca de produto sem sair da página — o React
+   * mantém o estado do componente, e o produto novo pode ter menos fotos. Sem
+   * isso, a imagem principal sumiria.
+   */
+  const fotos = [product.image, ...(product.images ?? [])].filter((f) => f !== '');
+  const [fotoAtiva, setFotoAtiva] = useState(0);
+  const fotoAtivaSegura = fotoAtiva < fotos.length ? fotoAtiva : 0;
+  const fotoAberta = fotos[fotoAtivaSegura] ?? product.image;
+
+  /*
    * Rótulo de medida da peça: o texto cadastrado ou, na falta dele, o peso.
    *
    * Vem vazio na maior parte do catálogo, e antes disso a página desenhava a
@@ -267,7 +280,7 @@ export default function ProductDetailPage({
 
               {/* Central high resolution image */}
               <img
-                src={safeImageSrc(product.image)}
+                src={safeImageSrc(fotoAberta)}
                 alt={product.name}
                 className="relative max-h-[300px] sm:max-h-[420px] object-contain drop-shadow-[0_24px_40px_rgba(43,49,37,0.14)] transform group-hover:scale-105 transition-transform duration-700 ease-out"
                 referrerPolicy="no-referrer"
@@ -280,6 +293,37 @@ export default function ProductDetailPage({
                 </div>
               )}
             </div>
+
+            {/*
+              Miniaturas — só quando há mais de uma foto.
+              Com uma foto só, uma fileira de uma miniatura embaixo da imagem
+              não informa nada e ainda sugere que falta conteúdo.
+            */}
+            {fotos.length > 1 && (
+              <div className="flex gap-2 flex-wrap justify-center">
+                {fotos.map((foto, i) => (
+                  <button
+                    key={`${foto}-${i}`}
+                    onClick={() => setFotoAtiva(i)}
+                    aria-label={`Ver foto ${i + 1} de ${fotos.length}`}
+                    aria-current={i === fotoAtivaSegura}
+                    className={`w-16 h-16 rounded-xl border-2 bg-white overflow-hidden transition-all ${
+                      i === fotoAtivaSegura
+                        ? 'border-brand-copper shadow-sm'
+                        : 'border-gray-150 hover:border-gray-300 opacity-70 hover:opacity-100'
+                    }`}
+                  >
+                    <img
+                      src={safeImageSrc(foto)}
+                      alt=""
+                      loading="lazy"
+                      className="w-full h-full object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Quality Seals Row */}
             <div className="grid grid-cols-3 gap-3">
