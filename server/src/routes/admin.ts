@@ -16,7 +16,7 @@ import { encryptPayload } from '../crypto.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
 import {
-  amarrarCategoria, erpCategoriaParaApi, produtosSemCategoria,
+  amarrarCategoria, erpCategoriaParaApi, espelharArvoreDoErp, produtosSemCategoria,
 } from '../erp-categorias.ts';
 import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
 import {
@@ -205,6 +205,28 @@ adminRoutes.put('/erp-categories/:code', h(async (req, res) => {
       .map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria(),
   });
+}));
+
+/**
+ * POST /api/admin/erp-categories/espelhar — a loja vira cópia do ERP.
+ *
+ * Apaga a árvore de categorias da loja e a refaz a partir das categorias do
+ * ERP, amarrando cada código à categoria que nasceu dele. É destrutivo, e o
+ * pedido de confirmação na tela existe por isso: produtos que estavam nas
+ * categorias antigas saem da vitrine até o ERP reenviá-los.
+ *
+ * Exige `confirmar: true` no corpo. Não é burocracia: é uma rota que esvazia a
+ * vitrine, e um POST disparado por engano — um clique duplo, um script de
+ * teste apontado para produção — não pode ser suficiente para isso acontecer.
+ */
+adminRoutes.post('/erp-categories/espelhar', h(async (req, res) => {
+  await requireAdmin(req);
+  if (bodyBool(body(req), 'confirmar', false) !== true) {
+    fail('Confirme a substituição para continuar.', 422, 'confirmation_required');
+  }
+
+  const r = await espelharArvoreDoErp();
+  jsonOk(res, { ok: true, ...r });
 }));
 
 // POST /api/admin/products — cria ou atualiza

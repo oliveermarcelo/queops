@@ -121,7 +121,15 @@ export function ConfirmDialog({
         className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6"
       >
         <h3 id="confirm-title" className="font-extrabold text-gray-900">{title}</h3>
-        <p id="confirm-msg" className="text-sm text-gray-500 mt-2 leading-relaxed">{message}</p>
+        {/*
+          `whitespace-pre-line` para que uma confirmação com vários parágrafos
+          possa separá-los. Sem isso, avisar sobre três consequências diferentes
+          vira um bloco corrido — e a terceira, que costuma ser a pior, se perde
+          no meio.
+        */}
+        <p id="confirm-msg" className="text-sm text-gray-500 mt-2 leading-relaxed whitespace-pre-line">
+          {message}
+        </p>
         <div className="flex justify-end gap-2 mt-6">
           <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
           <Btn variant={danger ? 'danger' : 'primary'} onClick={onConfirm} autoFocus>

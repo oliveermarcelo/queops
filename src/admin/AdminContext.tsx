@@ -70,6 +70,15 @@ interface AdminContextValue {
   linkErpCategory: (
     code: string, category: string | null, subcategory: string | null,
   ) => Promise<number>;
+
+  /**
+   * Substitui a árvore da loja por uma cópia da do ERP. Destrutivo — a tela
+   * confirma antes. Recarrega o estado inteiro: o menu inteiro mudou.
+   */
+  espelharCategoriasDoErp: () => Promise<{
+    categorias: number; subcategorias: number; amarrados: number;
+    orfaos: number; apagadas: number; warnings: string[];
+  }>;
 }
 
 const Ctx = createContext<AdminContextValue | null>(null);
@@ -309,6 +318,14 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         }
         // Quantos produtos entraram na vitrine com este clique — a tela avisa.
         return r.released;
+      },
+
+      espelharCategoriasDoErp: async () => {
+        const r = await store.espelharCategoriasDoErp();
+        // O menu, os produtos e as amarrações mudaram todos de uma vez: aqui
+        // uma atualização parcial mentiria mais do que ajudaria.
+        await refresh();
+        return r;
       },
     }),
     [state, loading, error, mutate, refresh, aplicarUsuarios],

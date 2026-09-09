@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 2.5 — 8 de setembro de 2026'
+VERSAO = 'Versão 2.6 — 9 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -415,6 +415,14 @@ PUT /api/v1/categories/0004
         'loja e pode reconsultar de vez em quando com o GET abaixo.<br/><br/>'
         'Vale dizer: mesmo no pior caso, nada se perde. Os produtos entram sozinhos na hora da '
         'amarração, sem reenvio.'))
+    add(Spacer(1, 6))
+    add(Paragraph(
+        '<b>Modo espelho.</b> A loja pode, a pedido do dono, substituir a taxonomia dela por uma '
+        'cópia exata da do ERP — cada categoria vira uma categoria da loja, cada filha vira '
+        'subcategoria, e todos os códigos ficam amarrados de uma vez. Quando isso é feito, '
+        '<font face="Courier">linked</font> passa a ser verdadeiro para tudo e não sobra pendência. '
+        'Não muda nada no que o ERP envia: continua sendo '
+        '<font face="Courier">categoryCode</font> no produto.', P))
 
     for parte in endpoint('GET', '/categories/{code}', 'O estado de um código só — consulta barata para conferir o cache.'):
         add(parte)

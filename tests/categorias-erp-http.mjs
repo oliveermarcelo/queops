@@ -57,6 +57,25 @@ const TOKEN = chave.json?.token ?? '';
 const erp = (metodo, caminho, corpo) =>
   cliente().chamar(metodo, caminho, corpo, { Authorization: `Bearer ${TOKEN}` });
 
+/*
+ * As categorias de destino saem da própria loja, em vez de estarem cravadas
+ * aqui.
+ *
+ * Antes o teste assumia que "acessorios/pulseiras" existiria sempre, o que era
+ * verdade só enquanto ninguém mexesse na árvore. Bastou existir a função de
+ * espelhar o ERP — que apaga e refaz as categorias — para este arquivo começar
+ * a falhar por um motivo que não tinha nada a ver com o que ele testa.
+ */
+const arvore = (await erp('GET', '/api/v1/categories')).json?.categories ?? [];
+const comSub = arvore.find((c) => (c.subcategories ?? []).length > 0);
+if (comSub === undefined) {
+  console.log('FALHA a loja não tem nenhuma categoria com subcategoria — rode `npm run migrar`');
+  process.exit(1);
+}
+const DESTINO = { categoria: comSub.id, sub: comSub.subcategories[0].id };
+const OUTRO = arvore.find((c) => c.id !== DESTINO.categoria) ?? comSub;
+console.log(`     (usando ${DESTINO.categoria}/${DESTINO.sub} como destino)`);
+
 const marca = Date.now();
 const COD_PIR = `T-PIR-${marca}`;
 const COD_PUL = `T-PUL-${marca}`;
@@ -136,13 +155,13 @@ const codigoInvalido = await erp('PUT', `/api/v1/categories/${COD_PUL}/link`, {
 ok(codigoInvalido.status === 422, 'amarrar a um slug inexistente é recusado', String(codigoInvalido.status));
 
 const subInvalida = await erp('PUT', `/api/v1/categories/${COD_PUL}/link`, {
-  category: 'acessorios', subcategory: 'nao-existe',
+  category: DESTINO.categoria, subcategory: 'nao-existe-mesmo',
 });
 ok(subInvalida.status === 422, 'subcategoria que não é daquela categoria é recusada',
   String(subInvalida.status));
 
 const amarrou = await erp('PUT', `/api/v1/categories/${COD_PUL}/link`, {
-  category: 'acessorios', subcategory: 'pulseiras',
+  category: DESTINO.categoria, subcategory: DESTINO.sub,
 });
 ok(amarrou.status === 200, 'amarração válida é aceita', JSON.stringify(amarrou.json));
 
@@ -161,10 +180,10 @@ ok(amarrou.json?.released === 1,
   JSON.stringify(amarrou.json?.released));
 
 const depois = await erp('GET', `/api/v1/products/${produtoId}`);
-ok(depois.json?.product?.category === 'acessorios',
+ok(depois.json?.product?.category === DESTINO.categoria,
   'o produto foi para a categoria certa SEM reenvio',
   String(depois.json?.product?.category));
-ok(depois.json?.product?.subcategory === 'pulseiras', 'e para a subcategoria certa',
+ok(depois.json?.product?.subcategory === DESTINO.sub, 'e para a subcategoria certa',
   String(depois.json?.product?.subcategory));
 ok(depois.json?.product?.categoryCode === COD_PUL,
   'e o GET devolve o mesmo código que o ERP enviou',
@@ -218,7 +237,7 @@ ok(consulta.json?.productsWaiting === 1,
   String(consulta.json?.productsWaiting));
 
 const amarrouSinc = await erp('PUT', `/api/v1/categories/${COD_SINC}/link`, {
-  category: 'incensos', subcategory: 'difusores',
+  category: OUTRO.id, subcategory: null,
 });
 ok(amarrouSinc.json?.released === 1,
   'ao amarrar, o produto do fluxo síncrono é liberado sem reenvio',
@@ -255,7 +274,7 @@ ok(
  * código que a loja não conhece. Esta é a verificação que mais importa aqui.
  */
 const aindaLa = await erp('GET', `/api/v1/products/${produtoId}`);
-ok(aindaLa.json?.product?.category === 'acessorios',
+ok(aindaLa.json?.product?.category === DESTINO.categoria,
   'e não tira da vitrine o produto que já estava categorizado',
   String(aindaLa.json?.product?.category));
 
@@ -264,7 +283,7 @@ ok(aindaLa.json?.product?.category === 'acessorios',
 const desamarrou = await erp('PUT', `/api/v1/categories/${COD_PUL}/link`, { category: null });
 ok(desamarrou.status === 200, 'desamarrar é possível', String(desamarrou.status));
 const semCodigo = await erp('GET', `/api/v1/products/${produtoId}`);
-ok(semCodigo.json?.product?.category === 'acessorios',
+ok(semCodigo.json?.product?.category === DESTINO.categoria,
   'e o produto continua na categoria onde já estava',
   String(semCodigo.json?.product?.category));
 ok(semCodigo.json?.product?.categoryCode === null,

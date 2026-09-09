@@ -641,6 +641,132 @@ async function amarrarCategoria(code, category, subcategory, exec = q) {
   );
   return { erro: "", liberados };
 }
+function slugificar(nome) {
+  return String(nome).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100);
+}
+function slugUnico(base2, usados) {
+  const inicial = base2 === "" ? "categoria" : base2;
+  let slug = inicial;
+  let n = 2;
+  while (usados.has(slug)) {
+    slug = `${inicial.slice(0, 96)}-${n}`;
+    n++;
+  }
+  usados.add(slug);
+  return slug;
+}
+async function espelharArvoreDoErp() {
+  return transaction(async (tx) => {
+    const warnings = [];
+    const todas = await tx.all(
+      "SELECT code, name, parent_code, active FROM erp_categories ORDER BY name ASC"
+    );
+    const ativas = todas.filter((c) => Boolean(c.active));
+    const inativas = todas.length - ativas.length;
+    if (inativas > 0) {
+      warnings.push(
+        `${inativas} categoria(s) inativa(s) no ERP n\xE3o entraram na loja. Se alguma deveria aparecer, reative no ERP e espelhe de novo.`
+      );
+    }
+    const porCodigo = new Map(ativas.map((c) => [String(c.code), c]));
+    const raizDe = /* @__PURE__ */ __name((c) => {
+      if (c.parent_code === null) return { pai: null, achatado: false };
+      const paiDireto = porCodigo.get(String(c.parent_code));
+      if (paiDireto === void 0) {
+        warnings.push(
+          `"${c.name}" aponta para o pai "${c.parent_code}", que n\xE3o veio na carga (ou est\xE1 inativo). Ela entrou como categoria de primeiro n\xEDvel.`
+        );
+        return { pai: null, achatado: false };
+      }
+      if (paiDireto.parent_code === null || !porCodigo.has(String(paiDireto.parent_code))) {
+        return { pai: paiDireto, achatado: false };
+      }
+      let raiz = paiDireto;
+      const visitados = /* @__PURE__ */ new Set([String(c.code), String(raiz.code)]);
+      for (; ; ) {
+        if (raiz.parent_code === null) break;
+        const acima = porCodigo.get(String(raiz.parent_code));
+        if (acima === void 0 || visitados.has(String(acima.code))) break;
+        visitados.add(String(acima.code));
+        raiz = acima;
+      }
+      return { pai: raiz, achatado: true };
+    }, "raizDe");
+    const mapaPai = /* @__PURE__ */ new Map();
+    for (const c of ativas) {
+      const { pai, achatado } = raizDe(c);
+      if (achatado && pai !== null) {
+        warnings.push(
+          `"${c.name}" estava no terceiro n\xEDvel do ERP; a loja s\xF3 tem dois, ent\xE3o ela virou subcategoria de "${pai.name}".`
+        );
+      }
+      mapaPai.set(String(c.code), pai);
+    }
+    const raizes = ativas.filter((c) => mapaPai.get(String(c.code)) === null);
+    const antes = await tx.all("SELECT id FROM categories");
+    await tx.run("DELETE FROM categories");
+    const slugsRaiz = /* @__PURE__ */ new Set();
+    const slugPorCodigo = /* @__PURE__ */ new Map();
+    let posicao = 0;
+    for (const c of raizes) {
+      const slug = slugUnico(slugificar(String(c.name)), slugsRaiz);
+      await tx.run(
+        "INSERT INTO categories (id, name, description, icon, featured, position) VALUES (?,?,?,?,0,?)",
+        [slug, String(c.name).slice(0, 120), "", "", posicao]
+      );
+      slugPorCodigo.set(String(c.code), { categoria: slug, sub: null });
+      posicao++;
+    }
+    let subcategorias = 0;
+    const slugsPorPai = /* @__PURE__ */ new Map();
+    for (const c of ativas) {
+      const pai = mapaPai.get(String(c.code));
+      if (pai === null || pai === void 0) continue;
+      const destinoPai = slugPorCodigo.get(String(pai.code));
+      if (destinoPai === void 0) continue;
+      const usados = slugsPorPai.get(destinoPai.categoria) ?? /* @__PURE__ */ new Set();
+      slugsPorPai.set(destinoPai.categoria, usados);
+      const slug = slugUnico(slugificar(String(c.name)), usados);
+      await tx.run(
+        "INSERT INTO subcategories (parent_id, id, name, position) VALUES (?,?,?,?)",
+        [destinoPai.categoria, slug, String(c.name).slice(0, 120), subcategorias]
+      );
+      slugPorCodigo.set(String(c.code), { categoria: destinoPai.categoria, sub: slug });
+      subcategorias++;
+    }
+    await tx.run("UPDATE erp_categories SET category_id = NULL, subcategory_id = NULL");
+    for (const [code, destino] of slugPorCodigo) {
+      await tx.run(
+        "UPDATE erp_categories SET category_id = ?, subcategory_id = ? WHERE code = ?",
+        [destino.categoria, destino.sub, code]
+      );
+    }
+    const orfaos = await tx.run(
+      `UPDATE products SET category = '', subcategory = NULL
+        WHERE category <> ''
+          AND category NOT IN (SELECT id FROM categories)`
+    );
+    let liberados = 0;
+    for (const [code, destino] of slugPorCodigo) {
+      liberados += await tx.run(
+        `UPDATE products SET category = ?, subcategory = ?, pending_category_code = ''
+          WHERE pending_category_code = ? AND category = ''`,
+        [destino.categoria, destino.sub, code]
+      );
+    }
+    if (liberados > 0) {
+      warnings.push(`${liberados} produto(s) que estavam esperando entraram na vitrine.`);
+    }
+    return {
+      categorias: raizes.length,
+      subcategorias,
+      amarrados: slugPorCodigo.size,
+      orfaos,
+      apagadas: antes.length,
+      warnings
+    };
+  });
+}
 async function produtosSemCategoria(exec = q) {
   const r = await exec.one("SELECT COUNT(*) AS n FROM products WHERE category = ''");
   return Number(r?.n ?? 0);
@@ -660,6 +786,9 @@ var init_erp_categorias = __esm({
     __name(codigoNoMapa, "codigoNoMapa");
     __name(erpCategoriaParaApi, "erpCategoriaParaApi");
     __name(amarrarCategoria, "amarrarCategoria");
+    __name(slugificar, "slugificar");
+    __name(slugUnico, "slugUnico");
+    __name(espelharArvoreDoErp, "espelharArvoreDoErp");
     __name(produtosSemCategoria, "produtosSemCategoria");
   }
 });
@@ -3315,6 +3444,14 @@ adminRoutes.put("/erp-categories/:code", h(async (req, res) => {
     erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria()
   });
+}));
+adminRoutes.post("/erp-categories/espelhar", h(async (req, res) => {
+  await requireAdmin(req);
+  if (bodyBool(body(req), "confirmar", false) !== true) {
+    fail("Confirme a substitui\xE7\xE3o para continuar.", 422, "confirmation_required");
+  }
+  const r = await espelharArvoreDoErp();
+  jsonOk(res, { ok: true, ...r });
 }));
 adminRoutes.post("/products", h(async (req, res) => {
   await requireAdmin(req);

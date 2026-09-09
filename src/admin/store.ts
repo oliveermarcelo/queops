@@ -171,6 +171,19 @@ export function linkErpCategory(
   return api.put(`/admin/erp-categories/${encodeURIComponent(code)}`, { category, subcategory });
 }
 
+/**
+ * Refaz a árvore de categorias da loja como cópia da do ERP.
+ *
+ * Destrutivo: apaga as categorias atuais. Pede `confirmar` explícito porque um
+ * clique a mais não pode ser o que esvazia a vitrine.
+ */
+export function espelharCategoriasDoErp(): Promise<{
+  categorias: number; subcategorias: number; amarrados: number;
+  orfaos: number; apagadas: number; warnings: string[];
+}> {
+  return api.post('/admin/erp-categories/espelhar', { confirmar: true });
+}
+
 /** Trocar a própria senha exige a atual — a sessão aberta não basta. */
 export function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
   return api.put('/admin/me/password', { currentPassword, newPassword });

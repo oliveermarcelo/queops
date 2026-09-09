@@ -12,10 +12,12 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { FolderTree, Link2, Link2Off, AlertTriangle, Search, Check } from 'lucide-react';
+import {
+  FolderTree, Link2, Link2Off, AlertTriangle, Search, Check, RefreshCw,
+} from 'lucide-react';
 import { useAdmin } from '../AdminContext';
 import { ErpCategory } from '../types';
-import { Card, Btn, inputCls } from '../ui';
+import { Card, Btn, ConfirmDialog, inputCls } from '../ui';
 
 const msgDoErro = (e: unknown) =>
   e instanceof Error ? e.message : 'Não foi possível salvar a amarração.';
@@ -119,6 +121,105 @@ function LinhaDaCategoria({ c }: { c: ErpCategory; key?: React.Key }) {
   );
 }
 
+/**
+ * Substituir a árvore da loja pela do ERP.
+ *
+ * A ação apaga categorias e tira produtos da vitrine, então o diálogo diz o
+ * número real de cada coisa antes de perguntar. "Tem certeza?" sozinho não
+ * informa nada — quem clica precisa ver o tamanho do estrago possível.
+ */
+function EspelharDoErp() {
+  const { state, espelharCategoriasDoErp } = useAdmin();
+  const [confirmando, setConfirmando] = useState(false);
+  const [rodando, setRodando] = useState(false);
+  const [erro, setErro] = useState('');
+  const [feito, setFeito] = useState<{
+    categorias: number; subcategorias: number; orfaos: number; warnings: string[];
+  } | null>(null);
+
+  const ativas = state.erpCategories.filter((c) => c.active).length;
+  const naVitrine = state.products.filter((p) => p.active !== false).length;
+
+  const rodar = async () => {
+    setConfirmando(false);
+    setRodando(true);
+    setErro('');
+    try {
+      setFeito(await espelharCategoriasDoErp());
+    } catch (e) {
+      setErro(msgDoErro(e));
+    } finally {
+      setRodando(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-start gap-2.5">
+          <RefreshCw size={18} className="text-primary-blue mt-0.5 shrink-0" />
+          <div>
+            <h3 className="font-bold text-gray-800">Espelhar as categorias do ERP</h3>
+            <p className="text-xs text-gray-400 leading-relaxed max-w-2xl mt-0.5">
+              Apaga as categorias da loja e refaz a árvore igual à do ERP, já amarrando cada
+              código. Depois disso a loja deixa de ter categorias próprias — quem manda no menu
+              passa a ser o ERP.
+            </p>
+          </div>
+        </div>
+        <Btn variant="danger" onClick={() => setConfirmando(true)} disabled={rodando || ativas === 0}>
+          {rodando ? 'Substituindo…' : 'Substituir pela árvore do ERP'}
+        </Btn>
+      </div>
+
+      {erro !== '' && (
+        <p className="mt-3 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {erro}
+        </p>
+      )}
+
+      {feito !== null && (
+        <div className="mt-3 text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 leading-relaxed">
+          <b>
+            Pronto: {feito.categorias} categoria(s) e {feito.subcategorias} subcategoria(s),
+            iguais às do ERP.
+          </b>
+          {feito.orfaos > 0 && (
+            <>
+              {' '}
+              <b>{feito.orfaos} produto(s) saíram da vitrine</b> porque a categoria antiga deixou
+              de existir. Eles voltam quando o ERP reenviá-los com o <code>categoryCode</code> —
+              nada foi apagado.
+            </>
+          )}
+          {feito.warnings.length > 0 && (
+            <ul className="mt-2 list-disc pl-4 space-y-0.5 text-emerald-800">
+              {feito.warnings.map((w) => <li key={w}>{w}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {confirmando && (
+        <ConfirmDialog
+          title="Substituir todas as categorias da loja?"
+          message={
+            `As ${state.menu.length} categoria(s) atuais da loja serão apagadas e recriadas a `
+            + `partir das ${ativas} categoria(s) ativas do ERP.\n\n`
+            + `Os ${naVitrine} produto(s) que estão na vitrine hoje saem dela até o ERP reenviar `
+            + 'cada um com o código da categoria. Nenhum produto é apagado.\n\n'
+            + 'Os endereços das categorias antigas (/?categoria=…) deixam de existir, inclusive os '
+            + 'que já estão indexados no Google.'
+          }
+          confirmLabel="Substituir"
+          onCancel={() => setConfirmando(false)}
+          onConfirm={rodar}
+        />
+      )}
+    </Card>
+  );
+}
+
 export default function CategoriesAdmin() {
   const { state } = useAdmin();
   const [busca, setBusca] = useState('');
@@ -165,6 +266,8 @@ export default function CategoriesAdmin() {
         </Card>
       ) : (
         <>
+          <EspelharDoErp />
+
           {/*
             Este número é a razão da tela existir. Produto recebido com código
             não amarrado entra sem categoria e some da vitrine — sem erro,

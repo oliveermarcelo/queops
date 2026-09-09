@@ -18,7 +18,7 @@
  * custa um clique; uma amarração errada custa a confiança no catálogo.
  */
 
-import { q, type Q, type Row } from './db.ts';
+import { q, transaction, type Q, type Row } from './db.ts';
 
 /** Uma categoria como o ERP a envia. */
 export interface CategoriaDoErp {
@@ -355,6 +355,228 @@ export async function amarrarCategoria(
   );
 
   return { erro: '', liberados };
+}
+
+/**
+ * Slug a partir do nome: é ele que vai para a URL pública.
+ *
+ * Sem acento e sem maiúscula porque URL com "%C3%A2" é ilegível quando alguém
+ * cola o link num WhatsApp, e porque a mesma categoria digitada com e sem
+ * acento produziria dois endereços para a mesma página.
+ */
+export function slugificar(nome: string): string {
+  return String(nome)
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100);
+}
+
+/** Garante slug único dentro de um conjunto, sufixando quando repete. */
+function slugUnico(base: string, usados: Set<string>): string {
+  const inicial = base === '' ? 'categoria' : base;
+  let slug = inicial;
+  let n = 2;
+  while (usados.has(slug)) {
+    slug = `${inicial.slice(0, 96)}-${n}`;
+    n++;
+  }
+  usados.add(slug);
+  return slug;
+}
+
+export interface ResultadoDoEspelho {
+  categorias: number;
+  subcategorias: number;
+  /** Códigos do ERP que passaram a apontar para uma categoria da loja. */
+  amarrados: number;
+  /** Produtos que ficaram sem categoria porque a antiga deixou de existir. */
+  orfaos: number;
+  /** Categorias da loja que existiam antes e foram apagadas. */
+  apagadas: number;
+  warnings: string[];
+}
+
+/**
+ * Refaz a árvore da loja como cópia exata das categorias do ERP.
+ *
+ * É destrutivo por definição, e foi pedido assim: a loja deixa de ter uma
+ * taxonomia própria e passa a espelhar a do ERP. O que isso apaga, e que não
+ * volta sozinho:
+ *
+ *  - As categorias curadas da loja, com ícone, ordem e destaque escolhidos.
+ *  - Os endereços públicos delas. `/?categoria=piramides` deixa de existir se o
+ *    ERP não tiver uma categoria que gere esse mesmo slug; o que estava
+ *    indexado no Google passa a levar a lugar nenhum.
+ *  - A ligação dos produtos que estavam nas categorias antigas. Eles não são
+ *    apagados, mas saem da vitrine até o ERP reenviá-los com `categoryCode`.
+ *
+ * Roda em transação: ou a árvore inteira é trocada, ou nada muda. Uma troca
+ * pela metade deixaria a loja com metade do menu apontando para o vazio.
+ */
+export async function espelharArvoreDoErp(): Promise<ResultadoDoEspelho> {
+  return transaction(async (tx) => {
+    const warnings: string[] = [];
+
+    const todas = await tx.all(
+      'SELECT code, name, parent_code, active FROM erp_categories ORDER BY name ASC',
+    );
+    const ativas = todas.filter((c) => Boolean(c.active));
+    const inativas = todas.length - ativas.length;
+    if (inativas > 0) {
+      warnings.push(
+        `${inativas} categoria(s) inativa(s) no ERP não entraram na loja. Se alguma deveria `
+        + 'aparecer, reative no ERP e espelhe de novo.',
+      );
+    }
+
+    const porCodigo = new Map(ativas.map((c) => [String(c.code), c]));
+
+    /*
+     * A loja tem exatamente dois níveis: categoria e subcategoria. O ERP pode
+     * ter mais. Um neto vira filho do avô — melhor perder um nível de detalhe
+     * do que perder o produto, que é o que aconteceria se ele ficasse sem
+     * destino.
+     */
+    const raizDe = (c: Row): { pai: Row | null; achatado: boolean } => {
+      if (c.parent_code === null) return { pai: null, achatado: false };
+
+      const paiDireto = porCodigo.get(String(c.parent_code));
+      if (paiDireto === undefined) {
+        warnings.push(
+          `"${c.name}" aponta para o pai "${c.parent_code}", que não veio na carga (ou está `
+          + 'inativo). Ela entrou como categoria de primeiro nível.',
+        );
+        return { pai: null, achatado: false };
+      }
+      if (paiDireto.parent_code === null || !porCodigo.has(String(paiDireto.parent_code))) {
+        return { pai: paiDireto, achatado: false };
+      }
+
+      // Terceiro nível ou mais: sobe até a raiz.
+      let raiz: Row = paiDireto;
+      const visitados = new Set<string>([String(c.code), String(raiz.code)]);
+      for (;;) {
+        if (raiz.parent_code === null) break;
+        const acima = porCodigo.get(String(raiz.parent_code));
+        // Pai ausente, ou ciclo no cadastro do ERP: para em vez de girar para
+        // sempre — um ciclo aqui travaria a subida do servidor.
+        if (acima === undefined || visitados.has(String(acima.code))) break;
+        visitados.add(String(acima.code));
+        raiz = acima;
+      }
+      return { pai: raiz, achatado: true };
+    };
+
+    const mapaPai = new Map<string, Row | null>();
+    for (const c of ativas) {
+      const { pai, achatado } = raizDe(c);
+      if (achatado && pai !== null) {
+        warnings.push(
+          `"${c.name}" estava no terceiro nível do ERP; a loja só tem dois, então ela virou `
+          + `subcategoria de "${pai.name}".`,
+        );
+      }
+      mapaPai.set(String(c.code), pai);
+    }
+
+    const raizes = ativas.filter((c) => mapaPai.get(String(c.code)) === null);
+
+    // --------------------------------------------------- apaga o antigo ----
+    const antes = await tx.all('SELECT id FROM categories');
+    // `subcategories` tem FK com ON DELETE CASCADE: some junto.
+    await tx.run('DELETE FROM categories');
+
+    // ---------------------------------------------------- monta o novo ----
+    const slugsRaiz = new Set<string>();
+    const slugPorCodigo = new Map<string, { categoria: string; sub: string | null }>();
+
+    let posicao = 0;
+    for (const c of raizes) {
+      const slug = slugUnico(slugificar(String(c.name)), slugsRaiz);
+      await tx.run(
+        'INSERT INTO categories (id, name, description, icon, featured, position) VALUES (?,?,?,?,0,?)',
+        [slug, String(c.name).slice(0, 120), '', '', posicao],
+      );
+      slugPorCodigo.set(String(c.code), { categoria: slug, sub: null });
+      posicao++;
+    }
+
+    let subcategorias = 0;
+    const slugsPorPai = new Map<string, Set<string>>();
+    for (const c of ativas) {
+      const pai = mapaPai.get(String(c.code));
+      if (pai === null || pai === undefined) continue;
+
+      const destinoPai = slugPorCodigo.get(String(pai.code));
+      if (destinoPai === undefined) continue; // pai inativo: já avisado acima
+
+      const usados = slugsPorPai.get(destinoPai.categoria) ?? new Set<string>();
+      slugsPorPai.set(destinoPai.categoria, usados);
+      const slug = slugUnico(slugificar(String(c.name)), usados);
+
+      await tx.run(
+        'INSERT INTO subcategories (parent_id, id, name, position) VALUES (?,?,?,?)',
+        [destinoPai.categoria, slug, String(c.name).slice(0, 120), subcategorias],
+      );
+      slugPorCodigo.set(String(c.code), { categoria: destinoPai.categoria, sub: slug });
+      subcategorias++;
+    }
+
+    // ------------------------------------------------- refaz a amarração ----
+    // Toda amarração anterior é substituída: a árvore nova é a do ERP, então
+    // cada código passa a apontar para a categoria que nasceu dele.
+    await tx.run('UPDATE erp_categories SET category_id = NULL, subcategory_id = NULL');
+    for (const [code, destino] of slugPorCodigo) {
+      await tx.run(
+        'UPDATE erp_categories SET category_id = ?, subcategory_id = ? WHERE code = ?',
+        [destino.categoria, destino.sub, code],
+      );
+    }
+
+    /*
+     * Produto cuja categoria não existe mais sai da vitrine, explicitamente.
+     *
+     * Deixar o slug antigo gravado seria pior que apagá-lo: o produto
+     * continuaria passando pelo filtro da vitrine (a coluna não está vazia) e
+     * apareceria na home, mas sem pertencer a nenhuma seção do menu — visível
+     * para quem rolasse a página, inacessível para quem procurasse. Zerar
+     * coloca o produto na contagem de pendentes, que é onde ele deve estar.
+     */
+    const orfaos = await tx.run(
+      `UPDATE products SET category = '', subcategory = NULL
+        WHERE category <> ''
+          AND category NOT IN (SELECT id FROM categories)`,
+    );
+
+    /*
+     * O produto que estava esperando um código agora tem para onde ir. Sem
+     * isto, quem chegou antes do espelhamento ficaria parado mesmo com a
+     * categoria dele já existindo na loja.
+     */
+    let liberados = 0;
+    for (const [code, destino] of slugPorCodigo) {
+      liberados += await tx.run(
+        `UPDATE products SET category = ?, subcategory = ?, pending_category_code = ''
+          WHERE pending_category_code = ? AND category = ''`,
+        [destino.categoria, destino.sub, code],
+      );
+    }
+    if (liberados > 0) {
+      warnings.push(`${liberados} produto(s) que estavam esperando entraram na vitrine.`);
+    }
+
+    return {
+      categorias: raizes.length,
+      subcategorias,
+      amarrados: slugPorCodigo.size,
+      orfaos,
+      apagadas: antes.length,
+      warnings,
+    };
+  });
 }
 
 /**
