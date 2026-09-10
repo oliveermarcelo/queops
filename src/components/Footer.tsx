@@ -200,7 +200,7 @@ export default function Footer({ onOpenStory, onOpenCertifications, onOpenLegal 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 text-center sm:flex sm:items-center sm:justify-between text-[11px] text-white/40 gap-4">
           <p>© {new Date().getFullYear()} Quéops Pirâmides. Todos os direitos reservados.</p>
           <p className="font-mono mt-2 sm:mt-0">
-            Quéops Pirâmides Ltda. · CNPJ 00.000.000/0000-00
+            {LOJA.razaoSocial} · {LOJA.cnpj}
             <a href="/admin" className="ml-2 text-white/30 hover:text-brand-gold transition-colors">· Admin</a>
           </p>
         </div>

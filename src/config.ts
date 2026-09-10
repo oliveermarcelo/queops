@@ -38,4 +38,15 @@ export const LOJA = {
   horario: 'Seg a Dom, 9h às 19h30',
   endereco: 'Estrada Dr. Celso Charuri, 270 — próximo ao Clube Pró Vida',
   cidade: 'Jundiaquara, Araçoiaba da Serra · SP — CEP 18193-444',
+  /*
+   * Razão social e CNPJ, como constam nos documentos legais da loja.
+   *
+   * O rodapé trazia "Quéops Pirâmides Ltda. · CNPJ 00.000.000/0000-00", que
+   * era exemplo — e errado duas vezes, porque a empresa nem é uma Ltda. Numa
+   * loja virtual isso não é detalhe: é a identificação do fornecedor que o
+   * Código de Defesa do Consumidor exige, e é por ela que o cliente sabe de
+   * quem está comprando.
+   */
+  razaoSocial: '20.403.704 ANTONELA BORDON',
+  cnpj: 'CNPJ 20.403.704/0001-12',
 } as const;

@@ -76,11 +76,22 @@ export default function LegalPage({ doc, onBack }: { doc: LegalDoc; onBack: () =
               {secao.heading !== '' && (
                 <h2 className="text-base font-bold text-brand-text">{secao.heading}</h2>
               )}
-              {secao.paragraphs.map((p, j) => (
-                <p key={j} className="text-[15px] text-gray-700 leading-relaxed">
-                  {comEmailClicavel(p)}
-                </p>
-              ))}
+              {secao.blocks.map((bloco, j) =>
+                bloco.items.length > 0 ? (
+                  <ul
+                    key={j}
+                    className="list-disc pl-5 space-y-2 text-[15px] text-gray-700 leading-relaxed marker:text-brand-gold"
+                  >
+                    {bloco.items.map((item, k) => (
+                      <li key={k}>{comEmailClicavel(item)}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p key={j} className="text-[15px] text-gray-700 leading-relaxed">
+                    {comEmailClicavel(bloco.text)}
+                  </p>
+                ),
+              )}
             </section>
           ))}
         </article>

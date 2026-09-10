@@ -128,6 +128,89 @@ mortos === 0
   ? ok('não sobrou link apontando para lugar nenhum')
   : fail(`${mortos} link(s) ainda apontam para âncoras vazias`);
 
+// ------------------------------------------------- termos de uso ----
+
+const termos = await page.goto(BASE + '/termos-de-uso', { waitUntil: 'networkidle' });
+termos?.status() === 200 ? ok('o endereço /termos-de-uso responde 200') : fail(`status ${termos?.status()}`);
+await page.waitForTimeout(1200);
+const textoTermos = await page.locator('body').innerText();
+
+/*
+ * As nove seções precisam estar todas presentes e NUMERADAS.
+ *
+ * Um documento que pula da Seção 6 para a 8 é um documento que perdeu uma
+ * cláusula, e a leitura corrida não denuncia — some justamente a que ninguém
+ * lê até precisar dela.
+ */
+for (let n = 1; n <= 9; n++) {
+  textoTermos.includes(`Seção ${n} —`)
+    ? ok(`os termos têm a Seção ${n}`)
+    : fail(`faltou a Seção ${n} nos termos de uso`);
+}
+
+/*
+ * As duas cláusulas que criam obrigação para o usuário e para a loja, e que
+ * seriam as mais caras de perder num corte de texto.
+ */
+[
+  ['licença sobre comentários', 'licença não-exclusiva, irrevogável e irretratável'],
+  ['direito de encerrar o site', 'pode ser encerrado, suspenso ou interrompido unilateralmente'],
+  ['recusa de cookies', 'os cookies sejam automaticamente rejeitados'],
+].forEach(([nome, trecho]) => {
+  textoTermos.includes(trecho) ? ok(`os termos mantêm: ${nome}`) : fail(`sumiu dos termos: ${nome}`);
+});
+
+// -------------------------------------------- política de privacidade ----
+
+const priv = await page.goto(BASE + '/politica-de-privacidade', { waitUntil: 'networkidle' });
+priv?.status() === 200 ? ok('o endereço /politica-de-privacidade responde 200') : fail(`status ${priv?.status()}`);
+await page.waitForTimeout(1200);
+const textoPriv = await page.locator('body').innerText();
+
+[
+  ['base legal (LGPD)', 'Lei nº 13.709/18'],
+  ['CNPJ do responsável', '20.403.704/0001-12'],
+  ['aviso sobre menores', 'NÃO SE DESTINA A PESSOAS COM MENOS DE 18'],
+  ['transferência internacional', 'Transferências internacionais de Dados'],
+  ['canal do titular', 'Pessoa responsável do tratamento dos Dados Pessoais'],
+].forEach(([nome, trecho]) => {
+  textoPriv.includes(trecho)
+    ? ok(`a privacidade mantém: ${nome}`)
+    : fail(`sumiu da privacidade: ${nome}`);
+});
+
+/*
+ * Os nove direitos do titular precisam sair como LISTA.
+ *
+ * São o item que a pessoa percorre para achar o seu caso — "quero apagar meus
+ * dados", "quero saber com quem foram compartilhados". Espremidos num
+ * parágrafo corrido viram parede de texto, e a LGPD manda que sejam de acesso
+ * facilitado. Também é o teste de que a estrutura de lista chegou até a tela.
+ */
+const direitos = await page.evaluate(() => {
+  const h2 = [...document.querySelectorAll('h2')]
+    .find((h) => h.textContent?.includes('Direitos do Usuário'));
+  return h2?.parentElement?.querySelector('ul')?.querySelectorAll('li').length ?? 0;
+});
+direitos === 9
+  ? ok('os nove direitos do titular saem como lista')
+  : fail(`a lista de direitos tem ${direitos} itens, deveria ter 9`);
+
+// O rodapé precisa identificar o fornecedor — era CNPJ de exemplo.
+await page.goto(BASE, { waitUntil: 'networkidle' });
+await page.waitForTimeout(1000);
+const rodape = await page.locator('footer').innerText();
+rodape.includes('20.403.704/0001-12') && !rodape.includes('00.000.000/0000-00')
+  ? ok('o rodapé identifica a loja com o CNPJ de verdade')
+  : fail('o rodapé ainda mostra o CNPJ de exemplo');
+
+const tresLinks = await page.locator(
+  'a[href="/politica-de-privacidade"], a[href="/termos-de-uso"], a[href="/trocas-e-devolucoes"]',
+).count();
+tresLinks === 3
+  ? ok('os três documentos estão linkados no rodapé')
+  : fail(`links de documento no rodapé: ${tresLinks}`);
+
 await browser.close();
 console.log(log.join('\n'));
 console.log('\nErros de página:', erros.length ? erros.slice(0, 3).join(' | ') : 'nenhum');
