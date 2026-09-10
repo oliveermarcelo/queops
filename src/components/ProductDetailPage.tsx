@@ -106,6 +106,20 @@ export default function ProductDetailPage({
   const pixPrice = product.price * (1 - pixPct / 100);
 
   /*
+   * Só anuncia o preço no Pix quando ESTE produto sozinho já garante o
+   * desconto.
+   *
+   * Com mínimo configurado, o desconto depende do carrinho inteiro, não da
+   * peça. Estampar "R$ 89,10 no Pix" numa peça de R$ 99 com mínimo de R$ 300
+   * seria anunciar um preço que o checkout não vai cobrar — a mesma falha que
+   * o carrinho e o checkout já tiveram com o frete. Abaixo do mínimo a página
+   * diz a condição em vez do preço: é informação verdadeira e ainda funciona
+   * como convite a levar mais uma peça.
+   */
+  const pixMin = settings?.pixMinOrder ?? 0;
+  const pixValeNestaPeca = pixPct > 0 && (pixMin === 0 || product.price >= pixMin);
+
+  /*
    * Fotos do produto: a capa e as extras, nessa ordem.
    *
    * `fotoAtivaSegura` existe porque o índice guardado pode ficar maior que a
@@ -406,11 +420,18 @@ export default function ProductDetailPage({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-1">
-                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
-                    <QrCode className="w-4 h-4" />
-                    R$ {brlNumber(pixPrice)} no Pix
-                    {pixPct > 0 && ` (${brlNumber(pixPct).replace(',00', '')}% off)`}
-                  </span>
+                  {pixValeNestaPeca ? (
+                    <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
+                      <QrCode className="w-4 h-4" />
+                      R$ {brlNumber(pixPrice)} no Pix
+                      {` (${brlNumber(pixPct).replace(',00', '')}% off)`}
+                    </span>
+                  ) : pixPct > 0 ? (
+                    <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
+                      <QrCode className="w-4 h-4" />
+                      {brlNumber(pixPct).replace(',00', '')}% no Pix a partir de R$ {brlNumber(pixMin)} em produtos
+                    </span>
+                  ) : null}
                   <span className="inline-flex items-center gap-1.5 text-[13px] text-gray-500">
                     <CreditCard className="w-4 h-4 text-gray-400" />
                     {parcelas}x de R$ {installment} sem juros

@@ -321,6 +321,8 @@ var init_store = __esm({
       phone: "(11) 0000-0000",
       whatsapp: "5511000000000",
       pixDiscountPct: 5,
+      // 0 mantém o comportamento de antes: desconto em qualquer valor.
+      pixMinOrder: 0,
       payments: { card: true, pix: true, boleto: true }
     };
     DEFAULT_SHIPPING = {

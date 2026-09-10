@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { Save, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
-import { Card, Btn, Field, inputCls } from '../ui';
+import { Card, Btn, Field, brl, inputCls } from '../ui';
 
 export default function SettingsAdmin() {
   const { state, updateSettings, error, loading } = useAdmin();
@@ -56,7 +56,28 @@ export default function SettingsAdmin() {
             <input type="number" step="1" min="0" max="100" value={form.pixDiscountPct}
               onChange={(e) => set({ pixDiscountPct: parseFloat(e.target.value) || 0 })} className={inputCls} />
           </Field>
+          <Field label="Só a partir de (R$ em produtos)">
+            <input type="number" step="0.01" min="0" value={form.pixMinOrder}
+              onChange={(e) => set({ pixMinOrder: parseFloat(e.target.value) || 0 })} className={inputCls} />
+          </Field>
         </div>
+        {/*
+          O texto muda conforme o valor: um aviso que descreve a regra que
+          está valendo agora é conferível de relance; um que explica as duas
+          possibilidades obriga a pessoa a descobrir em qual delas está.
+        */}
+        <p className="text-[11px] text-gray-500">
+          {form.pixMinOrder > 0 ? (
+            <>
+              O desconto de <strong>{form.pixDiscountPct}%</strong> aparece quando os produtos
+              somarem <strong>{brl(form.pixMinOrder)}</strong> ou mais. O frete e os cupons não
+              entram nessa conta — é a mesma base do frete grátis. Abaixo disso, a loja mostra
+              ao cliente quanto falta.
+            </>
+          ) : (
+            <>Deixe <strong>0</strong> para o desconto valer em qualquer valor.</>
+          )}
+        </p>
         <p className="text-[11px] text-gray-400">
           Valores de frete ficam em <strong>Frete &amp; Entrega</strong>. Antes havia campos de frete
           também aqui, e eles não eram usados pelo checkout — duas telas diziam preços diferentes.

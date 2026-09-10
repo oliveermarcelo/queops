@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { X, ShoppingBag, Trash2, ArrowRight, Minus, Plus, Truck, ShieldCheck, Lock } from 'lucide-react';
+import { X, ShoppingBag, Trash2, ArrowRight, Minus, Plus, Truck, ShieldCheck, Lock, QrCode } from 'lucide-react';
 import { motion } from 'motion/react';
 import { CartItem } from '../types';
 import { safeImageSrc } from '../utils/safeUrl';
@@ -41,6 +41,21 @@ export default function CartDrawer({
   const total = subtotal + shipping;
   const progress = freeShippingFrom > 0 ? Math.min(100, (subtotal / freeShippingFrom) * 100) : 100;
   const remaining = Math.max(0, freeShippingFrom - subtotal);
+
+  /*
+   * Desconto do Pix: o mesmo empurrãozinho do frete grátis.
+   *
+   * A conta usa o subtotal dos produtos, sem frete — é a regra do servidor, e
+   * o texto diz "em produtos" com todas as letras justamente para o cliente
+   * não somar o frete e achar que já chegou. Aqui vale calcular na tela: esta
+   * gaveta ainda não tem CEP nem cotação, então não há pedido no servidor
+   * para consultar; o valor cobrado, esse sim, vem sempre de lá.
+   */
+  const pixPct = settings?.pixDiscountPct ?? 0;
+  const pixMin = settings?.pixMinOrder ?? 0;
+  const pixTemRegra = pixPct > 0 && pixMin > 0;
+  const pixLiberado = pixTemRegra && subtotal >= pixMin;
+  const pixFaltam = Math.max(0, pixMin - subtotal);
 
   return (
     <ModalShell
@@ -112,6 +127,22 @@ export default function CartDrawer({
                   style={{ width: `${progress}%` }}
                 />
               </div>
+
+              {pixTemRegra && (
+                <div className="flex items-center gap-2 mt-2.5 pt-2.5 border-t border-gray-100">
+                  <QrCode size={15} className={pixLiberado ? 'text-emerald-500' : 'text-gray-400'} />
+                  {pixLiberado ? (
+                    <p className="text-xs font-semibold text-emerald-600">
+                      Você garantiu {pixPct}% de desconto pagando no Pix
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-600">
+                      Faltam <strong className="text-primary-blue">{brl(pixFaltam)}</strong> em
+                      produtos para <strong>{pixPct}% de desconto no Pix</strong>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Items */}

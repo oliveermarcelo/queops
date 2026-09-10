@@ -91,6 +91,7 @@ const EMPTY: AdminState = {
   settings: {
     name: '', email: '', phone: '', whatsapp: '',
     pixDiscountPct: 0,
+    pixMinOrder: 0,
     payments: { card: true, pix: true, boleto: true },
   },
   integrations: {} as AdminState['integrations'],

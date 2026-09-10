@@ -860,6 +860,8 @@ async function publicSettings(exec = q) {
     phone: s.phone,
     whatsapp: s.whatsapp,
     pixDiscountPct: Number(s.pixDiscountPct) || 0,
+    // 0 = o desconto do Pix vale em qualquer valor.
+    pixMinOrder: Number(s.pixMinOrder ?? 0) || 0,
     payments: s.payments,
     // 0 = não há frete grátis por valor.
     freeShippingFrom: free.enabled ? Number(free.minOrder ?? 0) || 0 : 0,
@@ -1089,6 +1091,8 @@ var init_store = __esm({
       phone: "(11) 0000-0000",
       whatsapp: "5511000000000",
       pixDiscountPct: 5,
+      // 0 mantém o comportamento de antes: desconto em qualquer valor.
+      pixMinOrder: 0,
       payments: { card: true, pix: true, boleto: true }
     };
     DEFAULT_SHIPPING = {
@@ -3031,7 +3035,10 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opc
   }
   const settings = await getSettings(exec);
   const pixPct = Number(settings.pixDiscountPct ?? 0) || 0;
-  const pixDiscount = payment === "pix" && pixPct > 0 ? round2(Math.max(0, subtotal - couponDiscount) * (pixPct / 100)) : 0;
+  const pixMinOrder = Number(settings.pixMinOrder ?? 0) || 0;
+  const pixLiberado = subtotal >= pixMinOrder;
+  const pixDiscount = payment === "pix" && pixPct > 0 && pixLiberado ? round2(Math.max(0, subtotal - couponDiscount) * (pixPct / 100)) : 0;
+  const pixFaltam = pixPct > 0 && pixMinOrder > 0 && !pixLiberado ? round2(pixMinOrder - subtotal) : 0;
   const discount = round2(couponDiscount + pixDiscount);
   const total = round2(Math.max(0, subtotal - discount) + ship.cost);
   return {
@@ -3053,6 +3060,8 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opc
     couponError,
     pixDiscount,
     pixDiscountPct: pixPct,
+    pixMinOrder,
+    pixFaltam,
     discount,
     total,
     uf,

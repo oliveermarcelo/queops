@@ -19,6 +19,13 @@ export interface StorePublicSettings {
   phone: string;
   whatsapp: string;
   pixDiscountPct: number;
+  /**
+   * Mínimo em PRODUTOS para o desconto do Pix valer; 0 quando vale sempre.
+   *
+   * Produtos, sem frete e sem cupom — a mesma base do frete grátis. A tela
+   * precisa dizer isso, senão o cliente soma o frete e acha que já chegou lá.
+   */
+  pixMinOrder: number;
   payments: { card: boolean; pix: boolean; boleto: boolean };
   /** Valor mínimo para frete grátis; 0 quando a regra está desligada. */
   freeShippingFrom: number;

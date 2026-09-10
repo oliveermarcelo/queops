@@ -14,6 +14,17 @@ export interface StoreSettings {
   phone: string;
   whatsapp: string;
   pixDiscountPct: number;
+  /**
+   * Valor mínimo em PRODUTOS para o desconto do Pix valer. 0 = sempre vale.
+   *
+   * "Em produtos" é a definição inteira: não entram frete nem cupom. É a
+   * mesma base do frete grátis, e é a única que não muda debaixo do cliente —
+   * se o mínimo olhasse o valor já com cupom, aplicar um cupom faria o
+   * desconto do Pix desaparecer, e ninguém liga uma coisa à outra. A tela
+   * precisa dizer isso com todas as letras, senão o cliente soma o frete e
+   * acha que já atingiu.
+   */
+  pixMinOrder: number;
   payments: { card: boolean; pix: boolean; boleto: boolean };
   [k: string]: unknown;
 }
@@ -49,6 +60,8 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   phone: '(11) 0000-0000',
   whatsapp: '5511000000000',
   pixDiscountPct: 5.0,
+  // 0 mantém o comportamento de antes: desconto em qualquer valor.
+  pixMinOrder: 0,
   payments: { card: true, pix: true, boleto: true },
 };
 
@@ -172,6 +185,8 @@ export async function publicSettings(exec: Q = q): Promise<Record<string, unknow
     phone: s.phone,
     whatsapp: s.whatsapp,
     pixDiscountPct: Number(s.pixDiscountPct) || 0,
+    // 0 = o desconto do Pix vale em qualquer valor.
+    pixMinOrder: Number(s.pixMinOrder ?? 0) || 0,
     payments: s.payments,
     // 0 = não há frete grátis por valor.
     freeShippingFrom: free.enabled ? Number(free.minOrder ?? 0) || 0 : 0,

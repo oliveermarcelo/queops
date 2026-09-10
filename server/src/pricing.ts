@@ -237,6 +237,10 @@ export interface Quote {
   couponError: string | null;
   pixDiscount: number;
   pixDiscountPct?: number;
+  /** Mínimo em produtos para o desconto do Pix valer. 0 = vale sempre. */
+  pixMinOrder?: number;
+  /** Quanto falta em produtos para destravar o desconto. 0 = já vale. */
+  pixFaltam?: number;
   discount: number;
   total: number;
   uf: string;
@@ -659,11 +663,37 @@ export async function quoteCart(
     couponDiscount = round2(Math.min(couponDiscount, subtotal));
   }
 
-  // ---- 4. Desconto Pix (sobre o subtotal já com cupom) --------------------
+  /*
+   * ---- 4. Desconto Pix (sobre o subtotal já com cupom) -------------------
+   *
+   * O percentual incide sobre o subtotal já descontado do cupom, mas o MÍNIMO
+   * é conferido contra o subtotal cheio — os produtos, sem frete e sem cupom.
+   *
+   * A assimetria é de propósito. Se o mínimo olhasse o valor pós-cupom, usar
+   * um cupom poderia derrubar o pedido abaixo dele e apagar o desconto do
+   * Pix: o cliente aplicaria um desconto e veria o total SUBIR, sem nada na
+   * tela ligando uma coisa à outra. E se olhasse o total com frete, o mesmo
+   * carrinho ganharia ou perderia o desconto conforme o CEP. É também a base
+   * que o frete grátis já usa, então a loja tem uma regra só para explicar.
+   */
   const settings = await getSettings(exec);
   const pixPct = Number(settings.pixDiscountPct ?? 0) || 0;
-  const pixDiscount = payment === 'pix' && pixPct > 0
+  const pixMinOrder = Number(settings.pixMinOrder ?? 0) || 0;
+  const pixLiberado = subtotal >= pixMinOrder;
+  const pixDiscount = payment === 'pix' && pixPct > 0 && pixLiberado
     ? round2(Math.max(0, subtotal - couponDiscount) * (pixPct / 100))
+    : 0;
+
+  /*
+   * Quanto falta em produtos para destravar o desconto — 0 quando já vale ou
+   * quando não há mínimo.
+   *
+   * Sai calculado daqui, e não da tela, porque é a mesma conta que decide o
+   * preço. Deixar a vitrine calcular por conta própria é como o carrinho e o
+   * checkout passaram a anunciar fretes diferentes.
+   */
+  const pixFaltam = pixPct > 0 && pixMinOrder > 0 && !pixLiberado
+    ? round2(pixMinOrder - subtotal)
     : 0;
 
   const discount = round2(couponDiscount + pixDiscount);
@@ -688,6 +718,8 @@ export async function quoteCart(
     couponError,
     pixDiscount,
     pixDiscountPct: pixPct,
+    pixMinOrder,
+    pixFaltam,
     discount,
     total,
     uf,

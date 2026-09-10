@@ -85,6 +85,8 @@ export interface StoreSettings {
   phone: string;
   whatsapp: string;
   pixDiscountPct: number;
+  /** Mínimo em produtos para o desconto do Pix valer. 0 = vale sempre. */
+  pixMinOrder: number;
   payments: { card: boolean; pix: boolean; boleto: boolean };
 }
 

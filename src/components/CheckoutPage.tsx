@@ -60,6 +60,10 @@ interface Quote {
   couponError: string | null;
   pixDiscount: number;
   pixDiscountPct: number;
+  /** Mínimo em produtos para o desconto do Pix valer. 0 = vale sempre. */
+  pixMinOrder?: number;
+  /** Quanto falta em produtos para destravar o desconto. 0 = já vale. */
+  pixFaltam?: number;
   discount: number;
   total: number;
   issues: string[];
@@ -354,8 +358,30 @@ export default function CheckoutPage({
     ? grandTotal
     : Math.max(0, Math.round((grandTotal - shippingCost) * 100) / 100);
 
+  /*
+   * O selo "10% OFF" no botão do Pix só aparece quando o desconto REALMENTE
+   * vai sair neste pedido.
+   *
+   * `pixFaltam` vem do servidor, do mesmo cálculo que define o total. Se o
+   * selo ignorasse o mínimo, o cliente escolheria o Pix por causa dele e
+   * veria o resumo ao lado não descontar nada — a tela contradizendo a si
+   * mesma na hora de pagar. Abaixo do mínimo o botão diz o que falta.
+   */
+  const pixFaltam = Number(quote?.pixFaltam ?? 0);
+  const pixPctTexto = quote?.pixDiscountPct
+    ? `${brlNumber(quote.pixDiscountPct).replace(',00', '')}%`
+    : '';
+
   const ALL_PAYMENTS = [
-    { id: 'pix' as const, icon: QrCode, title: 'Pix', desc: 'Aprovação na hora', tag: quote?.pixDiscountPct ? `${brlNumber(quote.pixDiscountPct).replace(',00', '')}% OFF` : '' },
+    {
+      id: 'pix' as const,
+      icon: QrCode,
+      title: 'Pix',
+      desc: pixFaltam > 0
+        ? `Faltam R$ ${brlNumber(pixFaltam)} em produtos para ${pixPctTexto} OFF`
+        : 'Aprovação na hora',
+      tag: pixPctTexto !== '' && pixFaltam === 0 ? `${pixPctTexto} OFF` : '',
+    },
     { id: 'card' as const, icon: CreditCard, title: 'Cartão de Crédito', desc: `Em até ${parcelasMax}x sem juros`, tag: '' },
   ];
   const PAYMENTS = ALL_PAYMENTS.filter((pm) => enabledPayments.includes(pm.id));
@@ -1097,6 +1123,18 @@ export default function CheckoutPage({
                     <span>Desconto Pix</span>
                     <span>- R$ {brlNumber(quote.pixDiscount)}</span>
                   </div>
+                )}
+                {/*
+                  O convite aparece no resumo mesmo quando o cliente ainda não
+                  escolheu o Pix: é aqui que ele olha o total e decide se
+                  fecha ou volta para a loja.
+                */}
+                {pixFaltam > 0 && (
+                  <p className="text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 leading-relaxed">
+                    Faltam <strong>R$ {brlNumber(pixFaltam)}</strong> em produtos para você ganhar{' '}
+                    <strong>{pixPctTexto} de desconto</strong> pagando no Pix. O frete não entra
+                    nessa conta.
+                  </p>
                 )}
                 <div className="flex justify-between text-gray-500">
                   <span>Frete{freteConhecido && quote.shippingLabel ? ` · ${quote.shippingLabel}` : ''}</span>
