@@ -37,7 +37,8 @@ const ITEMS = [
 ];
 
 const STATS = [
-  { value: '35+', label: 'anos de tradição' },
+  // 1996, não 1990: são três décadas, e o site inteiro dizia 35 anos.
+  { value: '30+', label: 'anos de tradição' },
   { value: '1.400+', label: 'peças no catálogo' },
   { value: '100%', label: 'feito à mão' },
   { value: '4.9★', label: 'avaliação média' },
@@ -58,16 +59,15 @@ export default function ValueProps() {
         <div className="max-w-2xl mx-auto text-center mb-16">
           <span className="inline-flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.25em] text-brand-gold">
             <span className="h-px w-8 bg-brand-gold/60" />
-            Por que Quéops Pirâmides
+            Somos Especialistas
             <span className="h-px w-8 bg-brand-gold/60" />
           </span>
           <h2 className="mt-5 font-bold text-3xl sm:text-4xl lg:text-5xl leading-tight tracking-tight">
             Excelência em <span className="text-brand-gold">cada detalhe</span>
           </h2>
           <p className="mt-5 text-white/70 text-base leading-relaxed">
-Mais de três décadas dedicadas a criar pirâmides, cristais e artigos
-            espirituais que trazem harmonia ao seu ambiente — com o capricho que só
-            o trabalho verdadeiramente artesanal proporciona.
+            Mais de três décadas criando pirâmides de cobre com suportes, pirâmides de
+            cristal e produtos que trazem harmonia, com qualidade e medidas precisas.
           </p>
         </div>
 

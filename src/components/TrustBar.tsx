@@ -6,10 +6,14 @@
 import React from 'react';
 import { Truck, ShieldCheck, CreditCard, Headphones } from 'lucide-react';
 
+import { INSTALLMENTS } from '../config';
+
 const ITEMS = [
-  { icon: Truck, title: 'Envio nacional', sub: 'Para todo o Brasil' },
-  { icon: CreditCard, title: 'Até 6x sem juros', sub: 'Ou 5% OFF no Pix' },
-  { icon: ShieldCheck, title: 'Feito à mão', sub: 'Artesanal desde 1990' },
+  { icon: Truck, title: 'Envio para o mundo', sub: 'Nacional e internacional' },
+  // O número vem da constante: escrito à mão aqui, ficaria para trás na
+  // próxima vez que o parcelamento mudar — foi o que acabou de acontecer.
+  { icon: CreditCard, title: `Até ${INSTALLMENTS}x sem juros`, sub: 'Ou 5% OFF no Pix' },
+  { icon: ShieldCheck, title: 'Feito à mão', sub: 'Artesanal desde 1996' },
   { icon: Headphones, title: 'Atendimento', sub: 'Suporte humano' },
 ];
 

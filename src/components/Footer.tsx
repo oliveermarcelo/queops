@@ -9,6 +9,7 @@ import {
   CreditCard, QrCode, Barcode, ShieldCheck, ArrowRight, Send,
 } from 'lucide-react';
 import logoWhite from '../assets/logo-white.svg';
+import { LOJA } from '../config';
 
 interface FooterProps {
   onOpenStory: () => void;
@@ -76,8 +77,11 @@ export default function Footer({ onOpenStory, onOpenCertifications }: FooterProp
           <div className="col-span-2 lg:col-span-4 space-y-5">
             <img src={logoWhite} alt="Quéops Pirâmides" className="h-12 w-auto" />
             <p className="text-sm text-white/60 leading-relaxed max-w-xs">
-              Pirâmides artesanais, cristais e artigos espirituais feitos à mão desde 1990.
-              Criamos possibilidades para que as pessoas alcancem a Harmonia, a Felicidade e a Paz.
+              Loja Quéops Pirâmides: desde 1996 fabricamos pirâmides de cobre e, desde 2019,
+              lapidamos pirâmides de cristal, todas proporcionais à Grande Pirâmide de Quéops.
+              Oferecemos pirâmides em diversos modelos e tamanhos, cristais, incensos,
+              aromaterapia e presentes exclusivos que inspiram energia, espiritualidade e
+              harmonia. Visite nossa loja física ou compre online.
             </p>
             <div className="flex items-center gap-2.5">
               {[Instagram, Facebook].map((Icon, i) => (
@@ -90,7 +94,7 @@ export default function Footer({ onOpenStory, onOpenCertifications }: FooterProp
                 </a>
               ))}
               <a
-                href="https://wa.me/5511000000000"
+                href={LOJA.whatsapp}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-9 h-9 rounded-full bg-white/10 hover:bg-[#25D366] flex items-center justify-center text-white/80 hover:text-white transition-colors"
@@ -129,19 +133,19 @@ export default function Footer({ onOpenStory, onOpenCertifications }: FooterProp
             <ul className="space-y-3 text-sm text-white/60">
               <li className="flex items-start gap-2.5">
                 <Phone size={16} className="text-brand-gold mt-0.5 flex-shrink-0" />
-                <a href="tel:+551130000000" className="hover:text-brand-gold transition-colors">(11) 3000-0000</a>
+                <a href={LOJA.telefoneLink} className="hover:text-brand-gold transition-colors">{LOJA.telefone}</a>
               </li>
               <li className="flex items-start gap-2.5">
                 <Mail size={16} className="text-brand-gold mt-0.5 flex-shrink-0" />
-                <a href="mailto:contato@queopspiramides.com.br" className="hover:text-brand-gold transition-colors break-all">contato@queopspiramides.com.br</a>
+                <a href={`mailto:${LOJA.email}`} className="hover:text-brand-gold transition-colors break-all">{LOJA.email}</a>
               </li>
               <li className="flex items-start gap-2.5">
                 <Clock size={16} className="text-brand-gold mt-0.5 flex-shrink-0" />
-                <span>Seg a Sex, 8h às 18h</span>
+                <span>{LOJA.horario}</span>
               </li>
               <li className="flex items-start gap-2.5">
                 <MapPin size={16} className="text-brand-gold mt-0.5 flex-shrink-0" />
-                <span>São Paulo · SP — entregas para todo o Brasil</span>
+                <span>{LOJA.endereco}<br />{LOJA.cidade}</span>
               </li>
             </ul>
           </div>

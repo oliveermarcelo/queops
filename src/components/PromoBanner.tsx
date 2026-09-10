@@ -62,7 +62,7 @@ export default function PromoBanner({ onOpenProducts }: PromoBannerProps) {
             >
               Pirâmides artesanais, cristais e incensos selecionados para trazer
               harmonia ao seu espaço. Tudo com o cuidado da Quéops Pirâmides —
-              com <strong className="text-white">envio para todo o Brasil</strong>.
+              com <strong className="text-white">envio para todo o mundo</strong>.
             </motion.p>
 
             <motion.button

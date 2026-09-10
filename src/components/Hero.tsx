@@ -34,7 +34,7 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
   const slides: Slide[] = [
     {
       id: 'piramides',
-      kicker: 'Feito à mão desde 1990',
+      kicker: 'Feito à mão desde 1996',
       title: 'Pirâmides Artesanais',
       highlight: 'proporcionais à de Quéops',
       subtitle: 'Pirâmides de cobre e cristal lapidadas com técnica própria, na geometria exata da Grande Pirâmide.',
@@ -175,8 +175,8 @@ export default function Hero({ onOpenProducts, onSelectCategory }: HeroProps) {
                 <Truck size={20} />
               </div>
               <div className="relative">
-                <p className="text-base sm:text-lg font-extrabold leading-tight">Envio nacional</p>
-                <p className="text-xs text-white/80 mt-0.5">para todo o Brasil, com embalagem protegida</p>
+                <p className="text-base sm:text-lg font-extrabold leading-tight">Enviamos para todo o mundo</p>
+                <p className="text-xs text-white/80 mt-0.5">envio nacional e internacional, com embalagem própria</p>
               </div>
             </button>
 

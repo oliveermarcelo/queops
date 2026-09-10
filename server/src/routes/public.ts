@@ -543,8 +543,16 @@ publicRoutes.get('/orders/:id/status', h(async (req, res) => {
   });
 }));
 
-/** Teto de parcelas aceito pelo servidor — a tela mostra o mesmo número. */
-const INSTALLMENTS_MAX = 6;
+/**
+ * Teto de parcelas aceito pelo servidor.
+ *
+ * É a autoridade: a vitrine recebe este número em `/api/payments/config` e o
+ * anuncia, e o pagamento recusa qualquer coisa acima dele. Precisa continuar
+ * igual a `INSTALLMENTS` em `src/config.ts`, que é o valor que a tela usa
+ * enquanto a configuração não chegou — se os dois divergirem, o cliente escolhe
+ * uma parcela que o cartão vai recusar. Um teste compara os dois arquivos.
+ */
+const INSTALLMENTS_MAX = 10;
 
 /** Quanto tempo o QR code do Pix vale. Depois disso o estoque volta. */
 const PIX_EXPIRA_MINUTOS = 30;

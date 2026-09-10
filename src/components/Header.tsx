@@ -9,6 +9,7 @@ import { AnimatePresence } from 'motion/react';
 import logoUrl from '../assets/logo.svg';
 import MegaMenu, { MegaMenuMobile } from './MegaMenu';
 import { brlNumber } from '../utils/currency';
+import { INSTALLMENTS, LOJA } from '../config';
 
 interface HeaderProps {
   cartCount: number;
@@ -63,7 +64,7 @@ export default function Header({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-8 flex items-center justify-center gap-2">
           <Truck className="w-3.5 h-3.5 flex-shrink-0" />
           <span className="tracking-wide">
-            <strong className="font-bold">Envio para todo o Brasil</strong> • Pirâmides artesanais feitas à mão desde 1990
+            <strong className="font-bold">Fabricação e Lapidação Própria</strong> • Enviamos para todo o mundo
           </span>
         </div>
       </div>
@@ -176,15 +177,15 @@ export default function Header({
             <div className="ml-auto flex items-center gap-5 text-gray-500">
               <span className="inline-flex items-center gap-1.5 text-xs font-medium">
                 <CreditCard size={15} className="text-primary-blue" />
-                Em até <strong className="text-gray-700">6x sem juros</strong>
+                Em até <strong className="text-gray-700">{INSTALLMENTS}x sem juros</strong>
               </span>
               <span className="w-px h-4 bg-gray-150" />
               <a
-                href="tel:+551130000000"
+                href={LOJA.telefoneLink}
                 className="inline-flex items-center gap-1.5 text-xs font-medium hover:text-primary-blue transition-colors"
               >
                 <Headset size={15} className="text-primary-blue" />
-                Atendimento <strong className="text-gray-700">(11) 3000-0000</strong>
+                Atendimento <strong className="text-gray-700">{LOJA.telefone}</strong>
               </a>
             </div>
           </nav>

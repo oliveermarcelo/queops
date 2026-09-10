@@ -13,28 +13,35 @@ interface CertificationsModalProps {
 }
 
 export default function CertificationsModal({ onClose }: CertificationsModalProps) {
+  /*
+   * Os quatro selos, com o texto escrito pela dona da loja.
+   *
+   * São afirmações que a loja faz sobre si mesma — procedência, certificado,
+   * técnica. Não é copy a ser melhorada por conta própria: se a frase muda, é
+   * porque ela mudou.
+   */
   const certs = [
     {
       title: 'Proporção Fiel à Grande Pirâmide',
-      desc: 'Cada pirâmide é construída na proporção exata da Grande Pirâmide de Quéops. Ângulos e medidas são conferidos peça a peça para preservar a geometria original.',
+      desc: 'Cada pirâmide é rigorosamente construída na proporção exata da Grande Pirâmide de Quéops. Ângulos e medidas são aferidos milimetricamente, peça a peça, garantindo fidelidade à geometria original.',
       icon: ShieldCheck,
       color: 'text-blue-500 bg-blue-50',
     },
     {
-      title: 'Lapidação Artesanal Própria',
-      desc: 'Fabricamos pirâmides de cobre desde 1996 e lapidamos cristais desde 2019, com técnica própria. Todo o processo é feito à mão, sem produção em série.',
+      title: 'Fabricação e Lapidação Própria',
+      desc: 'Dominamos uma técnica própria em um processo puramente artesanal, onde cada cristal lapidado e cada pirâmide de cobre ganham uma identidade única.',
       icon: Heart,
       color: 'text-red-500 bg-red-50',
     },
     {
-      title: 'Cristais de Origem Selecionada',
-      desc: 'Nossos cristais e ametistas são escolhidos individualmente por procedência e qualidade energética, garantindo autenticidade e beleza natural em cada peça.',
+      title: 'Cristais com Certificado',
+      desc: 'A procedência de cada cristal é tratada com o máximo rigor. Trabalhamos exclusivamente com Cristais de Rocha selecionados e acompanhados de certificado de garantia, assegurando a legitimidade, a pureza e a beleza natural das peças.',
       icon: Leaf,
       color: 'text-emerald-500 bg-emerald-50',
     },
     {
-      title: 'Embalagem Protegida para Envio',
-      desc: 'Cada item é embalado com cuidado especial para viajar em segurança. Enviamos para todo o Brasil preservando a integridade de pirâmides, cristais e imagens.',
+      title: 'Embalagem Própria para Envio',
+      desc: 'Desenvolvemos embalagens exclusivas de alta proteção, projetadas especificamente para o envio aéreo nacional e internacional. Enviamos para todo o mundo, assegurando o tratamento especial que preserva a integridade de nossas pirâmides, cristais e peças durante todo o trajeto.',
       icon: CloudSnow,
       color: 'text-indigo-500 bg-indigo-50',
     },
@@ -72,7 +79,7 @@ export default function CertificationsModal({ onClose }: CertificationsModalProp
         {/* Content */}
         <div className="p-6 space-y-4 overflow-y-auto max-h-[65vh] text-left">
           <p className="text-xs text-gray-500 leading-relaxed font-sans mb-4">
-O cuidado artesanal é o que define cada peça da Quéops Pirâmides. Fabricamos e lapidamos com técnica própria desde 1990, unindo geometria sagrada, materiais nobres e seleção rigorosa de cristais e imagens.
+Na Quéops Pirâmides, a excelência nasce do Respeito. Fabricamos e lapidamos cada peça através de técnicas exclusivas, combinando a precisão das medidas exatas, o uso de materiais nobres e a máxima qualidade.
           </p>
 
           <div className="space-y-4">

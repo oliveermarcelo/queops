@@ -4722,7 +4722,7 @@ publicRoutes.get("/orders/:id/status", h(async (req, res) => {
     cancelado: status === "canceled"
   });
 }));
-var INSTALLMENTS_MAX = 6;
+var INSTALLMENTS_MAX = 10;
 var PIX_EXPIRA_MINUTOS = 30;
 var EmptyCart = class extends Error {
   static {

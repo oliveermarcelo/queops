@@ -682,10 +682,10 @@ export default function ProductDetailPage({
                   <div className="space-y-4 max-w-3xl">
                     <h3 className="text-base font-bold text-gray-900">Nossas garantias</h3>
                     <ul className="text-sm text-gray-600 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-150/40 space-y-2 list-disc list-inside">
-                      <li>Peça artesanal, fabricada e lapidada com técnica própria.</li>
-                      <li>Pirâmides na proporção exata da Grande Pirâmide de Quéops.</li>
-                      <li>Cristais e materiais selecionados por procedência.</li>
-                      <li>Embalagem reforçada para envio seguro a todo o Brasil.</li>
+                      <li>Fabricação e lapidação própria, com técnica exclusiva.</li>
+                      <li>Todas as nossas pirâmides seguem as medidas proporcionais da Grande Pirâmide de Quéops.</li>
+                      <li>Cristais com garantia de qualidade.</li>
+                      <li>Embalagens especiais para envios nacionais e internacionais.</li>
                     </ul>
                     <div className="flex items-start gap-2.5 text-[13px] text-amber-700 bg-amber-50 rounded-xl p-4 border border-amber-100">
                       <Info className="w-4.5 h-4.5 flex-shrink-0 mt-0.5" />
@@ -698,10 +698,27 @@ export default function ProductDetailPage({
                   <div className="space-y-4 max-w-3xl">
                     <h3 className="text-base font-bold text-gray-900">Cuidados e conservação</h3>
                     <ul className="text-sm text-gray-600 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-150/40 space-y-2 list-disc list-inside">
-                      <li>Limpe com pano macio e seco; evite produtos químicos abrasivos.</li>
-                      <li>Cristais podem ser energizados ao sol da manhã ou à luz da lua.</li>
-                      <li>Peças de cobre podem escurecer naturalmente com o tempo — é esperado.</li>
-                      <li>Mantenha longe de quedas e impactos para preservar o acabamento.</li>
+                      {/*
+                        Instruções de limpeza dadas pela fabricante.
+                        Cobre fechado e cobre vazado pedem tratamentos
+                        OPOSTOS — cera num, palha de aço no outro —, por isso
+                        cada um tem a sua linha, com a palavra que os distingue
+                        em destaque. Juntar os dois numa frase só é o tipo de
+                        economia que arruína a peça de quem leu rápido.
+                      */}
+                      <li>Limpeza dos cristais: somente com água corrente, por um minuto.</li>
+                      <li>
+                        Pirâmides de cobre <strong>fechadas</strong>: uma vez por ano, passar cera
+                        “GrandPrix Amarela” com algodão seco.
+                      </li>
+                      <li>
+                        Pirâmides de cobre <strong>vazadas</strong>: passar palha de aço seca, com
+                        muita delicadeza.
+                      </li>
+                      <li>
+                        Mantenha as pirâmides de cobre longe da umidade e não use outros produtos
+                        de limpeza.
+                      </li>
                     </ul>
                   </div>
                 )}
