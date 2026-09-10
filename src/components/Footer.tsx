@@ -10,13 +10,15 @@ import {
 } from 'lucide-react';
 import logoWhite from '../assets/logo-white.svg';
 import { LOJA } from '../config';
+import { LEGAL_DOCS, LegalDoc } from '../legal';
 
 interface FooterProps {
   onOpenStory: () => void;
   onOpenCertifications: () => void;
+  onOpenLegal: (doc: LegalDoc) => void;
 }
 
-export default function Footer({ onOpenStory, onOpenCertifications }: FooterProps) {
+export default function Footer({ onOpenStory, onOpenCertifications, onOpenLegal }: FooterProps) {
   const [newsletterEmail, setNewsletterEmail] = useState('');
   const [newsletterStatus, setNewsletterStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
@@ -121,9 +123,34 @@ export default function Footer({ onOpenStory, onOpenCertifications }: FooterProp
             <ul className="space-y-2.5 text-sm text-white/60">
               <li><button onClick={onOpenStory} className="hover:text-brand-gold transition-colors">Sobre nós</button></li>
               <li><button onClick={onOpenCertifications} className="hover:text-brand-gold transition-colors">Qualidade & Selos</button></li>
-              <li><a href="#privacidade" className="hover:text-brand-gold transition-colors">Política de Privacidade</a></li>
-              <li><a href="#termos" className="hover:text-brand-gold transition-colors">Termos de Uso</a></li>
-              <li><a href="#trocas" className="hover:text-brand-gold transition-colors">Trocas e Devoluções</a></li>
+              {/*
+                Documento legal é `<a>` com href de verdade, e não botão.
+                Continua abrindo sem recarregar a página, mas dá para abrir em
+                nova aba, copiar o endereço e ser indexado — coisas que a loja
+                precisa ter para uma política de troca, e que um botão não faz.
+
+                Só entram aqui os documentos que existem: privacidade e termos
+                de uso apontavam para "#privacidade" e "#termos", que não
+                levavam a lugar nenhum. Link que não abre nada é pior do que
+                link nenhum quando o assunto é informação obrigatória.
+              */}
+              {LEGAL_DOCS.map((doc) => (
+                <li key={doc.slug}>
+                  <a
+                    href={`/${doc.slug}`}
+                    onClick={(e) => {
+                      // Clique com Ctrl/Cmd ou botão do meio abre em nova aba:
+                      // é do navegador, não nosso.
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                      e.preventDefault();
+                      onOpenLegal(doc);
+                    }}
+                    className="hover:text-brand-gold transition-colors"
+                  >
+                    {doc.navLabel}
+                  </a>
+                </li>
+              ))}
             </ul>
           </div>
 

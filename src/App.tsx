@@ -28,13 +28,30 @@ import StoryModal from './components/StoryModal';
 import CertificationsModal from './components/CertificationsModal';
 import AccountModal from './components/AccountModal';
 import AccountPage from './components/AccountPage';
+import LegalPage from './components/LegalPage';
+import { LegalDoc, acharDocumentoLegal } from './legal';
 
-type View = 'home' | 'products' | 'detail' | 'checkout' | 'account';
+type View = 'home' | 'products' | 'detail' | 'checkout' | 'account' | 'legal';
 
 export default function App() {
   const { products, loading, error, reload, productById } = useCatalog();
 
-  const [view, setView] = useState<View>('home');
+  /*
+   * A loja é uma página só, trocando de tela por estado — menos /trocas-e-
+   * devoluções e as demais políticas, que têm endereço de verdade.
+   *
+   * Documento legal precisa de URL: o cliente manda o link para alguém, o
+   * meio de pagamento e os marketplaces pedem o endereço, e o buscador
+   * indexa. Por isso o estado inicial olha o caminho, e navegar até um
+   * documento empurra a URL com `pushState` — o que faz o botão "voltar" do
+   * navegador funcionar, que é como a pessoa sai de uma página dessas.
+   */
+  const documentoInicial = typeof window === 'undefined'
+    ? null
+    : acharDocumentoLegal(window.location.pathname);
+
+  const [view, setView] = useState<View>(documentoInicial === null ? 'home' : 'legal');
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(documentoInicial);
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [activeSubcategory, setActiveSubcategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -92,15 +109,61 @@ export default function App() {
     }
   };
 
+  /*
+   * O botão "voltar" do navegador precisa desfazer a ida ao documento legal.
+   *
+   * Sem isto, quem abrisse a política e apertasse "voltar" sairia do site
+   * inteiro — a URL mudaria de volta para "/" e a tela continuaria mostrando
+   * a política, ou o navegador deixaria a loja. Um ouvinte de `popstate`
+   * refaz a tela a partir do caminho, que passa a ser a fonte da verdade
+   * enquanto se está numa dessas páginas.
+   */
+  useEffect(() => {
+    const aoVoltar = () => {
+      const doc = acharDocumentoLegal(window.location.pathname);
+      setLegalDoc(doc);
+      setView(doc === null ? 'home' : 'legal');
+      scrollTop();
+    };
+    window.addEventListener('popstate', aoVoltar);
+    return () => window.removeEventListener('popstate', aoVoltar);
+  }, []);
+
+  const abrirDocumentoLegal = (doc: LegalDoc) => {
+    setSelectedProduct(null);
+    setLegalDoc(doc);
+    setView('legal');
+    window.history.pushState(null, '', `/${doc.slug}`);
+    scrollTop();
+  };
+
   const goHome = () => {
     setSelectedProduct(null);
     setActiveCategory('all');
     setActiveSubcategory(null);
     setView('home');
+    // Sai da URL do documento legal; nas outras telas o caminho já é "/".
+    if (window.location.pathname !== '/') window.history.pushState(null, '', '/');
+    setLegalDoc(null);
     scrollTop();
   };
 
+  /*
+   * Devolve a URL para "/" ao sair de um documento legal.
+   *
+   * Toda navegação da loja precisa chamar isto: sem ele, quem estivesse em
+   * /trocas-e-devolucoes e clicasse numa categoria veria os produtos com a
+   * barra de endereço ainda dizendo "trocas e devoluções" — e recarregar a
+   * página o jogaria de volta para a política.
+   */
+  const sairDaUrlLegal = () => {
+    if (legalDoc === null) return;
+    setLegalDoc(null);
+    window.history.pushState(null, '', '/');
+  };
+
   const selectCategory = (categoryId: string, subcategoryId?: string) => {
+    sairDaUrlLegal();
     setSelectedProduct(null);
     setActiveCategory(categoryId);
     setActiveSubcategory(subcategoryId ?? null);
@@ -110,12 +173,14 @@ export default function App() {
   };
 
   const openProducts = () => {
+    sairDaUrlLegal();
     setSelectedProduct(null);
     setView('products');
     scrollTop();
   };
 
   const openProductDetail = (product: Product) => {
+    sairDaUrlLegal();
     setSelectedProduct(product);
     setView('detail');
     scrollTop();
@@ -214,7 +279,9 @@ export default function App() {
         customerName={account?.name ?? null}
       />
 
-      {view === 'account' && account ? (
+      {view === 'legal' && legalDoc ? (
+        <LegalPage doc={legalDoc} onBack={goHome} />
+      ) : view === 'account' && account ? (
         <AccountPage
           account={account}
           onSave={setAccount}
@@ -293,6 +360,7 @@ export default function App() {
       <Footer
         onOpenStory={() => setIsStoryOpen(true)}
         onOpenCertifications={() => setIsCertificationsOpen(true)}
+        onOpenLegal={abrirDocumentoLegal}
       />
 
       <AnimatePresence>

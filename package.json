@@ -29,7 +29,7 @@
     "teste:espelhar": "node --env-file-if-exists=.env tests/espelhar-categorias.mjs",
     "teste:excluir": "node --env-file-if-exists=.env tests/excluir-produto.mjs",
     "teste:fotos": "node --env-file-if-exists=.env tests/fotos-produto.mjs",
-    "teste:e2e": "node tests/e2e/loja-e-painel.mjs && node tests/e2e/compra-completa.mjs && node tests/e2e/sincronia-painel-vitrine.mjs && node tests/e2e/usuarios-painel.mjs && node tests/e2e/teste-de-chave.mjs && node tests/e2e/fotos-painel.mjs && node tests/e2e/apagar-pedido-painel.mjs"
+    "teste:e2e": "node tests/e2e/loja-e-painel.mjs && node tests/e2e/compra-completa.mjs && node tests/e2e/sincronia-painel-vitrine.mjs && node tests/e2e/usuarios-painel.mjs && node tests/e2e/teste-de-chave.mjs && node tests/e2e/fotos-painel.mjs && node tests/e2e/apagar-pedido-painel.mjs && node tests/e2e/politicas.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

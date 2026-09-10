@@ -6,8 +6,8 @@
  *   API_URL=https://queopspiramides.com.br/api npm run gerar:sitemap
  */
 
-import { writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -32,8 +32,26 @@ try {
 
 const today = new Date().toISOString().slice(0, 10);
 
+/*
+ * Documentos legais.
+ *
+ * A lista é lida de `src/legal.ts` em vez de repetida aqui: quando a loja
+ * publicar a política de privacidade e os termos de uso, eles entram no
+ * sitemap sozinhos. Sitemap mantido à mão é sitemap que fica desatualizado.
+ *
+ * A leitura é por texto porque este script roda em Node puro, sem o
+ * compilador de TypeScript da vitrine.
+ */
+const legal = [...readFileSync(join(here, '../src/legal.ts'), 'utf8')
+  .matchAll(/slug:\s*'([^']+)'/g)].map((m) => m[1]);
+
 const urls = [
   { loc: `${SITE}/`, priority: '1.0', changefreq: 'weekly' },
+  ...legal.map((slug) => ({
+    loc: `${SITE}/${slug}`,
+    priority: '0.3',
+    changefreq: 'yearly',
+  })),
   ...catalog.menu.map((c) => ({
     loc: `${SITE}/?categoria=${encodeURIComponent(c.id)}`,
     priority: '0.7',
