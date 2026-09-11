@@ -139,8 +139,34 @@ const lixeira = linha.locator('button').last();
   ? ok('e o título explica que é preciso cancelar antes')
   : fail(`título sem explicação: ${await lixeira.getAttribute('title')}`);
 
+/*
+ * Cancelar passa pelo diálogo do motivo.
+ *
+ * Escolher "cancelado" na lista não aplica mais direto: abre a caixa que
+ * pergunta POR QUÊ, porque o ERP precisa distinguir "cliente desistiu" de
+ * "pagamento recusado" — a partir de `status = "canceled"` sozinho não há como
+ * saber qual dos dois foi.
+ */
 await linha.locator('select').selectOption('canceled');
-await page.waitForTimeout(1500);
+await page.waitForTimeout(800);
+
+const dialogoMotivo = page.locator('[role=alertdialog]');
+(await dialogoMotivo.count()) === 1
+  ? ok('cancelar pergunta o motivo antes de aplicar')
+  : fail('o cancelamento foi aplicado sem perguntar o motivo');
+
+await dialogoMotivo.locator('label:has-text("Produto sem estoque") input').check();
+await dialogoMotivo.locator('button:has-text("Cancelar pedido")').click();
+await page.waitForTimeout(1800);
+
+const motivoGravado = await page.evaluate(async (id) => {
+  const s = await (await fetch('/api/admin/state')).json();
+  const o = (s.orders ?? []).find((x) => x.id === id);
+  return { motivo: o?.cancelReason ?? null, por: o?.canceledBy ?? null, status: o?.status ?? '' };
+}, idPedido);
+motivoGravado.motivo === 'Produto sem estoque' && motivoGravado.por === 'store'
+  ? ok('o motivo e quem cancelou ficam gravados no pedido')
+  : fail(`gravado: ${JSON.stringify(motivoGravado)}`);
 
 const depoisDeCancelar = page.locator('tr', { hasText: idPedido }).first().locator('button').last();
 (await depoisDeCancelar.isEnabled())

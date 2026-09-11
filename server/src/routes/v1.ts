@@ -22,7 +22,7 @@ import {
 import { gravarProdutoDoErp } from '../erp-produtos.ts';
 import { body, bodyFloat, bodyInt, bodyStr, iso, jsonOk, queryStr } from '../http.ts';
 import { fireWebhooks } from '../providers.ts';
-import { fetchProducts, orderRowToApi, productRowToApi } from '../store.ts';
+import { fetchProducts, orderRowToApi, productRowToApi, transicaoDeStatus } from '../store.ts';
 import { h } from './helpers.ts';
 
 export const v1Routes = Router();
@@ -382,19 +382,57 @@ v1Routes.get('/orders', h(async (req, res) => {
     params.push(status);
   }
 
+  /*
+   * Dois filtros de data, e a diferença entre eles é o que salva pedido pago.
+   *
+   *   ?since=          compara com a CRIAÇÃO — "o que entrou depois de X";
+   *   ?updatedSince=   compara com a ATUALIZAÇÃO — "o que MUDOU depois de X".
+   *
+   * A varredura periódica que existe para cobrir webhook perdido precisa do
+   * segundo. Com o primeiro, um pedido criado ontem e pago hoje nunca
+   * reaparece: a criação continua sendo ontem, e a varredura de hoje não o
+   * enxerga. O pedido pago fica parado e ninguém percebe — que é o pior
+   * defeito possível numa integração de pedido.
+   *
+   * `since` continua existindo e com o mesmo significado, porque já está
+   * documentado e em uso. Quem faz varredura de segurança deve usar
+   * `updatedSince`; quem faz carga inicial, `since`.
+   */
+  const emHoraLocal = (iso8601: string): string | null => {
+    const t = Date.parse(iso8601);
+    if (!Number.isFinite(t)) return null;
+    // Convertido para a hora de São Paulo, que é o fuso da sessão MySQL.
+    return new Date(t - 3 * 3_600_000).toISOString().slice(0, 19).replace('T', ' ');
+  };
+
   const since = queryStr(req, 'since', '', 40);
   if (since !== '') {
-    const t = Date.parse(since);
-    if (Number.isFinite(t)) {
-      // Convertido para a hora de São Paulo, que é o fuso da sessão MySQL.
+    const quando = emHoraLocal(since);
+    if (quando !== null) {
       where.push('created_at >= ?');
-      params.push(new Date(t - 3 * 3_600_000).toISOString().slice(0, 19).replace('T', ' '));
+      params.push(quando);
     }
   }
 
+  const updatedSince = queryStr(req, 'updatedSince', '', 40);
+  if (updatedSince !== '') {
+    const quando = emHoraLocal(updatedSince);
+    if (quando !== null) {
+      where.push('updated_at >= ?');
+      params.push(quando);
+    }
+  }
+
+  /*
+   * Ordenado pela atualização quando é isso que se está buscando: uma
+   * varredura que pagina precisa que a ordem case com o filtro, senão o
+   * pedido que acabou de mudar pode cair fora dos 200 primeiros por ser
+   * antigo — justamente o pedido que a varredura existe para encontrar.
+   */
+  const ordem = updatedSince !== '' ? 'updated_at DESC' : 'created_at DESC';
   const orders = await q.all(
     `SELECT * FROM orders${where.length ? ' WHERE ' + where.join(' AND ') : ''}
-      ORDER BY created_at DESC LIMIT 200`,
+      ORDER BY ${ordem} LIMIT 200`,
     params,
   );
 
@@ -429,7 +467,20 @@ v1Routes.patch('/orders/:id', h(async (req, res) => {
   await requireApiKey(req);
   const status = bodyStr(body(req), 'status', '', 20);
   if (!STATUS_PEDIDO.includes(status)) fail('Status inválido.', 422, 'invalid_status');
-  if ((await q.run('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id])) === 0) {
+
+  /*
+   * Quem mudou é "erp": quem chega por aqui está usando a chave de API.
+   *
+   * A mesma função do painel grava as datas de transição, para o pedido que o
+   * ERP marcou como enviado ter `shippedAt` igual ao que a lojista teria
+   * gravado pela tela. Um dos dois caminhos esquecer a data é um pedido que a
+   * varredura seguinte não consegue explicar.
+   */
+  const t = transicaoDeStatus(status, bodyStr(body(req), 'cancelReason', '', 200), 'erp');
+  if ((await q.run(
+    `UPDATE orders SET ${t.sql} WHERE id = ?`,
+    [...t.params, req.params.id],
+  )) === 0) {
     fail('Pedido não encontrado.', 404, 'not_found');
   }
   fireWebhooks('order.status_changed', { orderId: req.params.id, status });

@@ -74,6 +74,10 @@ export async function aplicarPagamento(opts: {
   detalhe: string;
   provedor: string;
   ref?: string;
+  /** Bandeira, parcelas e valor confirmados PELO PROVEDOR — ver abaixo. */
+  bandeira?: string;
+  parcelas?: number;
+  valorPago?: number;
 }): Promise<ResultadoAplicacao> {
   const { orderId, status, detalhe, provedor, ref } = opts;
 
@@ -101,13 +105,36 @@ export async function aplicarPagamento(opts: {
     }
 
     if (status === 'aprovado') {
+      /*
+       * O que o PROVEDOR confirmou, não o que a loja pediu.
+       *
+       * Bandeira, parcelas e valor pago são gravados aqui porque só agora são
+       * fato: o cliente pode ter escolhido 3x e o emissor aprovado 1x, e o
+       * valor capturado pode diferir do cobrado. Sem isso, a conciliação
+       * financeira compara o pedido com o extrato do gateway e encontra
+       * números que nunca vão bater.
+       *
+       * `COALESCE` em todos: um segundo aviso do mesmo pagamento não pode
+       * apagar o que o primeiro trouxe.
+       */
       await tx.run(
         `UPDATE orders
             SET status = 'paid',
+                payment_status = 'paid',
                 payment_detail = ?,
-                paid_at = COALESCE(paid_at, NOW())
+                paid_at = COALESCE(paid_at, NOW()),
+                payment_brand = CASE WHEN payment_brand = '' THEN ? ELSE payment_brand END,
+                payment_installments = CASE
+                  WHEN ? > 0 THEN ? ELSE payment_installments END,
+                paid_amount = COALESCE(paid_amount, ?)
           WHERE id = ?`,
-        [detalhe.slice(0, 60), orderId],
+        [
+          detalhe.slice(0, 60),
+          String(opts.bandeira ?? '').slice(0, 30),
+          Number(opts.parcelas) || 0, Number(opts.parcelas) || 0,
+          Number(opts.valorPago) > 0 ? Number(opts.valorPago) : null,
+          orderId,
+        ],
       );
       return { mudou: true, status: 'paid' as StatusPedido, estoqueDevolvido: false };
     }
@@ -115,9 +142,27 @@ export async function aplicarPagamento(opts: {
     if (status === 'recusado') {
       // Um pedido cancelado que recebe outra recusa não devolve estoque de novo.
       const devolveu = await devolverEstoque(tx, orderId);
+      /*
+       * Recusa do gateway é um cancelamento com causa conhecida.
+       *
+       * Registrar quem cancelou e por quê separa isto de uma desistência do
+       * cliente — no ERP, as duas viram lançamentos diferentes, e a partir de
+       * `status = "canceled"` sozinho não há como distinguir.
+       */
       await tx.run(
-        "UPDATE orders SET status = 'canceled', payment_detail = ? WHERE id = ?",
-        [detalhe.slice(0, 60), orderId],
+        `UPDATE orders
+            SET status = 'canceled',
+                payment_status = 'refused',
+                payment_detail = ?,
+                canceled_at = COALESCE(canceled_at, NOW()),
+                cancel_reason = CASE WHEN cancel_reason = '' THEN ? ELSE cancel_reason END,
+                canceled_by = CASE WHEN canceled_by = '' THEN 'gateway' ELSE canceled_by END
+          WHERE id = ?`,
+        [
+          detalhe.slice(0, 60),
+          ('Pagamento recusado: ' + detalhe).slice(0, 200),
+          orderId,
+        ],
       );
       return {
         mudou: atual !== 'canceled',

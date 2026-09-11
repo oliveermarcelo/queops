@@ -432,7 +432,14 @@ function dbDir() {
 }
 __name(dbDir, "dbDir");
 function splitStatements(sql) {
-  const noComments = sql.replace(/^[ \t]*--.*$/gm, "");
+  const noComments = sql.split("\n").map((linha) => {
+    let dentroDeAspas = false;
+    for (let i = 0; i < linha.length; i++) {
+      if (linha[i] === "'") dentroDeAspas = !dentroDeAspas;
+      if (!dentroDeAspas && linha[i] === "-" && linha[i + 1] === "-") return linha.slice(0, i);
+    }
+    return linha;
+  }).join("\n");
   const statements = noComments.split(";").map((s) => s.trim()).filter((s) => s !== "");
   return { statements, noComments };
 }
@@ -514,6 +521,20 @@ var ALARGAMENTOS = [
     // de formas diferentes, e todas significam a mesma coluna a converter.
     de: /^(int|integer|smallint|mediumint|bigint)\b/i,
     para: "DECIMAL(10,3) NOT NULL DEFAULT 0"
+  },
+  {
+    /*
+     * Quantidade do item vendido: inteiro → fracionário.
+     *
+     * O estoque já aceita fração desde que a loja passou a vender por peso e
+     * por metro. A quantidade do PEDIDO ficou para trás: uma venda de 1,5 kg
+     * era truncada para 1 kg na hora de gravar, e o ERP faturava a menos sem
+     * nada acusar — a nota sairia com um número que ninguém pediu.
+     */
+    tabela: "order_items",
+    coluna: "quantity",
+    de: /^(int|integer|smallint|mediumint|bigint)\b/i,
+    para: "DECIMAL(10,3) NOT NULL DEFAULT 1"
   }
 ];
 async function widenColumns(say2) {

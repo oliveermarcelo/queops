@@ -195,6 +195,8 @@ export async function resolveCoupon(
 
 export interface QuoteItem {
   productId: string;
+  /** SKU do produto — é por ele que o ERP casa o item. */
+  sku: string;
   name: string;
   quantity: number;
   unitPrice: number;
@@ -541,9 +543,20 @@ export async function quoteCart(
   exec: Q = q,
   opcoes: OpcoesCotacao = {},
 ): Promise<Quote> {
-  // Sem UF informada (ex.: simulador da página do produto), deduz pelo CEP.
-  let uf = String(ufIn ?? '').trim().toUpperCase();
-  if (uf === '') uf = ufFromCep(cep);
+  /*
+   * O CEP MANDA na UF, não o que veio da tela.
+   *
+   * Antes a UF informada vencia, e o CEP só era consultado quando ela vinha
+   * vazia. Como o checkout tinha uma lista de estados com "SP" pré-selecionado,
+   * quem digitava um CEP da Bahia e não trocava o estado cotava frete de São
+   * Paulo e gravava o pedido como SP — e a nota fiscal saía com destino e ICMS
+   * errados, sem que o ERP tivesse como desconfiar.
+   *
+   * A UF digitada só vale quando o CEP não cai em nenhuma faixa conhecida: aí
+   * o que a pessoa afirmou é a melhor informação disponível.
+   */
+  const ufDoCep = ufFromCep(cep);
+  const uf = ufDoCep !== '' ? ufDoCep : String(ufIn ?? '').trim().toUpperCase();
 
   // ---- 1. Resolve os itens contra o banco (preço e estoque reais) ----------
   const wanted = new Map<string, number>();
@@ -597,6 +610,14 @@ export async function quoteCart(
     subtotal += unit * qty;
     items.push({
       productId: String(p.id),
+      /*
+       * SKU do produto, para ser gravado no item do pedido.
+       *
+       * O ERP casa produto por SKU. Hoje ele é igual ao id porque todo produto
+       * nasce lá, mas isso é convenção e não contrato — quando um produto
+       * nascer no painel da loja, o id deixa de ser um código de produto.
+       */
+      sku: String(p.sku ?? ''),
       name: String(p.name),
       quantity: qty,
       unitPrice: unit,

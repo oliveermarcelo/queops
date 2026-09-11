@@ -282,21 +282,88 @@ CREATE TABLE IF NOT EXISTS orders (
   tracking_at     DATETIME      NULL,
   created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  -- -------------------------------------------------------------------
+  -- Campos que o ERP precisa para faturar, e que o pedido não guardava.
+  --
+  -- DATAS DE TRANSIÇÃO. `paid_at` já existia; faltavam as outras três. Sem
+  -- elas, e sem `updated_at` no filtro, a varredura periódica do ERP só
+  -- enxerga pedido NOVO: um pedido criado ontem e pago hoje, cujo webhook
+  -- falhou, fica parado para sempre — o pior defeito possível aqui.
+  --
+  -- EIXOS SEPARADOS. `status` sozinho colapsa pagamento e logística: quando
+  -- o pedido avança para "shipped", a informação "foi pago" some do campo e
+  -- não há como reconstruí-la. E "canceled" não distingue pagamento recusado
+  -- de desistência do cliente, que geram lançamentos diferentes no ERP.
+  -- `status` continua existindo e mandando; estes são a leitura por eixo.
+  --
+  -- FRETE EM PARTES. O ERP acha a transportadora pelo nome; recebendo
+  -- "PAC — até 7 dias úteis" ele nunca casa e joga tudo na transportadora
+  -- padrão. E `shipping_cost_owner` separa o que a loja PAGA do que ela
+  -- COBRA: iguais hoje, mas se a loja subsidiar frete a margem sai errada.
+  -- -------------------------------------------------------------------
+  shipped_at      DATETIME      NULL,
+  delivered_at    DATETIME      NULL,
+  canceled_at     DATETIME      NULL,
+  payment_status  VARCHAR(20)   NOT NULL DEFAULT 'pending',  -- pending|paid|refused|refunded
+  fulfillment_status VARCHAR(20) NOT NULL DEFAULT 'unpacked', -- unpacked|shipped|delivered
+  cancel_reason   VARCHAR(200)  NOT NULL DEFAULT '',
+  canceled_by     VARCHAR(20)   NOT NULL DEFAULT '',         -- customer|store|gateway|erp
+  payment_brand   VARCHAR(30)   NOT NULL DEFAULT '',         -- visa, master… (cartão)
+  payment_installments INT      NOT NULL DEFAULT 0,
+  paid_amount     DECIMAL(10,2) NULL,
+  shipping_carrier VARCHAR(80)  NOT NULL DEFAULT '',
+  shipping_service_code VARCHAR(40) NOT NULL DEFAULT '',
+  shipping_service_name VARCHAR(80) NOT NULL DEFAULT '',
+  shipping_min_days INT         NOT NULL DEFAULT 0,
+  shipping_max_days INT         NOT NULL DEFAULT 0,
+  shipping_cost_owner DECIMAL(10,2) NULL,
+  tracking_url    VARCHAR(300)  NOT NULL DEFAULT '',
+  -- Desconto repartido por origem: o ERP não sabe separar cupom de Pix a
+  -- partir de um número só, e os dois viram lançamentos diferentes.
+  discount_coupon DECIMAL(10,2) NOT NULL DEFAULT 0,
+  discount_payment DECIMAL(10,2) NOT NULL DEFAULT 0,
+  customer_note   VARCHAR(500)  NOT NULL DEFAULT '',
+  -- Entrega para terceiro, e o país que o ERP hoje chuta como "BRASIL".
+  ship_recipient  VARCHAR(160)  NOT NULL DEFAULT '',
+  ship_phone      VARCHAR(30)   NOT NULL DEFAULT '',
+  ship_country    CHAR(2)       NOT NULL DEFAULT 'BR',
+  currency        CHAR(3)       NOT NULL DEFAULT 'BRL',
   PRIMARY KEY (id),
   KEY idx_order_customer (customer_id),
   KEY idx_order_created (created_at),
   KEY idx_order_status (status),
   KEY idx_order_email (customer_email),
+  -- O filtro da varredura do ERP (?updatedSince=) percorre esta coluna.
+  KEY idx_order_updated (updated_at),
   UNIQUE KEY uq_order_payment_ref (payment_ref)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------------------------------------------------------------------
+-- Itens do pedido.
+--
+-- `sku` é gravado explicitamente, e não deduzido do `product_id`. O ERP casa
+-- produto POR SKU; hoje os dois coincidem porque todo produto nasce no ERP,
+-- mas isso é convenção, não contrato — no dia em que alguém cadastrar um
+-- produto pelo painel da loja, o id deixa de ser um código de produto e a
+-- amarração quebraria em silêncio, item a item.
+--
+-- `quantity` é DECIMAL porque o estoque já é: a loja vende por peso e por
+-- metro, e uma quantidade inteira truncaria 1,5 kg para 1 kg na hora de
+-- faturar.
+--
+-- `total_price` é gravado, e não só calculado na leitura, para o ERP ter
+-- contra o que conferir o arredondamento do subtotal.
+-- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS order_items (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   order_id   VARCHAR(24)   NOT NULL,
   product_id VARCHAR(100)  NOT NULL,
+  sku        VARCHAR(100)  NOT NULL DEFAULT '',
   name       VARCHAR(255)  NOT NULL,
-  quantity   INT           NOT NULL DEFAULT 1,
+  quantity   DECIMAL(10,3) NOT NULL DEFAULT 1,
   unit_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+  discount   DECIMAL(10,2) NOT NULL DEFAULT 0,
+  total_price DECIMAL(10,2) NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   KEY idx_item_order (order_id),
   CONSTRAINT fk_item_order FOREIGN KEY (order_id)

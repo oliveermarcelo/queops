@@ -28,7 +28,7 @@ import {
   configGet, configMerge, configSet, DEFAULT_RECOVERY, DEFAULT_SETTINGS, DEFAULT_SHIPPING,
   fetchIntegrations, fetchOrders, fetchProducts, galeriasDe, getRecovery, getSettings, getShipping,
   integrationSecrets, integrationToApi, INTEGRATION_IDS, INTEGRATION_SECRET_FIELDS,
-  productRowToApi,
+  productRowToApi, transicaoDeStatus,
 } from '../store.ts';
 import {
   emailValido, motivoParaNaoDesativar, nomeValido, normalizarEmail, problemaNaSenha,
@@ -447,9 +447,21 @@ adminRoutes.patch('/orders/:id', h(async (req, res) => {
   await requireAdmin(req);
   const status = bodyStr(body(req), 'status', '', 20);
   if (!STATUS_PEDIDO.includes(status)) fail('Status inválido.', 422, 'invalid_status');
-  if ((await q.run('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id])) === 0) {
-    fail('Pedido não encontrado.', 404, 'not_found');
-  }
+
+  /*
+   * Quem cancelou é "store": foi alguém clicando no painel.
+   *
+   * O motivo é perguntado na tela. No ERP, "cliente desistiu" e "pagamento
+   * recusado" viram lançamentos diferentes, e a partir de `status =
+   * "canceled"` sozinho não há como saber qual dos dois aconteceu.
+   */
+  const t = transicaoDeStatus(status, bodyStr(body(req), 'cancelReason', '', 200), 'store');
+  const mudou = await q.run(
+    `UPDATE orders SET ${t.sql} WHERE id = ?`,
+    [...t.params, req.params.id],
+  );
+  if (mudou === 0) fail('Pedido não encontrado.', 404, 'not_found');
+
   fireWebhooks('order.status_changed', { orderId: req.params.id, status });
   jsonOk(res, { ok: true });
 }));

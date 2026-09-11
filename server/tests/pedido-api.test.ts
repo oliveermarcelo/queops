@@ -55,6 +55,21 @@ test('o pedido leva o endereço de entrega completo', () => {
     neighborhood: 'Centro',
     city: 'Jacobina',
     state: 'BA',
+    /*
+     * Campos pedidos pelo integrador do ERP.
+     *
+     * `recipientName` e `phone` caem para os do comprador quando ninguém
+     * informou um destinatário diferente — repetir o dado é melhor do que o
+     * ERP ter de adivinhar de onde tirar quem recebe numa entrega para
+     * terceiro. `country` existia só na cabeça de quem lia o CEP. E
+     * `cityIbgeCode` é null de propósito: a loja não coleta, e um código
+     * deduzido por nome + UF apenas moveria o erro de homônimo para dentro da
+     * nota fiscal.
+     */
+    recipientName: 'Maria Oliveira',
+    phone: '(11) 98888-7777',
+    country: 'BR',
+    cityIbgeCode: null,
   });
 });
 

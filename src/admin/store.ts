@@ -52,8 +52,19 @@ export function uploadImagem(dataUrl: string): Promise<{ url: string; bytes: num
 
 // -------------------------------------------------------------- pedidos ----
 
-export function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
-  return api.patch(`/admin/orders/${encodeURIComponent(id)}`, { status });
+/**
+ * Muda o status. Ao cancelar, `cancelReason` diz POR QUÊ.
+ *
+ * O motivo não é enfeite: no ERP, "cliente desistiu" e "pagamento recusado"
+ * viram lançamentos diferentes, e a partir de `status = "canceled"` sozinho não
+ * há como saber qual dos dois aconteceu.
+ */
+export function setOrderStatus(
+  id: string,
+  status: OrderStatus,
+  cancelReason = '',
+): Promise<void> {
+  return api.patch(`/admin/orders/${encodeURIComponent(id)}`, { status, cancelReason });
 }
 
 /**

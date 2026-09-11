@@ -805,6 +805,8 @@ __export(store_exports, {
   configGet: () => configGet,
   configMerge: () => configMerge,
   configSet: () => configSet,
+  documentoDoCliente: () => documentoDoCliente,
+  eixosDoPedido: () => eixosDoPedido,
   fetchIntegrations: () => fetchIntegrations,
   fetchOrders: () => fetchOrders,
   fetchProducts: () => fetchProducts,
@@ -816,7 +818,8 @@ __export(store_exports, {
   integrationToApi: () => integrationToApi,
   orderRowToApi: () => orderRowToApi,
   productRowToApi: () => productRowToApi,
-  publicSettings: () => publicSettings
+  publicSettings: () => publicSettings,
+  transicaoDeStatus: () => transicaoDeStatus
 });
 function isPlainObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -945,6 +948,48 @@ async function fetchProducts(opcoes = {}) {
   const galerias = await galeriasDe(linhas.map((r) => String(r.id)), exec);
   return linhas.map((r) => productRowToApi(r, codigos, galerias.get(String(r.id))));
 }
+function documentoDoCliente(bruto) {
+  const digitos = String(bruto ?? "").replace(/\D/g, "");
+  if (digitos.length === 11) return { customerDocument: digitos, customerDocumentType: "cpf" };
+  if (digitos.length === 14) return { customerDocument: digitos, customerDocumentType: "cnpj" };
+  return { customerDocument: null, customerDocumentType: null };
+}
+function eixosDoPedido(r) {
+  const status = String(r.status ?? "pending");
+  const pago = r.paid_at !== null && r.paid_at !== void 0;
+  const gravadoPagamento = String(r.payment_status ?? "");
+  const paymentStatus = gravadoPagamento !== "" && gravadoPagamento !== "pending" ? gravadoPagamento : pago || ["paid", "shipped", "delivered"].includes(status) ? "paid" : "pending";
+  const gravadoEntrega = String(r.fulfillment_status ?? "");
+  const fulfillmentStatus = gravadoEntrega !== "" && gravadoEntrega !== "unpacked" ? gravadoEntrega : status === "delivered" ? "delivered" : status === "shipped" ? "shipped" : "unpacked";
+  return { paymentStatus, fulfillmentStatus };
+}
+function transicaoDeStatus(status, motivo, quem) {
+  const campos = ["status = ?", "updated_at = NOW()"];
+  const params = [status];
+  if (status === "paid") {
+    campos.push("payment_status = 'paid'", "paid_at = COALESCE(paid_at, NOW())");
+  }
+  if (status === "shipped") {
+    campos.push("fulfillment_status = 'shipped'", "shipped_at = COALESCE(shipped_at, NOW())");
+  }
+  if (status === "delivered") {
+    campos.push(
+      "fulfillment_status = 'delivered'",
+      "delivered_at = COALESCE(delivered_at, NOW())"
+    );
+  }
+  if (status === "canceled") {
+    campos.push("canceled_at = COALESCE(canceled_at, NOW())");
+    if (motivo.trim() !== "") {
+      campos.push("cancel_reason = ?", "canceled_by = ?");
+      params.push(motivo.trim().slice(0, 200), quem);
+    } else {
+      campos.push("canceled_by = CASE WHEN canceled_by = '' THEN ? ELSE canceled_by END");
+      params.push(quem);
+    }
+  }
+  return { sql: campos.join(", "), params };
+}
 function orderRowToApi(r, items) {
   return {
     id: r.id,
@@ -962,12 +1007,49 @@ function orderRowToApi(r, items) {
      * e o corpo destas respostas não deve ir para log.
      */
     customerCpf: String(r.customer_cpf ?? ""),
-    items: items.map((i) => ({
-      productId: i.product_id,
-      name: i.name,
-      quantity: Number(i.quantity) || 0,
-      unitPrice: Number(i.unit_price) || 0
-    })),
+    /*
+     * O documento sem máscara, e o tipo dele.
+     *
+     * `customerCpf` sai como o comprador digitou — com pontos e traço — e
+     * continua existindo porque já é consumido. Mas número formatado não é
+     * número: o ERP precisava limpar a string antes de faturar, e uma máscara
+     * diferente (ou nenhuma) quebrava a limpeza. `customerDocument` é só
+     * dígito, e `customerDocumentType` diz o que aqueles dígitos são — 11 e
+     * 14 dígitos vão para lugares diferentes na NF-e.
+     */
+    ...documentoDoCliente(r.customer_cpf),
+    /** Id do cliente na loja — a amarração pedido → cliente. Null se convidado. */
+    customerId: r.customer_id === null || r.customer_id === void 0 ? null : String(r.customer_id),
+    /** Observação escrita pelo comprador ("entregar após as 18h"). */
+    customerNote: vazioOuNulo(r.customer_note),
+    items: items.map((i) => {
+      const quantidade = Number(i.quantity) || 0;
+      const unitario = Number(i.unit_price) || 0;
+      const descontoItem = Number(i.discount) || 0;
+      return {
+        productId: i.product_id,
+        /*
+         * SKU explícito. Hoje é igual ao productId porque todo produto nasce
+         * no ERP, mas isso é convenção e não contrato: o ERP casa produto por
+         * SKU, e no dia em que um produto nascer no painel da loja o id deixa
+         * de ser um código de produto.
+         */
+        sku: String(i.sku ?? "") || String(i.product_id ?? ""),
+        name: i.name,
+        quantity: quantidade,
+        unitPrice: unitario,
+        discount: descontoItem,
+        /*
+         * Total da linha já gravado.
+         *
+         * Serve para o ERP conferir o arredondamento contra o subtotal. Os
+         * pedidos antigos não têm a coluna preenchida; nesses, recalcula, que
+         * é o mesmo número — o valor gravado só passa a divergir se algum dia
+         * existir desconto por item, e é justamente aí que ele importa.
+         */
+        totalPrice: Number(i.total_price) > 0 ? Number(i.total_price) : round2(quantidade * unitario - descontoItem)
+      };
+    }),
     subtotal: Number(r.subtotal) || 0,
     shipping: Number(r.shipping_cost) || 0,
     discount: Number(r.discount) || 0,
@@ -993,14 +1075,71 @@ function orderRowToApi(r, items) {
       complement: String(r.ship_complement ?? ""),
       neighborhood: String(r.ship_neighborhood ?? ""),
       city: String(r.ship_city ?? ""),
-      state: String(r.ship_state ?? "")
+      state: String(r.ship_state ?? ""),
+      /*
+       * Quem recebe, e em que telefone. Vazio cai para o comprador: é o caso
+       * normal, e repetir o dado é melhor do que o ERP ter de adivinhar de
+       * onde tirar o destinatário numa entrega para terceiro.
+       */
+      recipientName: vazioOuNulo(r.ship_recipient) ?? String(r.customer_name ?? ""),
+      phone: vazioOuNulo(r.ship_phone) ?? vazioOuNulo(r.customer_phone),
+      /** O país que o ERP hoje precisa chutar como "BRASIL". */
+      country: String(r.ship_country ?? "BR") || "BR",
+      /*
+       * Código IBGE do município: null porque a loja NÃO o coleta.
+       *
+       * O campo existe no contrato para o ERP não precisar mudar quando ele
+       * passar a vir. Mandar um código deduzido por nome + UF seria pior do
+       * que não mandar: o ERP já resolve o município assim, e um palpite
+       * nosso apenas moveria o erro de homônimo para dentro da NF-e.
+       */
+      cityIbgeCode: null
     },
-    /** "Jadlog · .Package — até 5 dias úteis": o que o cliente escolheu pagar. */
+    /*
+     * Endereço de cobrança: null quando é o mesmo da entrega.
+     *
+     * A loja é B2C e não coleta endereço de cobrança separado — o cartão é
+     * processado pelo Mercado Pago, que guarda o dele. Null diz exatamente
+     * isso, e o ERP pode clonar o de entrega com segurança; um objeto
+     * repetido faria o ERP marcar indEnderecoUnico = "0" e montar três
+     * endereços iguais para um pedido que tem um só.
+     */
+    billingAddress: null,
+    /**
+     * "Jadlog · .Package — até 5 dias úteis": o que o cliente escolheu pagar.
+     *
+     * Mantido porque é o texto que a lojista lê. Para o ERP, use os campos
+     * separados abaixo: casar transportadora por esta string nunca funciona,
+     * e o pedido acaba sempre na transportadora padrão do sistema.
+     */
     shippingService: String(r.shipping_service ?? ""),
+    /** Transportadora, limpa: "Correios", "Jadlog". É por aqui que o ERP casa. */
+    shippingCarrier: vazioOuNulo(r.shipping_carrier),
+    /** Código do serviço: "PAC", "SEDEX", ".Package". */
+    shippingServiceCode: vazioOuNulo(r.shipping_service_code),
+    shippingServiceName: vazioOuNulo(r.shipping_service_name),
+    shippingMinDays: Number(r.shipping_min_days) || 0,
+    shippingMaxDays: Number(r.shipping_max_days) || 0,
+    /*
+     * Custo do frete PARA A LOJA, separado do que foi cobrado do cliente.
+     *
+     * Hoje os dois são iguais e é isso que sai. Null significa "a loja não
+     * apurou", e não "zero": se algum dia a loja subsidiar frete — frete
+     * grátis acima de um valor já é um subsídio —, a margem do pedido no ERP
+     * sairia errada sem este campo.
+     */
+    shippingCostOwner: r.shipping_cost_owner === null || r.shipping_cost_owner === void 0 ? Number(r.shipping_cost) || 0 : Number(r.shipping_cost_owner),
     /** Previsão de entrega calculada na compra (AAAA-MM-DD), ou null. */
     deliveryEta: r.delivery_eta ? String(r.delivery_eta).slice(0, 10) : null,
-    trackingCode: String(r.tracking_code ?? ""),
-    trackingStatus: String(r.tracking_status ?? ""),
+    /*
+     * Rastreio: `null` quando não existe, e não `""`.
+     *
+     * Mudança de contrato anunciada ao integrador: antes vinha string vazia, o
+     * que obriga quem lê a testar "está em branco?" em vez de "existe?".
+     */
+    trackingCode: vazioOuNulo(r.tracking_code),
+    trackingStatus: vazioOuNulo(r.tracking_status),
+    trackingUrl: vazioOuNulo(r.tracking_url) ?? urlDeRastreio(r.tracking_code),
     /*
      * Quando o dinheiro entrou, ou null.
      *
@@ -1010,6 +1149,66 @@ function orderRowToApi(r, items) {
      * API v1 — o ERP precisa da data do pagamento para a nota.
      */
     paidAt: r.paid_at ? iso(r.paid_at) : null,
+    /*
+     * As demais datas de transição, e a de atualização.
+     *
+     * Sem `updatedAt`, a varredura periódica do ERP — que o manual descreve
+     * como o recurso obrigatório para quando o webhook falha — só enxergava
+     * pedido NOVO, porque o filtro comparava com a data de CRIAÇÃO. Um pedido
+     * feito ontem e pago hoje, cujo aviso se perdeu, ficava parado sem ninguém
+     * notar. É o pior defeito possível numa integração de pedido, e ele estava
+     * lá.
+     */
+    updatedAt: iso(r.updated_at ?? r.created_at),
+    shippedAt: r.shipped_at ? iso(r.shipped_at) : null,
+    deliveredAt: r.delivered_at ? iso(r.delivered_at) : null,
+    canceledAt: r.canceled_at ? iso(r.canceled_at) : null,
+    /*
+     * Os dois eixos, ao lado do `status` de sempre.
+     *
+     * `status` continua sendo a esteira que a lojista vê e edita. Estes dizem
+     * o que ela não consegue dizer: um pedido "shipped" não informa mais se
+     * foi pago, e "canceled" não distingue pagamento recusado de desistência
+     * — coisas que geram lançamentos diferentes no ERP.
+     */
+    ...eixosDoPedido(r),
+    cancelReason: vazioOuNulo(r.cancel_reason),
+    canceledBy: vazioOuNulo(r.canceled_by),
+    /*
+     * Detalhe do pagamento.
+     *
+     * Antes saía só `payment: "pix"`. Faltava tudo o que a conciliação
+     * financeira precisa: quanto entrou de fato, em quantas parcelas, por
+     * qual adquirente e com que id — sem o id não há como cruzar o pedido com
+     * o extrato do gateway.
+     */
+    paymentDetails: {
+      method: String(r.payment ?? ""),
+      brand: vazioOuNulo(r.payment_brand),
+      installments: Number(r.payment_installments) || (String(r.payment) === "pix" ? 1 : 0),
+      /*
+       * Quanto o gateway confirmou. Null enquanto não houve confirmação —
+       * "0,00 pago" e "ainda não pagou" são coisas diferentes, e a segunda
+       * não pode virar a primeira.
+       */
+      paidAmount: r.paid_amount === null || r.paid_amount === void 0 ? r.paid_at ? Number(r.total) || 0 : null : Number(r.paid_amount),
+      gateway: vazioOuNulo(r.payment_provider),
+      transactionId: vazioOuNulo(r.payment_ref),
+      paidAt: r.paid_at ? iso(r.paid_at) : null,
+      /** Motivo da recusa, em português, quando houve. */
+      detail: vazioOuNulo(r.payment_detail)
+    },
+    /*
+     * Desconto repartido pela origem.
+     *
+     * `discount` continua sendo o total. Cupom e desconto de meio de pagamento
+     * viram lançamentos diferentes no ERP, e a partir de um número só não há
+     * como separá-los.
+     */
+    discountCoupon: Number(r.discount_coupon) || 0,
+    discountPayment: Number(r.discount_payment) || 0,
+    /** Moeda do pedido. Fixa hoje; existe para o dia em que não for. */
+    currency: String(r.currency ?? "BRL") || "BRL",
     /*
      * Existe cobrança gerada que ainda pode ser paga.
      *
@@ -1077,7 +1276,7 @@ async function integrationSecrets(id, exec = q) {
   const row = await exec.one("SELECT fields_enc FROM integrations WHERE id = ?", [id]);
   return row ? decryptPayload(row.fields_enc) : {};
 }
-var DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_RECOVERY, INTEGRATION_IDS, INTEGRATION_SECRET_FIELDS, getSettings, getShipping, getRecovery;
+var DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_RECOVERY, INTEGRATION_IDS, INTEGRATION_SECRET_FIELDS, getSettings, getShipping, getRecovery, vazioOuNulo, urlDeRastreio;
 var init_store = __esm({
   "server/src/store.ts"() {
     "use strict";
@@ -1159,6 +1358,17 @@ var init_store = __esm({
     __name(productRowToApi, "productRowToApi");
     __name(galeriasDe, "galeriasDe");
     __name(fetchProducts, "fetchProducts");
+    vazioOuNulo = /* @__PURE__ */ __name((v) => {
+      const s = String(v ?? "").trim();
+      return s === "" ? null : s;
+    }, "vazioOuNulo");
+    urlDeRastreio = /* @__PURE__ */ __name((codigo) => {
+      const c = String(codigo ?? "").trim().toUpperCase();
+      return /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(c) ? `https://rastreamento.correios.com.br/app/index.php?objetos=${c}` : null;
+    }, "urlDeRastreio");
+    __name(documentoDoCliente, "documentoDoCliente");
+    __name(eixosDoPedido, "eixosDoPedido");
+    __name(transicaoDeStatus, "transicaoDeStatus");
     __name(orderRowToApi, "orderRowToApi");
     __name(fetchOrders, "fetchOrders");
     __name(integrationToApi, "integrationToApi");
@@ -1992,7 +2202,14 @@ function dbDir() {
   );
 }
 function splitStatements(sql) {
-  const noComments = sql.replace(/^[ \t]*--.*$/gm, "");
+  const noComments = sql.split("\n").map((linha) => {
+    let dentroDeAspas = false;
+    for (let i = 0; i < linha.length; i++) {
+      if (linha[i] === "'") dentroDeAspas = !dentroDeAspas;
+      if (!dentroDeAspas && linha[i] === "-" && linha[i + 1] === "-") return linha.slice(0, i);
+    }
+    return linha;
+  }).join("\n");
   const statements = noComments.split(";").map((s) => s.trim()).filter((s) => s !== "");
   return { statements, noComments };
 }
@@ -2138,6 +2355,20 @@ var init_schema = __esm({
         // de formas diferentes, e todas significam a mesma coluna a converter.
         de: /^(int|integer|smallint|mediumint|bigint)\b/i,
         para: "DECIMAL(10,3) NOT NULL DEFAULT 0"
+      },
+      {
+        /*
+         * Quantidade do item vendido: inteiro → fracionário.
+         *
+         * O estoque já aceita fração desde que a loja passou a vender por peso e
+         * por metro. A quantidade do PEDIDO ficou para trás: uma venda de 1,5 kg
+         * era truncada para 1 kg na hora de gravar, e o ERP faturava a menos sem
+         * nada acusar — a nota sairia com um número que ninguém pediu.
+         */
+        tabela: "order_items",
+        coluna: "quantity",
+        de: /^(int|integer|smallint|mediumint|bigint)\b/i,
+        para: "DECIMAL(10,3) NOT NULL DEFAULT 1"
       }
     ];
     __name(widenColumns, "widenColumns");
@@ -2933,8 +3164,8 @@ function pesoEmGramas(texto, padrao = 500) {
 }
 __name(pesoEmGramas, "pesoEmGramas");
 async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opcoes = {}) {
-  let uf = String(ufIn ?? "").trim().toUpperCase();
-  if (uf === "") uf = ufFromCep(cep);
+  const ufDoCep = ufFromCep(cep);
+  const uf = ufDoCep !== "" ? ufDoCep : String(ufIn ?? "").trim().toUpperCase();
   const wanted = /* @__PURE__ */ new Map();
   for (const item of Array.isArray(rawItems) ? rawItems : []) {
     if (item === null || typeof item !== "object") continue;
@@ -2990,6 +3221,14 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opc
     subtotal += unit * qty;
     items.push({
       productId: String(p.id),
+      /*
+       * SKU do produto, para ser gravado no item do pedido.
+       *
+       * O ERP casa produto por SKU. Hoje ele é igual ao id porque todo produto
+       * nasce lá, mas isso é convenção e não contrato — quando um produto
+       * nascer no painel da loja, o id deixa de ser um código de produto.
+       */
+      sku: String(p.sku ?? ""),
       name: String(p.name),
       quantity: qty,
       unitPrice: unit,
@@ -3698,9 +3937,12 @@ adminRoutes.patch("/orders/:id", h(async (req, res) => {
   await requireAdmin(req);
   const status = bodyStr(body(req), "status", "", 20);
   if (!STATUS_PEDIDO.includes(status)) fail("Status inv\xE1lido.", 422, "invalid_status");
-  if (await q.run("UPDATE orders SET status = ? WHERE id = ?", [status, req.params.id]) === 0) {
-    fail("Pedido n\xE3o encontrado.", 404, "not_found");
-  }
+  const t = transicaoDeStatus(status, bodyStr(body(req), "cancelReason", "", 200), "store");
+  const mudou = await q.run(
+    `UPDATE orders SET ${t.sql} WHERE id = ?`,
+    [...t.params, req.params.id]
+  );
+  if (mudou === 0) fail("Pedido n\xE3o encontrado.", 404, "not_found");
   fireWebhooks("order.status_changed", { orderId: req.params.id, status });
   jsonOk(res, { ok: true });
 }));
@@ -4255,10 +4497,14 @@ async function consultarPedido(ref, cred) {
     const pago = primeiroPagamento(resposta);
     const status = String(pago?.status ?? resposta?.status ?? "");
     const detalhe = String(pago?.status_detail ?? resposta?.status_detail ?? "");
+    const metodo = pago?.payment_method ?? {};
     return {
       status: traduzirStatus(status, detalhe),
       detalhe: detalhe || status,
-      orderId: String(resposta?.external_reference ?? "")
+      orderId: String(resposta?.external_reference ?? ""),
+      bandeira: String(metodo.id ?? metodo.type ?? "").toLowerCase(),
+      parcelas: Number(metodo.installments ?? pago?.installments ?? 0) || 0,
+      valorPago: Number(pago?.amount ?? resposta?.total_paid_amount ?? 0) || 0
     };
   } catch (e) {
     const err = e;
@@ -4313,18 +4559,41 @@ async function aplicarPagamento(opts) {
       await tx.run(
         `UPDATE orders
             SET status = 'paid',
+                payment_status = 'paid',
                 payment_detail = ?,
-                paid_at = COALESCE(paid_at, NOW())
+                paid_at = COALESCE(paid_at, NOW()),
+                payment_brand = CASE WHEN payment_brand = '' THEN ? ELSE payment_brand END,
+                payment_installments = CASE
+                  WHEN ? > 0 THEN ? ELSE payment_installments END,
+                paid_amount = COALESCE(paid_amount, ?)
           WHERE id = ?`,
-        [detalhe.slice(0, 60), orderId]
+        [
+          detalhe.slice(0, 60),
+          String(opts.bandeira ?? "").slice(0, 30),
+          Number(opts.parcelas) || 0,
+          Number(opts.parcelas) || 0,
+          Number(opts.valorPago) > 0 ? Number(opts.valorPago) : null,
+          orderId
+        ]
       );
       return { mudou: true, status: "paid", estoqueDevolvido: false };
     }
     if (status === "recusado") {
       const devolveu = await devolverEstoque(tx, orderId);
       await tx.run(
-        "UPDATE orders SET status = 'canceled', payment_detail = ? WHERE id = ?",
-        [detalhe.slice(0, 60), orderId]
+        `UPDATE orders
+            SET status = 'canceled',
+                payment_status = 'refused',
+                payment_detail = ?,
+                canceled_at = COALESCE(canceled_at, NOW()),
+                cancel_reason = CASE WHEN cancel_reason = '' THEN ? ELSE cancel_reason END,
+                canceled_by = CASE WHEN canceled_by = '' THEN 'gateway' ELSE canceled_by END
+          WHERE id = ?`,
+        [
+          detalhe.slice(0, 60),
+          ("Pagamento recusado: " + detalhe).slice(0, 200),
+          orderId
+        ]
       );
       return {
         mudou: atual !== "canceled",
@@ -4450,8 +4719,15 @@ publicRoutes.post("/orders", h(async (req, res) => {
   }
   const endereco = b.address !== null && typeof b.address === "object" && !Array.isArray(b.address) ? b.address : {};
   const cep = bodyStr(endereco, "cep", "", 12);
-  const uf = bodyStr(endereco, "state", "SP", 2).toUpperCase();
   if (normalizeCep(cep) === "") fail("Informe um CEP v\xE1lido com 8 d\xEDgitos.", 422, "invalid_cep");
+  const ufDigitada = bodyStr(endereco, "state", "", 2).toUpperCase();
+  const ufDoCep = ufFromCep(cep);
+  const uf = ufDoCep !== "" ? ufDoCep : ufDigitada || "SP";
+  if (ufDoCep !== "" && ufDigitada !== "" && ufDigitada !== ufDoCep) {
+    console.warn(
+      `[queops] UF corrigida pelo CEP no pedido: ${cep} \xE9 ${ufDoCep}, veio ${ufDigitada}`
+    );
+  }
   if (bodyStr(endereco, "street") === "" || bodyStr(endereco, "number") === "" || bodyStr(endereco, "city") === "") {
     fail("Preencha rua, n\xFAmero e cidade.", 422, "invalid_address");
   }
@@ -4531,13 +4807,21 @@ publicRoutes.post("/orders", h(async (req, res) => {
         }
       }
       const id = "QP-" + String(await nextCounter(tx, "order")).padStart(6, "0");
+      const opcao = (quote2.shippingOptions ?? []).find((o) => o.id === (quote2.shippingChoice ?? ""));
+      const transportadora = opcao?.carrier ?? "";
+      const codigoServico = (opcao?.id ?? "").split(":")[1] ?? "";
       await tx.run(
         `INSERT INTO orders (
             id, customer_id, customer_name, customer_email, customer_phone, customer_cpf,
             subtotal, shipping_cost, discount, total, coupon_code, status, payment, channel,
             ship_cep, ship_street, ship_number, ship_complement, ship_neighborhood, ship_city, ship_state,
-            delivery_eta, shipping_service
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            delivery_eta, shipping_service,
+            shipping_carrier, shipping_service_code, shipping_service_name,
+            shipping_min_days, shipping_max_days, shipping_cost_owner,
+            discount_coupon, discount_payment, customer_note,
+            ship_recipient, ship_phone, ship_country, currency,
+            payment_installments, payment_status, fulfillment_status
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           customerId,
@@ -4563,13 +4847,60 @@ publicRoutes.post("/orders", h(async (req, res) => {
           dateSP(etaDays),
           // Por onde a encomenda vai: sem isto, a lojista tem o valor do frete
           // e nenhuma pista de qual transportadora o cliente escolheu.
-          quote2.shippingLabel.slice(0, 120)
+          quote2.shippingLabel.slice(0, 120),
+          transportadora.slice(0, 80),
+          codigoServico.slice(0, 40),
+          (opcao?.label ?? "").slice(0, 80),
+          // Prazo mínimo e máximo: a cotação dá um número só, que é o teto.
+          opcao?.days ?? etaDays,
+          opcao?.days ?? etaDays,
+          /*
+           * Custo do frete para a loja. Hoje é o mesmo que o cliente pagou —
+           * a loja não subsidia. Gravado separado porque no dia em que
+           * subsidiar (frete grátis acima de um valor já é um caso), a margem
+           * do pedido no ERP sairia errada se os dois números fossem um só.
+           */
+          quote2.shipping,
+          quote2.couponDiscount,
+          quote2.pixDiscount,
+          bodyStr(b, "note", "", 500),
+          // Entrega para terceiro: o checkout ainda não pergunta, então fica
+          // o próprio comprador — o contrato já existe para quando perguntar.
+          "",
+          phone.slice(0, 30),
+          "BR",
+          "BRL",
+          payment === "card" ? parcelas : 1,
+          "pending",
+          "unpacked"
         ]
       );
       for (const it of quote2.items) {
         await tx.run(
-          "INSERT INTO order_items (order_id, product_id, name, quantity, unit_price) VALUES (?,?,?,?,?)",
-          [id, it.productId, it.name, it.quantity, it.unitPrice]
+          `INSERT INTO order_items
+             (order_id, product_id, sku, name, quantity, unit_price, discount, total_price)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [
+            id,
+            it.productId,
+            /*
+             * O SKU do produto, gravado no momento da venda.
+             *
+             * Vem da coluna `sku` do produto e cai para o id quando ela está
+             * vazia — hoje os dois coincidem, porque todo produto nasce no
+             * ERP. Gravar no item, e não deduzir na leitura, é o que mantém o
+             * pedido antigo legível se o produto for renomeado ou apagado
+             * depois.
+             */
+            it.sku || it.productId,
+            it.name,
+            it.quantity,
+            it.unitPrice,
+            // Desconto por item: a loja desconta no rodapé do pedido, não na
+            // linha. Zero explícito diz isso ao ERP, em vez de omitir.
+            0,
+            it.lineTotal
+          ]
         );
         const affected = await tx.run(
           "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
@@ -4658,7 +4989,18 @@ publicRoutes.post("/orders", h(async (req, res) => {
     status: cobranca.status,
     detalhe: cobranca.detalhe,
     provedor: PROVEDOR,
-    ref: cobranca.ref
+    ref: cobranca.ref,
+    /*
+     * Bandeira e parcelas da própria cobrança que acabou de ser feita.
+     *
+     * `cardMethodId` é o que o formulário do Mercado Pago detectou do número
+     * digitado ("visa", "master"), e é o que foi mandado para a autorização —
+     * no Pix não existe bandeira, e a parcela é sempre uma. O valor pago fica
+     * de fora aqui de propósito: é o webhook, consultando o provedor, que traz
+     * quanto entrou de verdade.
+     */
+    bandeira: payment === "card" ? cardMethodId : "",
+    parcelas: payment === "card" ? parcelas : 1
   });
   if (cobranca.status === "recusado") {
     fail(cobranca.mensagem ?? "O pagamento n\xE3o foi aprovado.", 402, "payment_rejected");
@@ -4716,7 +5058,10 @@ publicRoutes.get("/orders/:id/status", h(async (req, res) => {
           status: real.status,
           detalhe: real.detalhe,
           provedor: PROVEDOR,
-          ref
+          ref,
+          bandeira: real.bandeira,
+          parcelas: real.parcelas,
+          valorPago: real.valorPago
         });
         const depois = await q.one("SELECT status FROM orders WHERE id = ?", [id]);
         if (depois !== null) status = String(depois.status);
@@ -4991,17 +5336,31 @@ v1Routes.get("/orders", h(async (req, res) => {
     where.push("status = ?");
     params.push(status);
   }
+  const emHoraLocal = /* @__PURE__ */ __name((iso8601) => {
+    const t = Date.parse(iso8601);
+    if (!Number.isFinite(t)) return null;
+    return new Date(t - 3 * 36e5).toISOString().slice(0, 19).replace("T", " ");
+  }, "emHoraLocal");
   const since = queryStr(req, "since", "", 40);
   if (since !== "") {
-    const t = Date.parse(since);
-    if (Number.isFinite(t)) {
+    const quando = emHoraLocal(since);
+    if (quando !== null) {
       where.push("created_at >= ?");
-      params.push(new Date(t - 3 * 36e5).toISOString().slice(0, 19).replace("T", " "));
+      params.push(quando);
     }
   }
+  const updatedSince = queryStr(req, "updatedSince", "", 40);
+  if (updatedSince !== "") {
+    const quando = emHoraLocal(updatedSince);
+    if (quando !== null) {
+      where.push("updated_at >= ?");
+      params.push(quando);
+    }
+  }
+  const ordem = updatedSince !== "" ? "updated_at DESC" : "created_at DESC";
   const orders = await q.all(
     `SELECT * FROM orders${where.length ? " WHERE " + where.join(" AND ") : ""}
-      ORDER BY created_at DESC LIMIT 200`,
+      ORDER BY ${ordem} LIMIT 200`,
     params
   );
   const items = /* @__PURE__ */ new Map();
@@ -5030,7 +5389,11 @@ v1Routes.patch("/orders/:id", h(async (req, res) => {
   await requireApiKey(req);
   const status = bodyStr(body(req), "status", "", 20);
   if (!STATUS_PEDIDO2.includes(status)) fail("Status inv\xE1lido.", 422, "invalid_status");
-  if (await q.run("UPDATE orders SET status = ? WHERE id = ?", [status, req.params.id]) === 0) {
+  const t = transicaoDeStatus(status, bodyStr(body(req), "cancelReason", "", 200), "erp");
+  if (await q.run(
+    `UPDATE orders SET ${t.sql} WHERE id = ?`,
+    [...t.params, req.params.id]
+  ) === 0) {
     fail("Pedido n\xE3o encontrado.", 404, "not_found");
   }
   fireWebhooks("order.status_changed", { orderId: req.params.id, status });
@@ -5153,7 +5516,11 @@ webhookRoutes.post("/mercadopago", h(async (req, res) => {
     status: real.status,
     detalhe: real.detalhe,
     provedor: PROVEDOR,
-    ref: dataId
+    ref: dataId,
+    // O que o provedor confirmou de fato: bandeira, parcelas e valor pago.
+    bandeira: real.bandeira,
+    parcelas: real.parcelas,
+    valorPago: real.valorPago
   });
   console.log(
     `[queops] webhook ${PROVEDOR}: pedido ${orderId} \u2192 ${real.status} (${real.detalhe})`,

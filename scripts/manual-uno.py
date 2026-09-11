@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 2.6 — 9 de setembro de 2026'
+VERSAO = 'Versão 3.0 — 11 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -626,47 +626,100 @@ PATCH /api/v1/products/piramide-cobre-15cm-1001/stock
             ['status', 'pending · paid · shipped · delivered · canceled',
              'Valor fora da lista é ignorado (não dá erro)'],
             ['since', 'data ISO 8601 — ex.: 2026-08-01T00:00:00Z',
-             'Compara com a criação, no fuso de São Paulo'],
+             'Compara com a CRIAÇÃO. Use na carga inicial'],
+            ['updatedSince', 'data ISO 8601',
+             'Compara com a ATUALIZAÇÃO. Use na varredura periódica'],
         ],
-        [24 * mm, 76 * mm, 65 * mm],
+        [26 * mm, 74 * mm, 65 * mm],
         mono_cols=(0,),
     ))
     add(Spacer(1, 6))
+    add(aviso(
+        'Na varredura de segurança, use updatedSince — não since',
+        'A varredura que cobre webhook perdido (seção 3) precisa encontrar o pedido que '
+        '<b>mudou</b>, e não o que <b>nasceu</b>. Com '
+        '<font face="Courier">since</font>, um pedido criado ontem e pago hoje nunca reaparece: a '
+        'criação continua sendo ontem. O pedido pago ficaria parado sem ninguém perceber — que é o '
+        'pior defeito possível numa integração de pedido. '
+        '<font face="Courier">updatedSince</font> resolve isso, e a resposta vem ordenada pela '
+        'atualização para que a paginação acompanhe o filtro.'))
+    add(Spacer(1, 6))
     add(bloco("""
-GET /api/v1/orders?status=paid&since=2026-08-01T00:00:00Z
+GET /api/v1/orders?status=paid&updatedSince=2026-08-01T00:00:00Z
 
 {
   "orders": [
     {
       "id": "QP-000142",                    // número do pedido na loja
       "createdAt": "2026-08-30T18:22:41.000Z",
+      "updatedAt": "2026-08-30T19:05:12.000Z",  // filtro da varredura
+      "customerId": "42",                   // cliente na loja, ou null
       "customerName": "Maria Oliveira",
       "customerEmail": "maria@exemplo.com",
       "customerPhone": "(11) 98888-7777",
-      "customerCpf": "123.456.789-09",       // para NF-e; "" se não informado
+      "customerDocument": "12345678909",    // SÓ DÍGITOS, ou null
+      "customerDocumentType": "cpf",        // "cpf" | "cnpj" | null
+      "customerCpf": "123.456.789-09",      // legado: como foi digitado
+      "customerNote": "Entregar após as 18h",   // ou null
       "items": [
         { "productId": "piramide-cobre-15cm-1001",
-          "name": "Pirâmide de Cobre 15cm",  // nome no momento da venda
-          "quantity": 2,
-          "unitPrice": 189.9 }               // preço no momento da venda
+          "sku": "1001",                    // é por aqui que o ERP casa
+          "name": "Pirâmide de Cobre 15cm", // nome no momento da venda
+          "quantity": 2,                    // aceita fração (peso, metro)
+          "unitPrice": 189.9,               // preço no momento da venda
+          "discount": 0,
+          "totalPrice": 379.8 }
       ],
       "subtotal": 379.8,
-      "shipping": 26.63,
-      "discount": 18.99,
+      "shipping": 26.63,                    // frete COBRADO do cliente
+      "shippingCostOwner": 26.63,           // custo assumido pela loja
+      "discount": 18.99,                    // total, soma dos dois abaixo
+      "discountCoupon": 18.99,
+      "discountPayment": 0,
       "total": 387.44,
-      "couponCode": "BEMVINDO10",            // ou null
-      "status": "paid",
-      "payment": "pix",                      // "pix" | "card"
+      "currency": "BRL",
+      "couponCode": "BEMVINDO10",           // ou null
+      "status": "paid",                     // esteira, como sempre
+      "paymentStatus": "paid",              // pending|paid|refused|refunded
+      "fulfillmentStatus": "unpacked",      // unpacked|shipped|delivered
+      "cancelReason": null,
+      "canceledBy": null,                   // customer|store|gateway|erp
+      "payment": "pix",                     // "pix" | "card"
+      "paymentDetails": {
+        "method": "pix",
+        "brand": null,                      // bandeira, quando cartão
+        "installments": 1,
+        "paidAmount": 387.44,               // null enquanto não pago
+        "gateway": "mercadopago",
+        "transactionId": "1234567890",
+        "paidAt": "2026-08-30T19:05:12.000Z",
+        "detail": null                      // motivo da recusa, quando houve
+      },
+      "paidAt": "2026-08-30T19:05:12.000Z",
+      "shippedAt": null,
+      "deliveredAt": null,
+      "canceledAt": null,
       "channel": "site",
-      "shippingAddress": {                   // para nota fiscal e etiqueta
+      "shippingAddress": {                  // para nota fiscal e etiqueta
         "cep": "44823-478", "street": "Rua das Flores", "number": "250",
         "complement": "Apto 42", "neighborhood": "Centro",
-        "city": "Jacobina", "state": "BA"
+        "city": "Jacobina", "state": "BA",
+        "recipientName": "Maria Oliveira",  // entrega para terceiro
+        "phone": "(11) 98888-7777",
+        "country": "BR",
+        "cityIbgeCode": null                // a loja não coleta
       },
+      "billingAddress": null,               // null = igual ao de entrega
       "shippingService": "Jadlog · .Package — até 5 dias úteis",
-      "deliveryEta": "2026-09-08",           // ou null
-      "trackingCode": "",                    // preenchido pelo painel ou pelo ERP
-      "trackingStatus": ""
+      "shippingCarrier": "Jadlog",          // case a transportadora POR AQUI
+      "shippingServiceCode": "2",
+      "shippingServiceName": "Jadlog · .Package",
+      "shippingMinDays": 5,
+      "shippingMaxDays": 5,
+      "deliveryEta": "2026-09-08",          // ou null
+      "trackingCode": null,                 // null quando ainda não há
+      "trackingStatus": null,
+      "trackingUrl": null
     }
   ]
 }
@@ -679,6 +732,29 @@ GET /api/v1/orders?status=paid&since=2026-08-01T00:00:00Z
         'Acima disso, um ciclo pode perder pedido em silêncio — a seção 7.2 propõe a paginação.'))
     add(Spacer(1, 6))
     add(aviso(
+        'MUDANÇA DE CONTRATO: campos vazios agora são null',
+        '<font face="Courier">trackingCode</font>, '
+        '<font face="Courier">trackingStatus</font> e '
+        '<font face="Courier">customerNote</font> saíam como '
+        '<font face="Courier">""</font> quando não havia valor. Agora saem como '
+        '<font face="Courier">null</font>, para que a pergunta seja "existe?" e não "está em '
+        'branco?". <b>Quem já consome estes campos precisa ajustar a leitura.</b> '
+        '<font face="Courier">customerCpf</font> foi mantido como estava — continua vindo com '
+        'máscara, e <font face="Courier">""</font> quando ausente — justamente para não quebrar '
+        'quem já o lê; para faturar, use '
+        '<font face="Courier">customerDocument</font>, que traz só dígitos.'))
+    add(Spacer(1, 6))
+    add(aviso(
+        'Por que paymentStatus existe, se já há status',
+        '<font face="Courier">status</font> é uma esteira linear: quando o pedido avança para '
+        '<font face="Courier">shipped</font>, a informação "foi pago" <b>desaparece</b> do campo, e '
+        'não há como reconstruí-la. <font face="Courier">paymentStatus</font> e '
+        '<font face="Courier">fulfillmentStatus</font> são os dois eixos separados; '
+        '<font face="Courier">status</font> continua existindo, com o mesmo significado de sempre. '
+        'E <font face="Courier">cancelReason</font> distingue pagamento recusado de desistência do '
+        'cliente — no ERP, lançamentos diferentes.'))
+    add(Spacer(1, 6))
+    add(aviso(
         'O endereço é "shippingAddress", e não "shipping"',
         'A versão 2.0 deste manual propunha o objeto sob o nome '
         '<font face="Courier">shipping</font>. Ele foi implementado como '
@@ -686,7 +762,7 @@ GET /api/v1/orders?status=paid&since=2026-08-01T00:00:00Z
         '<font face="Courier">shipping</font> já existe nesta resposta como o <b>valor</b> do frete '
         '(número), e trocar o tipo de um campo publicado quebraria quem já consome a API. '
         'Um campo novo custa uma linha de documentação; um campo que muda de número para objeto '
-        'custa uma integração parada. <b>Nenhum campo antigo mudou nesta versão.</b>'))
+        'custa uma integração parada.'))
 
     add(PageBreak())
     for parte in endpoint('GET', '/orders/{id}', 'Um pedido com seus itens. É a chamada que o UNO deve fazer ao receber um webhook.'):
@@ -701,6 +777,11 @@ GET /api/v1/orders?status=paid&since=2026-08-01T00:00:00Z
     add(bloco("""
 PATCH /api/v1/orders/QP-000142
 { "status": "shipped" }
+
+# Ao cancelar, mande TAMBÉM o motivo — o ERP usa para separar
+# desistência do cliente de pagamento recusado:
+PATCH /api/v1/orders/QP-000142
+{ "status": "canceled", "cancelReason": "Produto sem estoque" }
 
 200 → { "ok": true }
 422 → { "error": { "code": "invalid_status", "message": "Status inválido." } }

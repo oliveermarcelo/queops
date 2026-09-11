@@ -52,7 +52,29 @@ export function dbDir(): string {
  * primeira instalação.
  */
 export function splitStatements(sql: string): { statements: string[]; noComments: string } {
-  const noComments = sql.replace(/^[ \t]*--.*$/gm, '');
+  /*
+   * Tira os comentários, inclusive os que ficam DEPOIS da definição.
+   *
+   * A versão anterior só removia a linha que começava com "--". Um comentário
+   * no fim da linha da coluna — o jeito natural de anotar o que os valores de
+   * um VARCHAR significam — entrava junto na definição, e o ALTER TABLE gerado
+   * saía com o comentário colado no meio do SQL, quebrando a migração com um
+   * erro de sintaxe que não dizia de onde vinha.
+   *
+   * As aspas são respeitadas: `DEFAULT '--'` não é comentário, e cortar ali
+   * mudaria o valor padrão de uma coluna.
+   */
+  const noComments = sql
+    .split('\n')
+    .map((linha) => {
+      let dentroDeAspas = false;
+      for (let i = 0; i < linha.length; i++) {
+        if (linha[i] === "'") dentroDeAspas = !dentroDeAspas;
+        if (!dentroDeAspas && linha[i] === '-' && linha[i + 1] === '-') return linha.slice(0, i);
+      }
+      return linha;
+    })
+    .join('\n');
   const statements = noComments
     .split(';')
     .map((s) => s.trim())
@@ -219,6 +241,20 @@ const ALARGAMENTOS: { tabela: string; coluna: string; de: RegExp; para: string }
     // de formas diferentes, e todas significam a mesma coluna a converter.
     de: /^(int|integer|smallint|mediumint|bigint)\b/i,
     para: 'DECIMAL(10,3) NOT NULL DEFAULT 0',
+  },
+  {
+    /*
+     * Quantidade do item vendido: inteiro → fracionário.
+     *
+     * O estoque já aceita fração desde que a loja passou a vender por peso e
+     * por metro. A quantidade do PEDIDO ficou para trás: uma venda de 1,5 kg
+     * era truncada para 1 kg na hora de gravar, e o ERP faturava a menos sem
+     * nada acusar — a nota sairia com um número que ninguém pediu.
+     */
+    tabela: 'order_items',
+    coluna: 'quantity',
+    de: /^(int|integer|smallint|mediumint|bigint)\b/i,
+    para: 'DECIMAL(10,3) NOT NULL DEFAULT 1',
   },
 ];
 

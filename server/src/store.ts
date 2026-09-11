@@ -6,7 +6,7 @@
 import { decryptPayload } from './crypto.ts';
 import { placeholders, q, type Q, type Row } from './db.ts';
 import { codigoNoMapa, mapaDeCodigos } from './erp-categorias.ts';
-import { iso } from './http.ts';
+import { iso, round2 } from './http.ts';
 
 export interface StoreSettings {
   name: string;
@@ -360,6 +360,140 @@ export async function fetchProducts(
 
 // ------------------------------------------------------------- Pedidos ----
 
+/**
+ * Campo de texto: o conteúdo, ou `null` quando não há nada.
+ *
+ * A API devolvia `""` para documento, rastreio e afins. Isso obriga quem
+ * consome a testar string vazia em todo ponto de leitura, quando a pergunta
+ * real é "existe?". `null` responde essa pergunta uma vez só.
+ */
+const vazioOuNulo = (v: unknown): string | null => {
+  const s = String(v ?? '').trim();
+  return s === '' ? null : s;
+};
+
+/**
+ * Página de rastreio dos Correios para um código, ou null.
+ *
+ * Montada aqui porque o pedido guarda só o código, e quem recebe o pedido —
+ * o ERP, e a lojista pela conta do cliente — precisa do endereço para abrir.
+ * Só para o padrão dos Correios (AA123456789BR): inventar a URL de outra
+ * transportadora a partir de um código que não é dela mandaria a pessoa para
+ * uma página de erro.
+ */
+const urlDeRastreio = (codigo: unknown): string | null => {
+  const c = String(codigo ?? '').trim().toUpperCase();
+  return /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(c)
+    ? `https://rastreamento.correios.com.br/app/index.php?objetos=${c}`
+    : null;
+};
+
+/**
+ * Documento do comprador em dígitos, com o tipo.
+ *
+ * 11 dígitos é CPF, 14 é CNPJ. Qualquer outra coisa — inclusive o campo em
+ * branco — sai como null nos dois campos: um documento com contagem errada de
+ * dígitos não é um documento, e mandá-lo assim faria a NF-e ser rejeitada mais
+ * adiante, longe de onde o erro nasceu.
+ */
+export function documentoDoCliente(bruto: unknown): {
+  customerDocument: string | null;
+  customerDocumentType: string | null;
+} {
+  const digitos = String(bruto ?? '').replace(/\D/g, '');
+  if (digitos.length === 11) return { customerDocument: digitos, customerDocumentType: 'cpf' };
+  if (digitos.length === 14) return { customerDocument: digitos, customerDocumentType: 'cnpj' };
+  return { customerDocument: null, customerDocumentType: null };
+}
+
+/**
+ * Os dois eixos que o `status` sozinho não consegue carregar.
+ *
+ * `status` é uma esteira linear: pending → paid → shipped → delivered. Quando
+ * o pedido avança para "shipped", a informação "foi pago" DESAPARECE do campo,
+ * e não há como reconstruí-la — o ERP precisa checar o pagamento antes de
+ * qualquer coisa. Os eixos são gravados em colunas próprias, mas quando elas
+ * ainda não foram preenchidas (pedido anterior a esta mudança) são deduzidos
+ * do que existe, para nenhum pedido antigo sair sem os campos novos.
+ */
+export function eixosDoPedido(r: Row): { paymentStatus: string; fulfillmentStatus: string } {
+  const status = String(r.status ?? 'pending');
+  const pago = r.paid_at !== null && r.paid_at !== undefined;
+
+  const gravadoPagamento = String(r.payment_status ?? '');
+  const paymentStatus = gravadoPagamento !== '' && gravadoPagamento !== 'pending'
+    ? gravadoPagamento
+    : pago || ['paid', 'shipped', 'delivered'].includes(status)
+      ? 'paid'
+      : 'pending';
+
+  const gravadoEntrega = String(r.fulfillment_status ?? '');
+  const fulfillmentStatus = gravadoEntrega !== '' && gravadoEntrega !== 'unpacked'
+    ? gravadoEntrega
+    : status === 'delivered'
+      ? 'delivered'
+      : status === 'shipped'
+        ? 'shipped'
+        : 'unpacked';
+
+  return { paymentStatus, fulfillmentStatus };
+}
+
+/**
+ * O UPDATE que muda o status de um pedido, com os efeitos colaterais certos.
+ *
+ * Mudar `status` sozinho perde informação. Cada passagem tem uma data que só
+ * pode ser gravada quando ela acontece — depois não há como reconstruí-la —, e
+ * os dois eixos (pagamento e entrega) precisam acompanhar, senão um pedido
+ * "shipped" deixa de dizer que foi pago.
+ *
+ * `COALESCE` em todas as datas: marcar "enviado" duas vezes não pode reescrever
+ * a data do primeiro envio. E `updated_at` é tocado sempre, porque é por ele
+ * que a varredura do ERP encontra o pedido que mudou.
+ *
+ * Existe aqui, e não dentro de cada rota, porque são TRÊS lugares que mudam
+ * status — painel, ERP pela API v1 e o retorno do gateway — e um deles
+ * esquecer de gravar a data é um pedido que o ERP nunca mais vê.
+ */
+export function transicaoDeStatus(
+  status: string,
+  motivo: string,
+  quem: 'customer' | 'store' | 'gateway' | 'erp',
+): { sql: string; params: unknown[] } {
+  const campos = ['status = ?', 'updated_at = NOW()'];
+  const params: unknown[] = [status];
+
+  if (status === 'paid') {
+    campos.push("payment_status = 'paid'", 'paid_at = COALESCE(paid_at, NOW())');
+  }
+  if (status === 'shipped') {
+    campos.push("fulfillment_status = 'shipped'", 'shipped_at = COALESCE(shipped_at, NOW())');
+  }
+  if (status === 'delivered') {
+    campos.push(
+      "fulfillment_status = 'delivered'",
+      'delivered_at = COALESCE(delivered_at, NOW())',
+    );
+  }
+  if (status === 'canceled') {
+    campos.push('canceled_at = COALESCE(canceled_at, NOW())');
+    /*
+     * O motivo só é gravado se vier preenchido, e não sobrescreve um que já
+     * exista: um cancelamento por recusa do gateway já escreveu a causa real,
+     * e alguém confirmando o cancelamento no painel depois não deve apagá-la.
+     */
+    if (motivo.trim() !== '') {
+      campos.push('cancel_reason = ?', 'canceled_by = ?');
+      params.push(motivo.trim().slice(0, 200), quem);
+    } else {
+      campos.push("canceled_by = CASE WHEN canceled_by = '' THEN ? ELSE canceled_by END");
+      params.push(quem);
+    }
+  }
+
+  return { sql: campos.join(', '), params };
+}
+
 export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
   return {
     id: r.id,
@@ -377,12 +511,53 @@ export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
      * e o corpo destas respostas não deve ir para log.
      */
     customerCpf: String(r.customer_cpf ?? ''),
-    items: items.map((i) => ({
-      productId: i.product_id,
-      name: i.name,
-      quantity: Number(i.quantity) || 0,
-      unitPrice: Number(i.unit_price) || 0,
-    })),
+    /*
+     * O documento sem máscara, e o tipo dele.
+     *
+     * `customerCpf` sai como o comprador digitou — com pontos e traço — e
+     * continua existindo porque já é consumido. Mas número formatado não é
+     * número: o ERP precisava limpar a string antes de faturar, e uma máscara
+     * diferente (ou nenhuma) quebrava a limpeza. `customerDocument` é só
+     * dígito, e `customerDocumentType` diz o que aqueles dígitos são — 11 e
+     * 14 dígitos vão para lugares diferentes na NF-e.
+     */
+    ...documentoDoCliente(r.customer_cpf),
+    /** Id do cliente na loja — a amarração pedido → cliente. Null se convidado. */
+    customerId: r.customer_id === null || r.customer_id === undefined
+      ? null
+      : String(r.customer_id),
+    /** Observação escrita pelo comprador ("entregar após as 18h"). */
+    customerNote: vazioOuNulo(r.customer_note),
+    items: items.map((i) => {
+      const quantidade = Number(i.quantity) || 0;
+      const unitario = Number(i.unit_price) || 0;
+      const descontoItem = Number(i.discount) || 0;
+      return {
+        productId: i.product_id,
+        /*
+         * SKU explícito. Hoje é igual ao productId porque todo produto nasce
+         * no ERP, mas isso é convenção e não contrato: o ERP casa produto por
+         * SKU, e no dia em que um produto nascer no painel da loja o id deixa
+         * de ser um código de produto.
+         */
+        sku: String(i.sku ?? '') || String(i.product_id ?? ''),
+        name: i.name,
+        quantity: quantidade,
+        unitPrice: unitario,
+        discount: descontoItem,
+        /*
+         * Total da linha já gravado.
+         *
+         * Serve para o ERP conferir o arredondamento contra o subtotal. Os
+         * pedidos antigos não têm a coluna preenchida; nesses, recalcula, que
+         * é o mesmo número — o valor gravado só passa a divergir se algum dia
+         * existir desconto por item, e é justamente aí que ele importa.
+         */
+        totalPrice: Number(i.total_price) > 0
+          ? Number(i.total_price)
+          : round2(quantidade * unitario - descontoItem),
+      };
+    }),
     subtotal: Number(r.subtotal) || 0,
     shipping: Number(r.shipping_cost) || 0,
     discount: Number(r.discount) || 0,
@@ -409,13 +584,72 @@ export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
       neighborhood: String(r.ship_neighborhood ?? ''),
       city: String(r.ship_city ?? ''),
       state: String(r.ship_state ?? ''),
+      /*
+       * Quem recebe, e em que telefone. Vazio cai para o comprador: é o caso
+       * normal, e repetir o dado é melhor do que o ERP ter de adivinhar de
+       * onde tirar o destinatário numa entrega para terceiro.
+       */
+      recipientName: vazioOuNulo(r.ship_recipient) ?? String(r.customer_name ?? ''),
+      phone: vazioOuNulo(r.ship_phone) ?? vazioOuNulo(r.customer_phone),
+      /** O país que o ERP hoje precisa chutar como "BRASIL". */
+      country: String(r.ship_country ?? 'BR') || 'BR',
+      /*
+       * Código IBGE do município: null porque a loja NÃO o coleta.
+       *
+       * O campo existe no contrato para o ERP não precisar mudar quando ele
+       * passar a vir. Mandar um código deduzido por nome + UF seria pior do
+       * que não mandar: o ERP já resolve o município assim, e um palpite
+       * nosso apenas moveria o erro de homônimo para dentro da NF-e.
+       */
+      cityIbgeCode: null,
     },
-    /** "Jadlog · .Package — até 5 dias úteis": o que o cliente escolheu pagar. */
+    /*
+     * Endereço de cobrança: null quando é o mesmo da entrega.
+     *
+     * A loja é B2C e não coleta endereço de cobrança separado — o cartão é
+     * processado pelo Mercado Pago, que guarda o dele. Null diz exatamente
+     * isso, e o ERP pode clonar o de entrega com segurança; um objeto
+     * repetido faria o ERP marcar indEnderecoUnico = "0" e montar três
+     * endereços iguais para um pedido que tem um só.
+     */
+    billingAddress: null,
+    /**
+     * "Jadlog · .Package — até 5 dias úteis": o que o cliente escolheu pagar.
+     *
+     * Mantido porque é o texto que a lojista lê. Para o ERP, use os campos
+     * separados abaixo: casar transportadora por esta string nunca funciona,
+     * e o pedido acaba sempre na transportadora padrão do sistema.
+     */
     shippingService: String(r.shipping_service ?? ''),
+    /** Transportadora, limpa: "Correios", "Jadlog". É por aqui que o ERP casa. */
+    shippingCarrier: vazioOuNulo(r.shipping_carrier),
+    /** Código do serviço: "PAC", "SEDEX", ".Package". */
+    shippingServiceCode: vazioOuNulo(r.shipping_service_code),
+    shippingServiceName: vazioOuNulo(r.shipping_service_name),
+    shippingMinDays: Number(r.shipping_min_days) || 0,
+    shippingMaxDays: Number(r.shipping_max_days) || 0,
+    /*
+     * Custo do frete PARA A LOJA, separado do que foi cobrado do cliente.
+     *
+     * Hoje os dois são iguais e é isso que sai. Null significa "a loja não
+     * apurou", e não "zero": se algum dia a loja subsidiar frete — frete
+     * grátis acima de um valor já é um subsídio —, a margem do pedido no ERP
+     * sairia errada sem este campo.
+     */
+    shippingCostOwner: r.shipping_cost_owner === null || r.shipping_cost_owner === undefined
+      ? Number(r.shipping_cost) || 0
+      : Number(r.shipping_cost_owner),
     /** Previsão de entrega calculada na compra (AAAA-MM-DD), ou null. */
     deliveryEta: r.delivery_eta ? String(r.delivery_eta).slice(0, 10) : null,
-    trackingCode: String(r.tracking_code ?? ''),
-    trackingStatus: String(r.tracking_status ?? ''),
+    /*
+     * Rastreio: `null` quando não existe, e não `""`.
+     *
+     * Mudança de contrato anunciada ao integrador: antes vinha string vazia, o
+     * que obriga quem lê a testar "está em branco?" em vez de "existe?".
+     */
+    trackingCode: vazioOuNulo(r.tracking_code),
+    trackingStatus: vazioOuNulo(r.tracking_status),
+    trackingUrl: vazioOuNulo(r.tracking_url) ?? urlDeRastreio(r.tracking_code),
     /*
      * Quando o dinheiro entrou, ou null.
      *
@@ -425,6 +659,68 @@ export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
      * API v1 — o ERP precisa da data do pagamento para a nota.
      */
     paidAt: r.paid_at ? iso(r.paid_at) : null,
+    /*
+     * As demais datas de transição, e a de atualização.
+     *
+     * Sem `updatedAt`, a varredura periódica do ERP — que o manual descreve
+     * como o recurso obrigatório para quando o webhook falha — só enxergava
+     * pedido NOVO, porque o filtro comparava com a data de CRIAÇÃO. Um pedido
+     * feito ontem e pago hoje, cujo aviso se perdeu, ficava parado sem ninguém
+     * notar. É o pior defeito possível numa integração de pedido, e ele estava
+     * lá.
+     */
+    updatedAt: iso(r.updated_at ?? r.created_at),
+    shippedAt: r.shipped_at ? iso(r.shipped_at) : null,
+    deliveredAt: r.delivered_at ? iso(r.delivered_at) : null,
+    canceledAt: r.canceled_at ? iso(r.canceled_at) : null,
+    /*
+     * Os dois eixos, ao lado do `status` de sempre.
+     *
+     * `status` continua sendo a esteira que a lojista vê e edita. Estes dizem
+     * o que ela não consegue dizer: um pedido "shipped" não informa mais se
+     * foi pago, e "canceled" não distingue pagamento recusado de desistência
+     * — coisas que geram lançamentos diferentes no ERP.
+     */
+    ...eixosDoPedido(r),
+    cancelReason: vazioOuNulo(r.cancel_reason),
+    canceledBy: vazioOuNulo(r.canceled_by),
+    /*
+     * Detalhe do pagamento.
+     *
+     * Antes saía só `payment: "pix"`. Faltava tudo o que a conciliação
+     * financeira precisa: quanto entrou de fato, em quantas parcelas, por
+     * qual adquirente e com que id — sem o id não há como cruzar o pedido com
+     * o extrato do gateway.
+     */
+    paymentDetails: {
+      method: String(r.payment ?? ''),
+      brand: vazioOuNulo(r.payment_brand),
+      installments: Number(r.payment_installments) || (String(r.payment) === 'pix' ? 1 : 0),
+      /*
+       * Quanto o gateway confirmou. Null enquanto não houve confirmação —
+       * "0,00 pago" e "ainda não pagou" são coisas diferentes, e a segunda
+       * não pode virar a primeira.
+       */
+      paidAmount: r.paid_amount === null || r.paid_amount === undefined
+        ? (r.paid_at ? Number(r.total) || 0 : null)
+        : Number(r.paid_amount),
+      gateway: vazioOuNulo(r.payment_provider),
+      transactionId: vazioOuNulo(r.payment_ref),
+      paidAt: r.paid_at ? iso(r.paid_at) : null,
+      /** Motivo da recusa, em português, quando houve. */
+      detail: vazioOuNulo(r.payment_detail),
+    },
+    /*
+     * Desconto repartido pela origem.
+     *
+     * `discount` continua sendo o total. Cupom e desconto de meio de pagamento
+     * viram lançamentos diferentes no ERP, e a partir de um número só não há
+     * como separá-los.
+     */
+    discountCoupon: Number(r.discount_coupon) || 0,
+    discountPayment: Number(r.discount_payment) || 0,
+    /** Moeda do pedido. Fixa hoje; existe para o dia em que não for. */
+    currency: String(r.currency ?? 'BRL') || 'BRL',
     /*
      * Existe cobrança gerada que ainda pode ser paga.
      *

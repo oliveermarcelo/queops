@@ -31,7 +31,7 @@ interface AdminContextValue {
 
   upsertProduct: (p: Product) => Promise<void>;
   deleteProduct: (id: string, definitivo?: boolean) => Promise<void>;
-  setOrderStatus: (id: string, status: OrderStatus) => Promise<void>;
+  setOrderStatus: (id: string, status: OrderStatus, cancelReason?: string) => Promise<void>;
   deleteOrder: (id: string) => Promise<void>;
   upsertCoupon: (c: Coupon) => Promise<void>;
   deleteCoupon: (id: string) => Promise<void>;
@@ -196,13 +196,15 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           () => store.deleteProduct(id, definitivo),
         ),
 
-      setOrderStatus: (id, status) =>
+      setOrderStatus: (id, status, cancelReason = '') =>
         mutate(
           (s) => ({
             ...s,
-            orders: s.orders.map((o: Order) => (o.id === id ? { ...o, status } : o)),
+            orders: s.orders.map((o: Order) => (o.id === id
+              ? { ...o, status, cancelReason: cancelReason || o.cancelReason }
+              : o)),
           }),
-          () => store.setOrderStatus(id, status),
+          () => store.setOrderStatus(id, status, cancelReason),
         ),
 
       /*

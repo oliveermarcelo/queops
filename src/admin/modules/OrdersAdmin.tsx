@@ -8,7 +8,7 @@ import { Loader2, Package, Search, Trash2 } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
 import { fetchOrderTracking, setOrderTracking } from '../store';
 import { Order, OrderStatus, TrackingEvent } from '../types';
-import { brl, fmtDate, Card, ConfirmDialog, inputCls } from '../ui';
+import { brl, fmtDate, Btn, Card, ConfirmDialog, inputCls } from '../ui';
 
 /**
  * Por que este pedido não pode ser apagado — vazio quando pode.
@@ -161,11 +161,96 @@ function TrackingRow({
   );
 }
 
+/**
+ * Motivos prontos para o cancelamento.
+ *
+ * São opções, e não um campo livre sozinho, porque o ERP precisa distinguir os
+ * casos — e porque texto livre em campo de motivo vira "cancelado" escrito de
+ * quinze jeitos diferentes, o que não se agrupa em relatório nenhum. O campo
+ * livre continua ali para o que não couber nesta lista.
+ */
+const MOTIVOS_DE_CANCELAMENTO = [
+  'Cliente desistiu da compra',
+  'Produto sem estoque',
+  'Pagamento não confirmado',
+  'Endereço fora da área de entrega',
+  'Suspeita de fraude',
+  'Pedido duplicado',
+];
+
+function DialogoDeCancelamento({ pedido, onFechar, onConfirmar }: {
+  pedido: Order;
+  onFechar: () => void;
+  onConfirmar: (motivo: string) => void;
+}) {
+  const [escolhido, setEscolhido] = useState(MOTIVOS_DE_CANCELAMENTO[0]);
+  const [outro, setOutro] = useState('');
+  const usaOutro = escolhido === 'Outro';
+  const motivo = usaOutro ? outro.trim() : escolhido;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onFechar} aria-hidden="true" />
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="cancel-title"
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+      >
+        <h3 id="cancel-title" className="font-extrabold text-gray-900">Cancelar pedido</h3>
+        <p className="text-sm text-gray-500 mt-2 leading-relaxed">
+          O pedido {pedido.id}, de {pedido.customerName}, será marcado como cancelado.
+          {' '}O motivo vai junto para o ERP — lá, “o cliente desistiu” e “o pagamento foi
+          recusado” viram lançamentos diferentes.
+        </p>
+
+        <div className="mt-4 space-y-2">
+          {[...MOTIVOS_DE_CANCELAMENTO, 'Outro'].map((m) => (
+            <label key={m} className="flex items-center gap-2.5 text-sm text-gray-700">
+              <input
+                type="radio"
+                name="motivo-cancelamento"
+                checked={escolhido === m}
+                onChange={() => setEscolhido(m)}
+                className="accent-primary-blue w-4 h-4"
+              />
+              {m}
+            </label>
+          ))}
+        </div>
+
+        {usaOutro && (
+          <input
+            autoFocus
+            value={outro}
+            onChange={(e) => setOutro(e.target.value)}
+            maxLength={200}
+            placeholder="Escreva o motivo"
+            className={`${inputCls} mt-3`}
+          />
+        )}
+
+        <div className="flex justify-end gap-2 mt-6">
+          <Btn variant="ghost" onClick={onFechar}>Voltar</Btn>
+          {/*
+            Sem motivo escrito, o botão fica travado: um cancelamento sem causa
+            registrada é exatamente o que o ERP não consegue interpretar.
+          */}
+          <Btn variant="danger" onClick={() => onConfirmar(motivo)} disabled={motivo === ''}>
+            Cancelar pedido
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OrdersAdmin() {
   const { state, setOrderStatus, deleteOrder } = useAdmin();
   const [filter, setFilter] = useState<OrderStatus | 'all'>('all');
   const [query, setQuery] = useState('');
   const [apagando, setApagando] = useState<Order | null>(null);
+  const [cancelando, setCancelando] = useState<Order | null>(null);
 
   const orders = useMemo(() => {
     const q = query.toLowerCase();
@@ -226,7 +311,17 @@ export default function OrdersAdmin() {
                   <td className="py-2.5 px-4">
                     <select
                       value={o.status}
-                      onChange={(e) => setOrderStatus(o.id, e.target.value as OrderStatus)}
+                      /*
+                        Cancelar abre o diálogo do motivo em vez de aplicar
+                        direto. Qualquer outro status segue como antes — só o
+                        cancelamento precisa de explicação, porque é o único
+                        que o ERP não consegue interpretar sozinho.
+                      */
+                      onChange={(e) => {
+                        const novo = e.target.value as OrderStatus;
+                        if (novo === 'canceled') setCancelando(o);
+                        else void setOrderStatus(o.id, novo);
+                      }}
                       className={`text-xs font-bold rounded-full py-1.5 pl-3 pr-7 border cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-blue/20 appearance-none bg-[length:14px] bg-[right_0.5rem_center] bg-no-repeat ${STATUS_SELECT[o.status]}`}
                       style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")" }}
                     >
@@ -274,6 +369,17 @@ export default function OrdersAdmin() {
           </table>
         </div>
       </Card>
+
+      {cancelando && (
+        <DialogoDeCancelamento
+          pedido={cancelando}
+          onFechar={() => setCancelando(null)}
+          onConfirmar={(motivo) => {
+            void setOrderStatus(cancelando.id, 'canceled', motivo);
+            setCancelando(null);
+          }}
+        />
+      )}
 
       {apagando && (
         <ConfirmDialog

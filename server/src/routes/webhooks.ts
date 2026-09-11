@@ -189,6 +189,10 @@ webhookRoutes.post('/mercadopago', h(async (req, res) => {
     detalhe: real.detalhe,
     provedor: PROVEDOR,
     ref: dataId,
+    // O que o provedor confirmou de fato: bandeira, parcelas e valor pago.
+    bandeira: real.bandeira,
+    parcelas: real.parcelas,
+    valorPago: real.valorPago,
   });
 
   console.log(

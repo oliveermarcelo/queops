@@ -64,6 +64,8 @@ interface Quote {
   pixMinOrder?: number;
   /** Quanto falta em produtos para destravar o desconto. 0 = já vale. */
   pixFaltam?: number;
+  /** Estado derivado do CEP pelo servidor. É ele que vai para a nota fiscal. */
+  uf?: string;
   discount: number;
   total: number;
   issues: string[];
@@ -149,6 +151,8 @@ export default function CheckoutPage({
   const [complement, setComplement] = useState(addr?.complement ?? '');
   const [neighborhood, setNeighborhood] = useState(addr?.neighborhood ?? '');
   const [city, setCity] = useState(addr?.city ?? '');
+  /** Observação do comprador sobre a entrega. Segue para o ERP com o pedido. */
+  const [note, setNote] = useState('');
   const [stateCode, setStateCode] = useState(addr?.state ?? 'SP');
 
   const { settings } = useCatalog();
@@ -285,6 +289,25 @@ export default function CheckoutPage({
     const t = setTimeout(refreshQuote, 300);
     return () => clearTimeout(t);
   }, [refreshQuote]);
+
+  /*
+   * A UF passa a vir do CEP, e não do que a pessoa escolheu na lista.
+   *
+   * A lista vinha com "SP" marcado; quem digitava um CEP da Bahia e não
+   * trocava o estado mandava o pedido com destino errado. A nota fiscal saía
+   * com UF e ICMS errados, e o ERP não tinha como desconfiar — ele confia no
+   * que a loja manda.
+   *
+   * A UF sai da própria cotação, que já resolve o estado pelo CEP para
+   * calcular o frete. Assim existe UMA tabela de faixas de CEP, no servidor, e
+   * a tela não pode discordar dela. O servidor também deriva a UF de novo ao
+   * gravar o pedido — isto aqui é para a pessoa VER o que vai ser gravado, não
+   * a garantia.
+   */
+  const ufDaCotacao = quote?.uf ?? '';
+  useEffect(() => {
+    if (ufDaCotacao !== '' && ufDaCotacao !== stateCode) setStateCode(ufDaCotacao);
+  }, [ufDaCotacao, stateCode]);
 
   const handleCpfChange = (v: string) => {
     const raw = v.replace(/\D/g, '').substring(0, 11);
@@ -464,6 +487,7 @@ export default function CheckoutPage({
         coupon: appliedCoupon,
         shipping: freteEscolhido,
         address: { cep, street, number, complement, neighborhood, city, state: stateCode },
+        note,
         card: cartao === undefined ? undefined : {
           token: cartao.token,
           paymentMethodId: cartao.payment_method_id,
@@ -815,12 +839,43 @@ export default function CheckoutPage({
                           <input id="ck-city" type="text" autoComplete="address-level2" placeholder="São Paulo" value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
                         </div>
                         <div className="sm:col-span-4">
-                          <label className={labelCls} htmlFor="ck-uf">UF *</label>
+                          <label className={labelCls} htmlFor="ck-uf">
+                            UF *
+                            {ufDaCotacao !== '' && (
+                              <span className="ml-1.5 font-normal normal-case text-[11px] text-gray-400">
+                                preenchida pelo CEP
+                              </span>
+                            )}
+                          </label>
                           <select id="ck-uf" value={stateCode} onChange={(e) => setStateCode(e.target.value)} className={inputCls}>
                             {['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'].map((uf) => (
                               <option key={uf} value={uf}>{uf}</option>
                             ))}
                           </select>
+                        </div>
+                        {/*
+                          Observação do comprador.
+                          Vai para o ERP junto com o pedido — "entregar após as
+                          18h", "é presente, sem nota junto". Sem este campo, o
+                          cliente escrevia isso no WhatsApp depois, quando a
+                          etiqueta já estava impressa.
+                        */}
+                        <div className="sm:col-span-12">
+                          <label className={labelCls} htmlFor="ck-note">
+                            Observação para a entrega
+                            <span className="ml-1.5 font-normal normal-case text-[11px] text-gray-400">
+                              opcional
+                            </span>
+                          </label>
+                          <textarea
+                            id="ck-note"
+                            rows={2}
+                            maxLength={500}
+                            placeholder="Ex.: entregar após as 18h · é presente, não enviar nota junto"
+                            value={note}
+                            onChange={(e) => setNote(e.target.value)}
+                            className={`${inputCls} resize-none`}
+                          />
                         </div>
                       </div>
 

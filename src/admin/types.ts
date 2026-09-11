@@ -48,6 +48,9 @@ export interface Order {
   paidAt?: string | null;
   /** Cobrança gerada e ainda pagável — apagar o pedido perderia esse dinheiro. */
   hasOpenCharge?: boolean;
+  /** Por que foi cancelado, e por quem (loja, cliente, gateway ou ERP). */
+  cancelReason?: string | null;
+  canceledBy?: string | null;
 }
 
 /** Um evento do rastreio dos Correios. */

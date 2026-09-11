@@ -19,7 +19,7 @@ import {
 } from '../payments/mercadopago.ts';
 import { aplicarPagamento, cancelarSemCobranca } from '../payments/pedidos.ts';
 import {
-  deliveryDaysFor, normalizeCep, quoteCart, type ShippingResult,
+  deliveryDaysFor, normalizeCep, quoteCart, ufFromCep, type ShippingResult,
 } from '../pricing.ts';
 import { fireWebhooks } from '../providers.ts';
 import { fetchProducts, getSettings, productRowToApi, publicSettings } from '../store.ts';
@@ -157,8 +157,30 @@ publicRoutes.post('/orders', h(async (req, res) => {
     ? (b.address as Record<string, unknown>)
     : {};
   const cep = bodyStr(endereco, 'cep', '', 12);
-  const uf = bodyStr(endereco, 'state', 'SP', 2).toUpperCase();
   if (normalizeCep(cep) === '') fail('Informe um CEP válido com 8 dígitos.', 422, 'invalid_cep');
+
+  /*
+   * A UF SAI DO CEP, não do que o comprador escolheu.
+   *
+   * O checkout tinha uma lista de estados com "SP" pré-selecionado, e quem não
+   * trocava mandava SP com um CEP da Bahia. O pedido ia para o ERP assim, e a
+   * NF-e saía com destino e ICMS errados — e o ERP não tem como desconfiar,
+   * porque confia no que a loja manda.
+   *
+   * O CEP já carrega o estado, e a loja já sabe lê-lo (é assim que o frete é
+   * calculado). Então a UF é DERIVADA aqui: o campo da tela vira conferência,
+   * não fonte. Quando o CEP não cai em nenhuma faixa conhecida, aí sim vale o
+   * que veio da tela — é melhor gravar o que a pessoa afirmou do que gravar
+   * vazio.
+   */
+  const ufDigitada = bodyStr(endereco, 'state', '', 2).toUpperCase();
+  const ufDoCep = ufFromCep(cep);
+  const uf = ufDoCep !== '' ? ufDoCep : (ufDigitada || 'SP');
+  if (ufDoCep !== '' && ufDigitada !== '' && ufDigitada !== ufDoCep) {
+    console.warn(
+      `[queops] UF corrigida pelo CEP no pedido: ${cep} é ${ufDoCep}, veio ${ufDigitada}`,
+    );
+  }
   if (
     bodyStr(endereco, 'street') === ''
     || bodyStr(endereco, 'number') === ''
@@ -293,13 +315,33 @@ publicRoutes.post('/orders', h(async (req, res) => {
 
       const id = 'QP-' + String(await nextCounter(tx, 'order')).padStart(6, '0');
 
+      /*
+       * Frete em partes, além do texto.
+       *
+       * `shippingLabel` é o que a lojista lê ("PAC — até 7 dias úteis"). O ERP
+       * casa transportadora POR NOME: recebendo a frase inteira ele nunca
+       * acerta e joga o pedido na transportadora padrão do sistema. Então a
+       * transportadora, o código do serviço e os prazos saem separados, da
+       * própria opção cotada — e não de uma tentativa de fatiar o texto.
+       */
+      const opcao = (quote.shippingOptions ?? [])
+        .find((o) => o.id === (quote.shippingChoice ?? ''));
+      const transportadora = opcao?.carrier ?? '';
+      // 'correios:03220' → '03220'. Vazio quando o frete veio das regras do painel.
+      const codigoServico = (opcao?.id ?? '').split(':')[1] ?? '';
+
       await tx.run(
         `INSERT INTO orders (
             id, customer_id, customer_name, customer_email, customer_phone, customer_cpf,
             subtotal, shipping_cost, discount, total, coupon_code, status, payment, channel,
             ship_cep, ship_street, ship_number, ship_complement, ship_neighborhood, ship_city, ship_state,
-            delivery_eta, shipping_service
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            delivery_eta, shipping_service,
+            shipping_carrier, shipping_service_code, shipping_service_name,
+            shipping_min_days, shipping_max_days, shipping_cost_owner,
+            discount_coupon, discount_payment, customer_note,
+            ship_recipient, ship_phone, ship_country, currency,
+            payment_installments, payment_status, fulfillment_status
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id, customerId, name, email, phone, cpf,
           quote.subtotal, quote.shipping, quote.discount, quote.total,
@@ -311,13 +353,50 @@ publicRoutes.post('/orders', h(async (req, res) => {
           // Por onde a encomenda vai: sem isto, a lojista tem o valor do frete
           // e nenhuma pista de qual transportadora o cliente escolheu.
           quote.shippingLabel.slice(0, 120),
+          transportadora.slice(0, 80), codigoServico.slice(0, 40),
+          (opcao?.label ?? '').slice(0, 80),
+          // Prazo mínimo e máximo: a cotação dá um número só, que é o teto.
+          opcao?.days ?? etaDays, opcao?.days ?? etaDays,
+          /*
+           * Custo do frete para a loja. Hoje é o mesmo que o cliente pagou —
+           * a loja não subsidia. Gravado separado porque no dia em que
+           * subsidiar (frete grátis acima de um valor já é um caso), a margem
+           * do pedido no ERP sairia errada se os dois números fossem um só.
+           */
+          quote.shipping,
+          quote.couponDiscount, quote.pixDiscount,
+          bodyStr(b, 'note', '', 500),
+          // Entrega para terceiro: o checkout ainda não pergunta, então fica
+          // o próprio comprador — o contrato já existe para quando perguntar.
+          '', phone.slice(0, 30), 'BR', 'BRL',
+          payment === 'card' ? parcelas : 1,
+          'pending', 'unpacked',
         ],
       );
 
       for (const it of quote.items) {
         await tx.run(
-          'INSERT INTO order_items (order_id, product_id, name, quantity, unit_price) VALUES (?,?,?,?,?)',
-          [id, it.productId, it.name, it.quantity, it.unitPrice],
+          `INSERT INTO order_items
+             (order_id, product_id, sku, name, quantity, unit_price, discount, total_price)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [
+            id, it.productId,
+            /*
+             * O SKU do produto, gravado no momento da venda.
+             *
+             * Vem da coluna `sku` do produto e cai para o id quando ela está
+             * vazia — hoje os dois coincidem, porque todo produto nasce no
+             * ERP. Gravar no item, e não deduzir na leitura, é o que mantém o
+             * pedido antigo legível se o produto for renomeado ou apagado
+             * depois.
+             */
+            it.sku || it.productId,
+            it.name, it.quantity, it.unitPrice,
+            // Desconto por item: a loja desconta no rodapé do pedido, não na
+            // linha. Zero explícito diz isso ao ERP, em vez de omitir.
+            0,
+            it.lineTotal,
+          ],
         );
         // Baixa de estoque com trava no próprio UPDATE: nunca fica negativo,
         // mesmo com dois pedidos simultâneos do último item.
@@ -437,6 +516,17 @@ publicRoutes.post('/orders', h(async (req, res) => {
     detalhe: cobranca.detalhe,
     provedor: PROVEDOR,
     ref: cobranca.ref,
+    /*
+     * Bandeira e parcelas da própria cobrança que acabou de ser feita.
+     *
+     * `cardMethodId` é o que o formulário do Mercado Pago detectou do número
+     * digitado ("visa", "master"), e é o que foi mandado para a autorização —
+     * no Pix não existe bandeira, e a parcela é sempre uma. O valor pago fica
+     * de fora aqui de propósito: é o webhook, consultando o provedor, que traz
+     * quanto entrou de verdade.
+     */
+    bandeira: payment === 'card' ? cardMethodId : '',
+    parcelas: payment === 'card' ? parcelas : 1,
   });
 
   if (cobranca.status === 'recusado') {
@@ -527,6 +617,7 @@ publicRoutes.get('/orders/:id/status', h(async (req, res) => {
       if (real !== null) {
         await aplicarPagamento({
           orderId: id, status: real.status, detalhe: real.detalhe, provedor: PROVEDOR, ref,
+          bandeira: real.bandeira, parcelas: real.parcelas, valorPago: real.valorPago,
         });
         const depois = await q.one('SELECT status FROM orders WHERE id = ?', [id]);
         if (depois !== null) status = String(depois.status);

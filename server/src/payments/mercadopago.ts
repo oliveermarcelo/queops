@@ -324,16 +324,39 @@ export async function cobrar(
 export async function consultarPedido(
   ref: string,
   cred: CredenciaisMP,
-): Promise<{ status: StatusPagamento; detalhe: string; orderId: string } | null> {
+): Promise<{
+  status: StatusPagamento;
+  detalhe: string;
+  orderId: string;
+  /** Bandeira do cartão ("visa", "master"); vazio no Pix. */
+  bandeira: string;
+  /** Parcelas efetivamente contratadas; 1 no Pix. */
+  parcelas: number;
+  /** Quanto o provedor confirmou, ou 0 quando ainda não há valor pago. */
+  valorPago: number;
+} | null> {
   try {
     const resposta: any = await cliente(cred).get({ id: ref });
     const pago = primeiroPagamento(resposta);
     const status = String(pago?.status ?? resposta?.status ?? '');
     const detalhe = String(pago?.status_detail ?? resposta?.status_detail ?? '');
+    /*
+     * Bandeira, parcelas e valor pago vêm do provedor, e não do que a loja
+     * pediu.
+     *
+     * A diferença importa na conciliação: o cliente pode fechar o cartão em 3x
+     * e o emissor aprovar em 1x, e o valor aprovado pode diferir do pedido
+     * (captura parcial). Guardar o que a loja pediu seria guardar a intenção,
+     * não o fato — e é o fato que tem de bater com o extrato.
+     */
+    const metodo = pago?.payment_method ?? {};
     return {
       status: traduzirStatus(status, detalhe),
       detalhe: detalhe || status,
       orderId: String(resposta?.external_reference ?? ''),
+      bandeira: String(metodo.id ?? metodo.type ?? '').toLowerCase(),
+      parcelas: Number(metodo.installments ?? pago?.installments ?? 0) || 0,
+      valorPago: Number(pago?.amount ?? resposta?.total_paid_amount ?? 0) || 0,
     };
   } catch (e) {
     const err = e as { message?: string; status?: number };
