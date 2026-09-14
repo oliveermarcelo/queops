@@ -152,11 +152,40 @@ export default function ShippingAdmin() {
           <h2 className="font-bold text-gray-800">Valor por estado</h2>
         </div>
 
-        <div className="max-w-xs mb-6">
-          <label className="block text-xs font-semibold text-gray-600 mb-1.5">Valor padrão (fallback)</label>
-          <input type="number" step="0.01" min="0" value={cfg.defaultPrice}
-            onChange={(e) => patch({ defaultPrice: parseFloat(e.target.value) || 0 })} className={inputCls} />
-          <p className="text-[11px] text-gray-400 mt-1">Usado quando o estado não está na tabela abaixo.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6 max-w-2xl">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Valor padrão (fallback)</label>
+            <input type="number" step="0.01" min="0" value={cfg.defaultPrice}
+              onChange={(e) => patch({ defaultPrice: parseFloat(e.target.value) || 0 })} className={inputCls} />
+            <p className="text-[11px] text-gray-400 mt-1">Usado quando o estado não está na tabela abaixo.</p>
+          </div>
+          {/*
+            Quem entrega quando o preço sai desta tabela.
+
+            Com Correios ou Melhor Envio ligados, a transportadora do pedido vem
+            da própria cotação e este campo é ignorado. Sem eles, a loja sabe o
+            PREÇO mas não sabe por onde a encomenda vai — e o ERP precisa do
+            nome para achar a transportadora no cadastro dele. Vazio é resposta
+            legítima: o ERP usa o padrão dele, como já faz hoje.
+          */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Transportadora padrão
+            </label>
+            <input
+              type="text"
+              value={String(cfg.defaultCarrier ?? '')}
+              placeholder="Correios"
+              maxLength={80}
+              onChange={(e) => patch({ defaultCarrier: e.target.value })}
+              className={inputCls}
+            />
+            <p className="text-[11px] text-gray-400 mt-1">
+              Quem entrega quando o frete sai desta tabela. Vai no pedido para o ERP achar a
+              transportadora no cadastro dele. Se os Correios estiverem ligados em Integrações,
+              a transportadora vem da cotação e este campo não é usado.
+            </p>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

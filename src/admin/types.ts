@@ -134,6 +134,14 @@ export interface ShippingConfig {
     minOrder: number;         // free above this cart value
     states: string[];         // UFs with always-free shipping
   };
+  /**
+   * Quem entrega quando o frete sai da tabela acima, e não de uma cotação.
+   *
+   * Vai no pedido como `shippingCarrier`, que é por onde o ERP acha a
+   * transportadora no cadastro dele. Vazio é legítimo: com Correios ou Melhor
+   * Envio ligados, a transportadora vem da cotação e este campo é ignorado.
+   */
+  defaultCarrier?: string;
 }
 
 // ---- Integrations ----

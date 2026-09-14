@@ -1312,7 +1312,9 @@ var init_store = __esm({
       // `states` lista UFs com frete grátis INCONDICIONAL (qualquer valor). Fica
       // vazio por padrão: com 'SP' aqui, o mínimo de R$ 199 e a faixa de CEP da
       // capital nunca seriam aplicados — todo pedido paulista sairia com frete 0.
-      freeShipping: { enabled: true, minOrder: 199, states: [] }
+      freeShipping: { enabled: true, minOrder: 199, states: [] },
+      // Vazio de propósito: a loja não declara transportadora que não escolheu.
+      defaultCarrier: ""
     };
     DEFAULT_RECOVERY = {
       enabled: true,
@@ -3021,6 +3023,28 @@ async function resolveCoupon(code, subtotal, exec = q, today = new Date(Date.now
   return [row, null];
 }
 __name(resolveCoupon, "resolveCoupon");
+function dadosDaTransportadora(cotacao, transportadoraPadrao = "") {
+  const opcoes = cotacao.shippingOptions ?? [];
+  const escolhida = opcoes.find((o) => o.id === (cotacao.shippingChoice ?? "")) ?? opcoes[0];
+  if (escolhida === void 0) {
+    return {
+      carrier: transportadoraPadrao,
+      serviceCode: "",
+      serviceName: "",
+      minDays: cotacao.deliveryDays ?? 0,
+      maxDays: cotacao.deliveryDays ?? 0
+    };
+  }
+  return {
+    carrier: escolhida.carrier,
+    // 'correios:03220' → '03220'
+    serviceCode: escolhida.id.split(":")[1] ?? "",
+    serviceName: escolhida.label,
+    minDays: escolhida.days,
+    maxDays: escolhida.days
+  };
+}
+__name(dadosDaTransportadora, "dadosDaTransportadora");
 function pesoDoProduto(linha, padraoG = 500) {
   const kg = Number(linha?.weight_kg ?? 0);
   if (Number.isFinite(kg) && kg > 0) {
@@ -4778,6 +4802,7 @@ publicRoutes.post("/orders", h(async (req, res) => {
     reason: previa.shippingReason ?? "default",
     option: previa.shippingChoice ?? ""
   };
+  const transporte = dadosDaTransportadora(previa, (await getShipping()).defaultCarrier ?? "");
   let gravado;
   try {
     gravado = await transaction(async (tx) => {
@@ -4807,9 +4832,6 @@ publicRoutes.post("/orders", h(async (req, res) => {
         }
       }
       const id = "QP-" + String(await nextCounter(tx, "order")).padStart(6, "0");
-      const opcao = (quote2.shippingOptions ?? []).find((o) => o.id === (quote2.shippingChoice ?? ""));
-      const transportadora = opcao?.carrier ?? "";
-      const codigoServico = (opcao?.id ?? "").split(":")[1] ?? "";
       await tx.run(
         `INSERT INTO orders (
             id, customer_id, customer_name, customer_email, customer_phone, customer_cpf,
@@ -4848,12 +4870,12 @@ publicRoutes.post("/orders", h(async (req, res) => {
           // Por onde a encomenda vai: sem isto, a lojista tem o valor do frete
           // e nenhuma pista de qual transportadora o cliente escolheu.
           quote2.shippingLabel.slice(0, 120),
-          transportadora.slice(0, 80),
-          codigoServico.slice(0, 40),
-          (opcao?.label ?? "").slice(0, 80),
+          transporte.carrier.slice(0, 80),
+          transporte.serviceCode.slice(0, 40),
+          transporte.serviceName.slice(0, 80),
           // Prazo mínimo e máximo: a cotação dá um número só, que é o teto.
-          opcao?.days ?? etaDays,
-          opcao?.days ?? etaDays,
+          transporte.minDays || etaDays,
+          transporte.maxDays || etaDays,
           /*
            * Custo do frete para a loja. Hoje é o mesmo que o cliente pagou —
            * a loja não subsidia. Gravado separado porque no dia em que

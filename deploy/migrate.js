@@ -343,7 +343,9 @@ var init_store = __esm({
       // `states` lista UFs com frete grátis INCONDICIONAL (qualquer valor). Fica
       // vazio por padrão: com 'SP' aqui, o mínimo de R$ 199 e a faixa de CEP da
       // capital nunca seriam aplicados — todo pedido paulista sairia com frete 0.
-      freeShipping: { enabled: true, minOrder: 199, states: [] }
+      freeShipping: { enabled: true, minOrder: 199, states: [] },
+      // Vazio de propósito: a loja não declara transportadora que não escolheu.
+      defaultCarrier: ""
     };
     DEFAULT_RECOVERY = {
       enabled: true,

@@ -193,6 +193,60 @@ export async function resolveCoupon(
 
 // -------------------------------------------------------------- cotação ----
 
+/**
+ * A transportadora do pedido, separada do texto que a lojista lê.
+ *
+ * Existe como função, e recebendo a cotação inteira, porque a informação só
+ * está completa em UM lugar: a lista de opções cotadas. Tirá-la do rótulo
+ * ("PAC — até 7 dias úteis") por fatiamento de texto é o que o ERP faz hoje na
+ * falta dela, e qualquer mudança nesse rótulo — trocar um traço por outro —
+ * mudaria em silêncio a transportadora do pedido no ERP.
+ *
+ * Quando o frete vem da TABELA DO PAINEL, e não de uma cotação, não existe
+ * transportadora a informar: a lojista definiu um preço por estado ou faixa de
+ * CEP, e quem entrega é decisão dela na hora de despachar. Nesse caso sai o que
+ * ela tiver configurado como transportadora padrão — e, se não configurou,
+ * vazio, que o ERP lê como null e resolve pelo padrão dele. Chutar "Correios"
+ * seria afirmar algo que a loja não sabe.
+ */
+export interface DadosDaTransportadora {
+  carrier: string;
+  serviceCode: string;
+  serviceName: string;
+  minDays: number;
+  maxDays: number;
+}
+
+export function dadosDaTransportadora(
+  cotacao: Pick<Quote, 'shippingOptions' | 'shippingChoice' | 'deliveryDays'>,
+  transportadoraPadrao = '',
+): DadosDaTransportadora {
+  const opcoes = cotacao.shippingOptions ?? [];
+  const escolhida = opcoes.find((o) => o.id === (cotacao.shippingChoice ?? ''))
+    // Sem escolha explícita, vale a primeira — a lista já vem da mais barata,
+    // e é ela que o motor de preços usou para calcular o total.
+    ?? opcoes[0];
+
+  if (escolhida === undefined) {
+    return {
+      carrier: transportadoraPadrao,
+      serviceCode: '',
+      serviceName: '',
+      minDays: cotacao.deliveryDays ?? 0,
+      maxDays: cotacao.deliveryDays ?? 0,
+    };
+  }
+
+  return {
+    carrier: escolhida.carrier,
+    // 'correios:03220' → '03220'
+    serviceCode: escolhida.id.split(':')[1] ?? '',
+    serviceName: escolhida.label,
+    minDays: escolhida.days,
+    maxDays: escolhida.days,
+  };
+}
+
 export interface QuoteItem {
   productId: string;
   /** SKU do produto — é por ele que o ERP casa o item. */

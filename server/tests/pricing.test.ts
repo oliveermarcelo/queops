@@ -17,6 +17,7 @@ import test from 'node:test';
 import { round2 } from '../src/http.ts';
 import {
   calculateShipping,
+  dadosDaTransportadora,
   deliveryDaysFor,
   normalizeCep,
   pesoDoProduto,
@@ -60,6 +61,8 @@ const base: ShippingConfig = {
     { id: 'cr2', from: '06000000', to: '06999999', free: true, label: 'Osasco grátis' },
   ],
   freeShipping: { enabled: true, minOrder: 199.0, states: [] },
+  // Sem transportadora declarada: é o caso de quem cobra pela tabela do painel.
+  defaultCarrier: '',
 };
 
 /** Cópia profunda rasa o suficiente para os casos abaixo. */
@@ -226,4 +229,61 @@ test('peso vem do campo numérico; o rótulo é só reserva', () => {
   // Fração de quilo sobrevive à conversão para gramas.
   assert.equal(pesoDoProduto({ weight_kg: 0.2 }).gramas, 200);
   assert.equal(pesoDoProduto({ weight_kg: 1.234 }).gramas, 1234);
+});
+
+/**
+ * A transportadora do pedido sai da COTAÇÃO, nunca do texto do rótulo.
+ *
+ * Este teste nasceu de um defeito encontrado pelo integrador do ERP: os campos
+ * `shippingCarrier`, `shippingServiceCode` e `shippingServiceName` chegavam
+ * sempre vazios. A causa era ler a transportadora da cotação feita DENTRO da
+ * transação do pedido — que recebe o frete já resolvido justamente para não
+ * repetir a chamada de rede e, por isso, devolve `shippingOptions` vazio.
+ * Estava se lendo de uma lista garantidamente vazia.
+ *
+ * O que estes casos fixam é o contrato da função: dada uma cotação COM opções,
+ * ela devolve os dados da opção escolhida; sem opções, devolve o padrão da
+ * loja — e vazio, se a loja não declarou nenhum.
+ */
+test('transportadora do pedido: vem da opção cotada, não do rótulo', () => {
+  const cotado = {
+    shippingOptions: [
+      { id: 'correios:03298', label: 'PAC', carrier: 'Correios', price: 26.6, days: 7,
+        source: 'correios' as const },
+      { id: 'melhorenvio:2', label: 'Jadlog · .Package', carrier: 'Jadlog', price: 22.1, days: 5,
+        source: 'melhorenvio' as const },
+    ],
+    shippingChoice: 'melhorenvio:2',
+    deliveryDays: 7,
+  };
+
+  const escolhida = dadosDaTransportadora(cotado);
+  assert.equal(escolhida.carrier, 'Jadlog', 'a transportadora da opção escolhida');
+  assert.equal(escolhida.serviceCode, '2', 'o código do serviço, sem o prefixo do provedor');
+  assert.equal(escolhida.serviceName, 'Jadlog · .Package');
+  assert.equal(escolhida.maxDays, 5, 'o prazo em número, e não dentro de uma frase');
+
+  /*
+   * Sem escolha explícita vale a primeira da lista: é a mais barata, e é a que
+   * o motor de preços usou para calcular o total. Devolver vazio aqui faria o
+   * pedido sair sem transportadora mesmo tendo sido cotado.
+   */
+  const semEscolha = dadosDaTransportadora({ ...cotado, shippingChoice: '' });
+  assert.equal(semEscolha.carrier, 'Correios', 'sem escolha, a primeira cotada');
+});
+
+test('sem cotação, a transportadora é a que a loja declarou — ou nenhuma', () => {
+  const semOpcoes = { shippingOptions: [], shippingChoice: '', deliveryDays: 6 };
+
+  /*
+   * Frete pela tabela do painel: não houve cotação, então não há transportadora
+   * a afirmar. Vazio vira null no pedido, e o ERP usa o padrão dele — que é
+   * exatamente o que acontecia antes destes campos existirem.
+   */
+  assert.equal(dadosDaTransportadora(semOpcoes).carrier, '', 'nada declarado, nada afirmado');
+  assert.equal(dadosDaTransportadora(semOpcoes).serviceCode, '');
+  assert.equal(dadosDaTransportadora(semOpcoes).maxDays, 6, 'o prazo estimado ainda sai');
+
+  // Com a transportadora padrão configurada, ela é quem vai no pedido.
+  assert.equal(dadosDaTransportadora(semOpcoes, 'Correios').carrier, 'Correios');
 });

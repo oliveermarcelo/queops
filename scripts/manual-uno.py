@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 3.0 — 11 de setembro de 2026'
+VERSAO = 'Versão 3.1 — 14 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -743,6 +743,19 @@ GET /api/v1/orders?status=paid&updatedSince=2026-08-01T00:00:00Z
         'máscara, e <font face="Courier">""</font> quando ausente — justamente para não quebrar '
         'quem já o lê; para faturar, use '
         '<font face="Courier">customerDocument</font>, que traz só dígitos.'))
+    add(Spacer(1, 6))
+    add(aviso(
+        'Quando shippingCarrier vem null — e o que fazer',
+        'A transportadora sai da <b>cotação</b>. Com Correios ou Melhor Envio ligados na loja, '
+        '<font face="Courier">shippingCarrier</font>, '
+        '<font face="Courier">shippingServiceCode</font> e '
+        '<font face="Courier">shippingServiceName</font> vêm preenchidos com o que foi cotado. '
+        'Quando a loja cobra frete pela <b>tabela dela</b> (preço por estado ou faixa de CEP), não '
+        'houve cotação e não existe transportadora a declarar — a lojista pode informar uma '
+        'transportadora padrão em Painel → Frete &amp; Entrega, e se não informar os campos vêm '
+        '<font face="Courier">null</font>. <b>Null aqui significa "a loja não sabe", e não "a loja '
+        'esqueceu": use o padrão do ERP.</b> Não derive a transportadora do texto de '
+        '<font face="Courier">shippingService</font> — ele é rótulo de vitrine e muda sem aviso.'))
     add(Spacer(1, 6))
     add(aviso(
         'Por que paymentStatus existe, se já há status',

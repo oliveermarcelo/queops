@@ -19,10 +19,13 @@ import {
 } from '../payments/mercadopago.ts';
 import { aplicarPagamento, cancelarSemCobranca } from '../payments/pedidos.ts';
 import {
-  deliveryDaysFor, normalizeCep, quoteCart, ufFromCep, type ShippingResult,
+  dadosDaTransportadora, deliveryDaysFor, normalizeCep, quoteCart, ufFromCep,
+  type ShippingResult,
 } from '../pricing.ts';
 import { fireWebhooks } from '../providers.ts';
-import { fetchProducts, getSettings, productRowToApi, publicSettings } from '../store.ts';
+import {
+  fetchProducts, getSettings, getShipping, productRowToApi, publicSettings,
+} from '../store.ts';
 import { h } from './helpers.ts';
 
 export const publicRoutes = Router();
@@ -266,6 +269,24 @@ publicRoutes.post('/orders', h(async (req, res) => {
     option: previa.shippingChoice ?? '',
   };
 
+  /*
+   * A TRANSPORTADORA SAI DA `previa`, e não da cotação de dentro da transação.
+   *
+   * Esta linha é a correção de um defeito que o integrador do ERP encontrou:
+   * os campos `shippingCarrier`, `shippingServiceCode` e `shippingServiceName`
+   * chegavam SEMPRE vazios, com ou sem transportadora ligada.
+   *
+   * O motivo é sutil. A cotação de dentro da transação recebe `freteFixado`
+   * justamente para NÃO repetir a chamada de rede — e, por isso, ela devolve
+   * `shippingOptions` vazio: não cotou ninguém. Ler a transportadora de lá era
+   * ler de uma lista garantidamente vazia. A lista com as opções de verdade é
+   * a da `previa`, cotada aqui fora.
+   *
+   * Vazio continua sendo possível, e aí é a verdade: quando o frete vem da
+   * tabela do painel, não houve cotação e não há transportadora a declarar.
+   */
+  const transporte = dadosDaTransportadora(previa, (await getShipping()).defaultCarrier ?? '');
+
   let gravado: { orderId: string; quote: Awaited<ReturnType<typeof quoteCart>> };
 
   try {
@@ -315,21 +336,6 @@ publicRoutes.post('/orders', h(async (req, res) => {
 
       const id = 'QP-' + String(await nextCounter(tx, 'order')).padStart(6, '0');
 
-      /*
-       * Frete em partes, além do texto.
-       *
-       * `shippingLabel` é o que a lojista lê ("PAC — até 7 dias úteis"). O ERP
-       * casa transportadora POR NOME: recebendo a frase inteira ele nunca
-       * acerta e joga o pedido na transportadora padrão do sistema. Então a
-       * transportadora, o código do serviço e os prazos saem separados, da
-       * própria opção cotada — e não de uma tentativa de fatiar o texto.
-       */
-      const opcao = (quote.shippingOptions ?? [])
-        .find((o) => o.id === (quote.shippingChoice ?? ''));
-      const transportadora = opcao?.carrier ?? '';
-      // 'correios:03220' → '03220'. Vazio quando o frete veio das regras do painel.
-      const codigoServico = (opcao?.id ?? '').split(':')[1] ?? '';
-
       await tx.run(
         `INSERT INTO orders (
             id, customer_id, customer_name, customer_email, customer_phone, customer_cpf,
@@ -353,10 +359,10 @@ publicRoutes.post('/orders', h(async (req, res) => {
           // Por onde a encomenda vai: sem isto, a lojista tem o valor do frete
           // e nenhuma pista de qual transportadora o cliente escolheu.
           quote.shippingLabel.slice(0, 120),
-          transportadora.slice(0, 80), codigoServico.slice(0, 40),
-          (opcao?.label ?? '').slice(0, 80),
+          transporte.carrier.slice(0, 80), transporte.serviceCode.slice(0, 40),
+          transporte.serviceName.slice(0, 80),
           // Prazo mínimo e máximo: a cotação dá um número só, que é o teto.
-          opcao?.days ?? etaDays, opcao?.days ?? etaDays,
+          transporte.minDays || etaDays, transporte.maxDays || etaDays,
           /*
            * Custo do frete para a loja. Hoje é o mesmo que o cliente pagou —
            * a loja não subsidia. Gravado separado porque no dia em que

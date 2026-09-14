@@ -43,6 +43,17 @@ export interface ShippingConfig {
   perState: Record<string, number>;
   cepRanges: CepRange[];
   freeShipping: { enabled?: boolean; minOrder?: number; states?: string[] };
+  /**
+   * Quem entrega quando o frete sai da tabela do painel, e não de uma cotação.
+   *
+   * Com Correios ou Melhor Envio ligados, a transportadora do pedido vem da
+   * própria cotação e este campo é ignorado. Sem eles, a loja cobra um preço
+   * por estado ou faixa de CEP e não tem como saber por onde a encomenda vai —
+   * é decisão de quem despacha. Este campo é o jeito de a lojista declarar
+   * isso, e vazio é uma resposta legítima: o ERP recebe null e usa o padrão
+   * dele, que é o que já acontece hoje.
+   */
+  defaultCarrier: string;
   [k: string]: unknown;
 }
 
@@ -78,6 +89,8 @@ export const DEFAULT_SHIPPING: ShippingConfig = {
   // vazio por padrão: com 'SP' aqui, o mínimo de R$ 199 e a faixa de CEP da
   // capital nunca seriam aplicados — todo pedido paulista sairia com frete 0.
   freeShipping: { enabled: true, minOrder: 199.0, states: [] },
+  // Vazio de propósito: a loja não declara transportadora que não escolheu.
+  defaultCarrier: '',
 };
 
 export const DEFAULT_RECOVERY: RecoveryConfig = {
