@@ -223,6 +223,19 @@ export function espelharCategoriasDoErp(): Promise<{
   return api.post('/admin/erp-categories/espelhar', { confirmar: true });
 }
 
+/**
+ * Foto, frase e destaque na home de uma categoria.
+ *
+ * Só o que é da LOJA: nome e hierarquia continuam vindo do ERP, para o nome não
+ * deixar de bater com o do outro lado na hora de amarrar.
+ */
+export function updateCategoryShowcase(
+  id: string,
+  patch: { image?: string; blurb?: string; home?: boolean; position?: number },
+): Promise<{ categories: { id: string; image: string; blurb: string; home: boolean }[] }> {
+  return api.patch(`/admin/categories/${encodeURIComponent(id)}`, patch);
+}
+
 /** Trocar a própria senha exige a atual — a sessão aberta não basta. */
 export function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
   return api.put('/admin/me/password', { currentPassword, newPassword });

@@ -87,14 +87,39 @@ async function importCatalog(dir: string): Promise<void> {
   const descriptions = new Map<string, string>();
   for (const c of catalog.categories ?? []) descriptions.set(c.id, c.description ?? '');
 
+  /*
+   * Vitrine das seis categorias originais da loja.
+   *
+   * A seção "Explore por categoria" era cravada no código com estas fotos e
+   * frases. Agora ela lê do banco, então a semente precisa trazê-las — senão
+   * uma instalação nova sobe com a seção vazia, e quem instalou concluiria
+   * que a home está quebrada.
+   *
+   * Só vale para a PRIMEIRA gravação: o `ON DUPLICATE KEY` abaixo não toca em
+   * `image`, `blurb` nem `home`, porque esses campos passam a pertencer a quem
+   * administra a loja. Rodar a migração de novo não desfaz a escolha dela.
+   */
+  const vitrinePadrao: Record<string, { image: string; blurb: string }> = {
+    piramides: { image: '/banners/categoria-piramides.jpg', blurb: 'Cobre, cristal e veludo azul' },
+    cristais: { image: '/banners/categoria-cristais.jpg', blurb: 'Ametistas, quartzos e minerais' },
+    incensos: { image: '/banners/categoria-incensos.jpg', blurb: 'Incensos, incensários e essências' },
+    acessorios: { image: '/banners/categoria-acessorios.jpg', blurb: 'Pingentes, pulseiras e prata' },
+    religiosos: { image: '/banners/categoria-religiosos.jpg', blurb: 'Cruzes, santos e egípcios' },
+    decoracao: { image: '/banners/categoria-decoracao.jpg', blurb: 'Estátuas, quadros e velas' },
+  };
+
   let pos = 0;
   for (const m of catalog.menu ?? []) {
+    const vitrine = vitrinePadrao[String(m.id)];
     await q.run(
-      `INSERT INTO categories (id, name, description, icon, featured, position)
-       VALUES (?,?,?,?,?,?)
+      `INSERT INTO categories (id, name, description, icon, featured, position, image, blurb, home)
+       VALUES (?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description),
           icon=VALUES(icon), featured=VALUES(featured), position=VALUES(position)`,
-      [m.id, m.name, descriptions.get(m.id) ?? '', m.icon ?? '', m.featured ? 1 : 0, pos++],
+      [
+        m.id, m.name, descriptions.get(m.id) ?? '', m.icon ?? '', m.featured ? 1 : 0, pos++,
+        vitrine?.image ?? '', vitrine?.blurb ?? '', vitrine === undefined ? 0 : 1,
+      ],
     );
     let subPos = 0;
     for (const s of m.subcategories ?? []) {

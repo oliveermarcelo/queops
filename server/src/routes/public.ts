@@ -90,6 +90,16 @@ publicRoutes.get('/catalog', h(async (_req, res) => {
       name: c.name,
       icon: c.icon,
       featured: Boolean(c.featured),
+      /*
+       * Vitrine da categoria, editada no painel.
+       *
+       * `home` é o que decide quem aparece na seção "Explore por categoria".
+       * Ela era seis cartões cravados no código — com ids que deixaram de
+       * existir quando a loja passou a espelhar a árvore do ERP.
+       */
+      image: String(c.image ?? ''),
+      blurb: String(c.blurb ?? ''),
+      home: Boolean(c.home),
       subcategories: children.get(String(c.id)) ?? [],
     })),
     settings: await publicSettings(),

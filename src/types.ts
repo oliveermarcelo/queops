@@ -67,6 +67,17 @@ export interface MenuCategory {
   name: string;
   icon: string; // lucide icon name
   featured?: boolean; // highlighted entry (e.g. Promoções, Novidades)
+  /**
+   * Vitrine da categoria, editada em Painel → Vitrine das Categorias.
+   *
+   * `home` decide quem aparece na seção "Explore por categoria". Ela era seis
+   * cartões cravados no código, com ids que deixaram de existir quando a loja
+   * passou a espelhar a árvore do ERP — os cartões levavam a uma lista vazia.
+   */
+  image?: string;
+  blurb?: string;
+  home?: boolean;
+  position?: number;
   subcategories: SubCategory[];
 }
 

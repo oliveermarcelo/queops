@@ -591,14 +591,33 @@ async function importCatalog(dir) {
   }
   const descriptions = /* @__PURE__ */ new Map();
   for (const c of catalog.categories ?? []) descriptions.set(c.id, c.description ?? "");
+  const vitrinePadrao = {
+    piramides: { image: "/banners/categoria-piramides.jpg", blurb: "Cobre, cristal e veludo azul" },
+    cristais: { image: "/banners/categoria-cristais.jpg", blurb: "Ametistas, quartzos e minerais" },
+    incensos: { image: "/banners/categoria-incensos.jpg", blurb: "Incensos, incens\xE1rios e ess\xEAncias" },
+    acessorios: { image: "/banners/categoria-acessorios.jpg", blurb: "Pingentes, pulseiras e prata" },
+    religiosos: { image: "/banners/categoria-religiosos.jpg", blurb: "Cruzes, santos e eg\xEDpcios" },
+    decoracao: { image: "/banners/categoria-decoracao.jpg", blurb: "Est\xE1tuas, quadros e velas" }
+  };
   let pos = 0;
   for (const m of catalog.menu ?? []) {
+    const vitrine = vitrinePadrao[String(m.id)];
     await q.run(
-      `INSERT INTO categories (id, name, description, icon, featured, position)
-       VALUES (?,?,?,?,?,?)
+      `INSERT INTO categories (id, name, description, icon, featured, position, image, blurb, home)
+       VALUES (?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description),
           icon=VALUES(icon), featured=VALUES(featured), position=VALUES(position)`,
-      [m.id, m.name, descriptions.get(m.id) ?? "", m.icon ?? "", m.featured ? 1 : 0, pos++]
+      [
+        m.id,
+        m.name,
+        descriptions.get(m.id) ?? "",
+        m.icon ?? "",
+        m.featured ? 1 : 0,
+        pos++,
+        vitrine?.image ?? "",
+        vitrine?.blurb ?? "",
+        vitrine === void 0 ? 0 : 1
+      ]
     );
     let subPos = 0;
     for (const s of m.subcategories ?? []) {

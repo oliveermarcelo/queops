@@ -704,16 +704,35 @@ async function espelharArvoreDoErp() {
       mapaPai.set(String(c.code), pai);
     }
     const raizes = ativas.filter((c) => mapaPai.get(String(c.code)) === null);
-    const antes = await tx.all("SELECT id FROM categories");
+    const vitrineAntiga = /* @__PURE__ */ new Map();
+    const antes = await tx.all("SELECT id, image, blurb, home FROM categories");
+    for (const c of antes) {
+      vitrineAntiga.set(String(c.id), {
+        image: String(c.image ?? ""),
+        blurb: String(c.blurb ?? ""),
+        home: Number(c.home) || 0
+      });
+    }
     await tx.run("DELETE FROM categories");
     const slugsRaiz = /* @__PURE__ */ new Set();
     const slugPorCodigo = /* @__PURE__ */ new Map();
     let posicao = 0;
     for (const c of raizes) {
       const slug = slugUnico(slugificar(String(c.name)), slugsRaiz);
+      const vitrine = vitrineAntiga.get(slug) ?? { image: "", blurb: "", home: 0 };
       await tx.run(
-        "INSERT INTO categories (id, name, description, icon, featured, position) VALUES (?,?,?,?,0,?)",
-        [slug, String(c.name).slice(0, 120), "", "", posicao]
+        `INSERT INTO categories (id, name, description, icon, featured, position, image, blurb, home)
+         VALUES (?,?,?,?,0,?,?,?,?)`,
+        [
+          slug,
+          String(c.name).slice(0, 120),
+          "",
+          "",
+          posicao,
+          vitrine.image,
+          vitrine.blurb,
+          vitrine.home
+        ]
       );
       slugPorCodigo.set(String(c.code), { categoria: slug, sub: null });
       posicao++;
@@ -3748,6 +3767,10 @@ adminRoutes.get("/state", h(async (req, res) => {
       name: c.name,
       icon: c.icon,
       featured: Boolean(c.featured),
+      image: String(c.image ?? ""),
+      blurb: String(c.blurb ?? ""),
+      home: Boolean(c.home),
+      position: Number(c.position) || 0,
       subcategories: subs.get(String(c.id)) ?? []
     })),
     // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
@@ -3956,6 +3979,46 @@ adminRoutes.delete("/products/:id", h(async (req, res) => {
   }
   await q.run("UPDATE products SET active = 0 WHERE id = ?", [id]);
   jsonOk(res, { ok: true, apagado: false });
+}));
+adminRoutes.patch("/categories/:id", h(async (req, res) => {
+  await requireAdmin(req);
+  const id = String(req.params.id ?? "");
+  const b = body(req);
+  const campos = [];
+  const valores = [];
+  if (typeof b.image === "string") {
+    campos.push("image = ?");
+    valores.push(b.image.slice(0, 500));
+  }
+  if (typeof b.blurb === "string") {
+    campos.push("blurb = ?");
+    valores.push(b.blurb.slice(0, 160));
+  }
+  if (b.home !== void 0) {
+    campos.push("home = ?");
+    valores.push(bodyBool(b, "home") ? 1 : 0);
+  }
+  if (b.position !== void 0) {
+    campos.push("position = ?");
+    valores.push(bodyInt(b, "position", 0));
+  }
+  if (campos.length === 0) fail("Nada a alterar.", 422, "no_fields");
+  const mudou = await q.run(
+    `UPDATE categories SET ${campos.join(", ")} WHERE id = ?`,
+    [...valores, id]
+  );
+  if (mudou === 0) fail("Categoria n\xE3o encontrada.", 404, "not_found");
+  const linhas = await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC");
+  jsonOk(res, {
+    categories: linhas.map((c) => ({
+      id: String(c.id),
+      name: String(c.name),
+      image: String(c.image ?? ""),
+      blurb: String(c.blurb ?? ""),
+      home: Boolean(c.home),
+      position: Number(c.position) || 0
+    }))
+  });
 }));
 adminRoutes.patch("/orders/:id", h(async (req, res) => {
   await requireAdmin(req);
@@ -4695,6 +4758,16 @@ publicRoutes.get("/catalog", h(async (_req, res) => {
       name: c.name,
       icon: c.icon,
       featured: Boolean(c.featured),
+      /*
+       * Vitrine da categoria, editada no painel.
+       *
+       * `home` é o que decide quem aparece na seção "Explore por categoria".
+       * Ela era seis cartões cravados no código — com ids que deixaram de
+       * existir quando a loja passou a espelhar a árvore do ERP.
+       */
+      image: String(c.image ?? ""),
+      blurb: String(c.blurb ?? ""),
+      home: Boolean(c.home),
       subcategories: children.get(String(c.id)) ?? []
     })),
     settings: await publicSettings()

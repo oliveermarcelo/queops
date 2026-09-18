@@ -484,8 +484,29 @@ export async function espelharArvoreDoErp(): Promise<ResultadoDoEspelho> {
 
     const raizes = ativas.filter((c) => mapaPai.get(String(c.code)) === null);
 
-    // --------------------------------------------------- apaga o antigo ----
-    const antes = await tx.all('SELECT id FROM categories');
+    /*
+     * ------------------------------------------------- apaga o antigo ----
+     *
+     * Antes de apagar, guarda o que é DA LOJA e não do ERP: a foto da
+     * categoria, a frase da vitrine e o "mostrar na home". O ERP não conhece
+     * nada disso e nunca vai reenviar — sem esta cópia, cada espelhamento
+     * apagaria em silêncio as fotos que alguém subiu à mão, e só se
+     * descobriria olhando a home depois.
+     *
+     * A chave é o SLUG, que é derivado do nome: uma categoria que continua se
+     * chamando "Pirâmides de Cobre" recebe a sua foto de volta. Se o ERP
+     * renomear a categoria, o slug muda e a foto não volta — é o certo, porque
+     * aí passou a ser outra categoria, e herdar a foto da antiga seria pior.
+     */
+    const vitrineAntiga = new Map<string, { image: string; blurb: string; home: number }>();
+    const antes = await tx.all('SELECT id, image, blurb, home FROM categories');
+    for (const c of antes) {
+      vitrineAntiga.set(String(c.id), {
+        image: String(c.image ?? ''),
+        blurb: String(c.blurb ?? ''),
+        home: Number(c.home) || 0,
+      });
+    }
     // `subcategories` tem FK com ON DELETE CASCADE: some junto.
     await tx.run('DELETE FROM categories');
 
@@ -496,9 +517,14 @@ export async function espelharArvoreDoErp(): Promise<ResultadoDoEspelho> {
     let posicao = 0;
     for (const c of raizes) {
       const slug = slugUnico(slugificar(String(c.name)), slugsRaiz);
+      const vitrine = vitrineAntiga.get(slug) ?? { image: '', blurb: '', home: 0 };
       await tx.run(
-        'INSERT INTO categories (id, name, description, icon, featured, position) VALUES (?,?,?,?,0,?)',
-        [slug, String(c.name).slice(0, 120), '', '', posicao],
+        `INSERT INTO categories (id, name, description, icon, featured, position, image, blurb, home)
+         VALUES (?,?,?,?,0,?,?,?,?)`,
+        [
+          slug, String(c.name).slice(0, 120), '', '', posicao,
+          vitrine.image, vitrine.blurb, vitrine.home,
+        ],
       );
       slugPorCodigo.set(String(c.code), { categoria: slug, sub: null });
       posicao++;

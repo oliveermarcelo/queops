@@ -32,6 +32,10 @@ interface AdminContextValue {
   upsertProduct: (p: Product) => Promise<void>;
   deleteProduct: (id: string, definitivo?: boolean) => Promise<void>;
   setOrderStatus: (id: string, status: OrderStatus, cancelReason?: string) => Promise<void>;
+  updateCategoryShowcase: (
+    id: string,
+    patch: { image?: string; blurb?: string; home?: boolean; position?: number },
+  ) => Promise<void>;
   deleteOrder: (id: string) => Promise<void>;
   upsertCoupon: (c: Coupon) => Promise<void>;
   deleteCoupon: (id: string) => Promise<void>;
@@ -194,6 +198,22 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
               : s.products.map((x) => (x.id === id ? { ...x, active: false } : x)),
           }),
           () => store.deleteProduct(id, definitivo),
+        ),
+
+      /*
+       * A vitrine da categoria muda na tela ANTES da ida ao servidor.
+       *
+       * A pessoa está trocando fotos e marcando caixinhas em sequência; esperar
+       * a resposta a cada clique faria a tela parecer travada. O servidor
+       * devolve a lista inteira, e o `refresh()` seguinte reconcilia.
+       */
+      updateCategoryShowcase: (id, patch) =>
+        mutate(
+          (s) => ({
+            ...s,
+            menu: s.menu.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+          }),
+          () => store.updateCategoryShowcase(id, patch).then(() => undefined),
         ),
 
       setOrderStatus: (id, status, cancelReason = '') =>

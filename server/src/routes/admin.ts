@@ -121,6 +121,10 @@ adminRoutes.get('/state', h(async (req, res) => {
       name: c.name,
       icon: c.icon,
       featured: Boolean(c.featured),
+      image: String(c.image ?? ''),
+      blurb: String(c.blurb ?? ''),
+      home: Boolean(c.home),
+      position: Number(c.position) || 0,
       subcategories: subs.get(String(c.id)) ?? [],
     })),
     // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
@@ -440,6 +444,69 @@ adminRoutes.delete('/products/:id', h(async (req, res) => {
 
   await q.run('UPDATE products SET active = 0 WHERE id = ?', [id]);
   jsonOk(res, { ok: true, apagado: false });
+}));
+
+/**
+ * PATCH /api/admin/categories/:id — a vitrine de uma categoria.
+ *
+ * Só mexe no que é DA LOJA: foto, frase e se aparece na home. Nome e hierarquia
+ * continuam vindo do ERP de propósito — renomear aqui faria o nome deixar de
+ * bater com o do outro lado, e a tela de amarração ficaria impossível de ler.
+ *
+ * Campo ausente não é mexido. Isso permite à tela salvar só o que mudou, e
+ * impede que uma tela antiga, que não conhece um campo novo, o apague ao gravar.
+ */
+adminRoutes.patch('/categories/:id', h(async (req, res) => {
+  await requireAdmin(req);
+  const id = String(req.params.id ?? '');
+  const b = body(req);
+
+  const campos: string[] = [];
+  const valores: unknown[] = [];
+
+  if (typeof b.image === 'string') {
+    campos.push('image = ?');
+    valores.push(b.image.slice(0, 500));
+  }
+  if (typeof b.blurb === 'string') {
+    campos.push('blurb = ?');
+    valores.push(b.blurb.slice(0, 160));
+  }
+  if (b.home !== undefined) {
+    campos.push('home = ?');
+    valores.push(bodyBool(b, 'home') ? 1 : 0);
+  }
+  if (b.position !== undefined) {
+    campos.push('position = ?');
+    valores.push(bodyInt(b, 'position', 0));
+  }
+
+  if (campos.length === 0) fail('Nada a alterar.', 422, 'no_fields');
+
+  const mudou = await q.run(
+    `UPDATE categories SET ${campos.join(', ')} WHERE id = ?`,
+    [...valores, id],
+  );
+  if (mudou === 0) fail('Categoria não encontrada.', 404, 'not_found');
+
+  /*
+   * Devolve a lista inteira já atualizada, como as telas de usuário e de
+   * categorias do ERP: aqui um clique muda o que os outros mostram — marcar
+   * uma categoria para a home muda a contagem exibida na tela —, e uma segunda
+   * viagem ao servidor entre um clique e o próximo deixaria a tela mentindo no
+   * intervalo.
+   */
+  const linhas = await q.all('SELECT * FROM categories ORDER BY position ASC, name ASC');
+  jsonOk(res, {
+    categories: linhas.map((c) => ({
+      id: String(c.id),
+      name: String(c.name),
+      image: String(c.image ?? ''),
+      blurb: String(c.blurb ?? ''),
+      home: Boolean(c.home),
+      position: Number(c.position) || 0,
+    })),
+  });
 }));
 
 // PATCH /api/admin/orders/:id

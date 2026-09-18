@@ -107,6 +107,24 @@ CREATE TABLE IF NOT EXISTS categories (
   icon        VARCHAR(40)  NOT NULL DEFAULT '',
   featured    TINYINT(1)   NOT NULL DEFAULT 0,
   position    INT          NOT NULL DEFAULT 0,
+  -- ---------------------------------------------------------------------
+  -- Vitrine da categoria: foto, frase e se aparece na home.
+  --
+  -- A seção "Explore por categoria" era SEIS CARTÕES CRAVADOS no código, com
+  -- id, nome, frase e foto fixos. Depois que a loja passou a espelhar a árvore
+  -- do ERP, esses ids deixaram de existir: os cartões continuavam bonitos na
+  -- home e levavam a uma lista vazia.
+  --
+  -- `home` existe separado de `featured` porque são coisas diferentes:
+  -- `featured` é o destaque do menu (Promoções, Novidades), e este é "mostrar
+  -- na home". Mostrar TODAS seria inviável — o ERP manda dezenas.
+  --
+  -- Estes três campos são da LOJA, não do ERP: o espelhamento os preserva por
+  -- slug, senão cada sincronização apagaria as fotos que alguém subiu à mão.
+  -- ---------------------------------------------------------------------
+  image       VARCHAR(500) NOT NULL DEFAULT '',
+  blurb       VARCHAR(160) NOT NULL DEFAULT '',
+  home        TINYINT(1)   NOT NULL DEFAULT 0,
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
