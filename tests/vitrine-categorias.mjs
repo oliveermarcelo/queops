@@ -166,8 +166,107 @@ ok(sobreviveu?.image === '/midia/aaaabbbbccccddddeeeeffff.png',
 ok(sobreviveu?.blurb === 'Foto subida à mão', 'nem a frase', String(sobreviveu?.blurb));
 ok(sobreviveu?.home === true, 'nem a marcação da home');
 
+// ------------------------------------------------- agrupar categorias ----
+
+/*
+ * O problema real: o ERP manda "Pirâmides de Cristal", "de Madeira" e "de
+ * Impressão 3D" como categorias SOLTAS, no mesmo nível. Não existe uma
+ * "Pirâmides" para o cliente clicar, e não vai existir enquanto o ERP não
+ * mandar a hierarquia. A loja cria a sua e pendura as do ERP dentro.
+ */
+const filhas = [`grp-a-${marca}`, `grp-b-${marca}`];
+for (const [i, id] of filhas.entries()) {
+  await q.run(
+    'INSERT INTO categories (id, name, description, icon, featured, position) VALUES (?,?,?,?,0,?)',
+    [id, `Filha ${i + 1} ${marca}`, '', '', 910 + i],
+  );
+}
+// Um produto em cada filha: é o que prova que navegar no grupo acha os dois.
+for (const [i, id] of filhas.entries()) {
+  await painel.chamar('POST', '/api/admin/products', {
+    id: `prod-grp-${i}-${marca}`, name: `Produto do grupo ${i}`, price: 10 + i,
+    stock: 5, category: id,
+  });
+}
+
+const grupo = await painel.chamar('POST', '/api/admin/categories', {
+  name: `Categoria Geral ${marca}`,
+});
+ok(grupo.status === 201, 'a categoria geral é criada pelo painel', String(grupo.status));
+const idGrupo = grupo.json?.id ?? '';
+
+for (const id of filhas) {
+  await painel.chamar('PATCH', `/api/admin/categories/${id}`, { groupId: idGrupo });
+}
+
+const menuAgrupado = await menuPublico();
+ok(menuAgrupado.some((c) => c.id === idGrupo), 'a categoria geral aparece no topo do menu');
+ok(!menuAgrupado.some((c) => c.id === filhas[0]),
+  'e as agrupadas somem do topo — era esse o menu cheio de irmãs');
+
+const dentro = menuAgrupado.find((c) => c.id === idGrupo)?.subcategories ?? [];
+ok(dentro.length === 2, 'as duas aparecem DENTRO da categoria geral', String(dentro.length));
+ok(dentro.every((s) => s.isCategory === true),
+  'marcadas como categoria, e não como subcategoria — a vitrine filtra diferente');
+
+/*
+ * A verificação que importa para o cliente: o produto continua onde estava, e
+ * mesmo assim é encontrado pela categoria geral. Agrupar não move produto.
+ */
+const catalogo = await (await fetch(BASE + '/api/catalog')).json();
+const doGrupo = (catalogo.products ?? []).filter((p) => filhas.includes(p.category));
+ok(doGrupo.length === 2,
+  'os produtos continuam apontando para a categoria do ERP, não para o grupo',
+  String(doGrupo.length));
+
+// ------------------------------------------------ o que o servidor recusa ----
+
+const emSiMesma = await painel.chamar('PATCH', `/api/admin/categories/${idGrupo}`, {
+  groupId: idGrupo,
+});
+ok(emSiMesma.status === 422, 'uma categoria não entra dentro dela mesma', String(emSiMesma.status));
+
+const doisNiveis = await painel.chamar('PATCH', `/api/admin/categories/${slug}`, {
+  groupId: filhas[0],
+});
+ok(doisNiveis.status === 422,
+  'nem dentro de uma que já está dentro de outra — só um nível',
+  String(doisNiveis.status));
+
+const grupoComMembros = await painel.chamar('PATCH', `/api/admin/categories/${idGrupo}`, {
+  groupId: slug,
+});
+ok(grupoComMembros.status === 422,
+  'e quem já agrupa outras não vira membro, senão os filhos sumiriam',
+  String(grupoComMembros.status));
+
+const apagarDoErp = await painel.chamar('DELETE', `/api/admin/categories/${filhas[0]}`);
+ok(apagarDoErp.status === 409,
+  'categoria do ERP não é apagada aqui — voltaria na próxima sincronização',
+  String(apagarDoErp.status));
+
+// ------------------------- espelhar não pode desmontar o que foi agrupado ----
+
+await painel.chamar('POST', '/api/admin/erp-categories/espelhar', { confirmar: true });
+const depoisDeEspelhar = await menuPublico();
+ok(depoisDeEspelhar.some((c) => c.id === idGrupo),
+  'a categoria geral SOBREVIVE ao espelhamento — o ERP não a conhece e a apagaria',
+  JSON.stringify(depoisDeEspelhar.map((c) => c.id).slice(0, 5)));
+
+// --------------------------------------------- apagar a categoria geral ----
+
+const apagou = await painel.chamar('DELETE', `/api/admin/categories/${idGrupo}`);
+ok(apagou.status === 200, 'a categoria geral criada aqui pode ser apagada', String(apagou.status));
+
+const semGrupo = await menuPublico();
+ok(!semGrupo.some((c) => c.id === idGrupo), 'ela some do menu');
+
 // ------------------------------------------------------------ limpeza ----
 
+for (let i = 0; i < 2; i++) {
+  await painel.chamar('DELETE', `/api/admin/products/${`prod-grp-${i}-${marca}`}?definitivo=1`);
+}
+await q.run('DELETE FROM categories WHERE id LIKE ?', [`grp-%-${marca}`]);
 await q.run('DELETE FROM erp_categories WHERE code = ?', [codigo]);
 await q.run('DELETE FROM categories WHERE id IN (?, ?)', [slug, slugEsperado]);
 await painel.chamar('DELETE', `/api/admin/api-keys/${chave.json.id}`);

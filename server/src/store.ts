@@ -371,6 +371,97 @@ export async function fetchProducts(
   return linhas.map((r) => productRowToApi(r, codigos, galerias.get(String(r.id))));
 }
 
+// ---------------------------------------------------------- Categorias ----
+
+/**
+ * Monta a árvore de navegação da loja a partir das linhas de categoria.
+ *
+ * O ERP manda categorias soltas — "Pirâmides de Cristal", "de Madeira", "de
+ * Impressão 3D", todas no mesmo nível. A loja agrupa por cima disso: uma
+ * categoria pode apontar para outra como sua CATEGORIA GERAL, e então some do
+ * topo e passa a aparecer dentro dela.
+ *
+ * O ponto que faz isso ser barato: agrupar não move produto nenhum. Cada
+ * produto continua apontando para a categoria do ERP em que o ERP o colocou, e
+ * é só a navegação que soma os filhos. Por isso os filhos saem marcados com
+ * `isCategory`: a vitrine precisa saber que, para aquele item, filtrar é
+ * comparar com `product.category` e não com `product.subcategory`.
+ *
+ * Existe aqui, e não dentro de cada rota, porque a vitrine e o painel montam a
+ * mesma árvore — e as duas telas discordando sobre onde uma categoria está é o
+ * tipo de divergência que ninguém percebe até um produto sumir.
+ */
+export interface ItemDeMenu {
+  id: string;
+  name: string;
+  /** Verdadeiro quando este filho é, ele próprio, uma categoria agrupada. */
+  isCategory?: boolean;
+}
+
+export function montarMenu(
+  categorias: Row[],
+  subsPorCategoria: Map<string, ItemDeMenu[]>,
+): Record<string, unknown>[] {
+  const membros = new Map<string, Row[]>();
+  for (const c of categorias) {
+    const grupo = c.group_id === null || c.group_id === undefined ? '' : String(c.group_id);
+    if (grupo === '') continue;
+    const lista = membros.get(grupo);
+    if (lista) lista.push(c);
+    else membros.set(grupo, [c]);
+  }
+
+  /*
+   * Um grupo que aponta para um grupo seria um menu que não fecha. Só um nível
+   * de agrupamento: quem tem membros nunca é membro de outro.
+   */
+  const ehGrupo = (id: string) => membros.has(id);
+
+  const existe = new Set(categorias.map((c) => String(c.id)));
+
+  /*
+   * Fica no topo quem não é membro de ninguém.
+   *
+   * As duas exceções existem para nada sumir do menu por engano: uma categoria
+   * que aponta para um grupo APAGADO volta ao topo em vez de virar invisível, e
+   * um grupo que por algum motivo tenha um grupo próprio continua no topo — só
+   * há um nível de agrupamento, e a alternativa seria um menu que não fecha.
+   */
+  const noTopo = (c: Row) => {
+    const grupo = String(c.group_id ?? '');
+    if (grupo === '') return true;
+    if (!existe.has(grupo)) return true;
+    return ehGrupo(String(c.id));
+  };
+
+  return categorias
+    .filter(noTopo)
+    .map((c) => {
+      const id = String(c.id);
+      const filhos: ItemDeMenu[] = [
+        ...(membros.get(id) ?? []).map((m) => ({
+          id: String(m.id),
+          name: String(m.name),
+          isCategory: true,
+        })),
+        ...(subsPorCategoria.get(id) ?? []),
+      ];
+      return {
+        id,
+        name: String(c.name),
+        icon: String(c.icon ?? ''),
+        featured: Boolean(c.featured),
+        image: String(c.image ?? ''),
+        blurb: String(c.blurb ?? ''),
+        home: Boolean(c.home),
+        position: Number(c.position) || 0,
+        manual: Boolean(c.manual),
+        groupId: c.group_id === null || c.group_id === undefined ? null : String(c.group_id),
+        subcategories: filhos,
+      };
+    });
+}
+
 // ------------------------------------------------------------- Pedidos ----
 
 /**

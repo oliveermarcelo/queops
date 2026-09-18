@@ -28,7 +28,7 @@ import {
   configGet, configMerge, configSet, DEFAULT_RECOVERY, DEFAULT_SETTINGS, DEFAULT_SHIPPING,
   fetchIntegrations, fetchOrders, fetchProducts, galeriasDe, getRecovery, getSettings, getShipping,
   integrationSecrets, integrationToApi, INTEGRATION_IDS, INTEGRATION_SECRET_FIELDS,
-  productRowToApi, transicaoDeStatus,
+  montarMenu, productRowToApi, transicaoDeStatus,
 } from '../store.ts';
 import {
   emailValido, motivoParaNaoDesativar, nomeValido, normalizarEmail, problemaNaSenha,
@@ -116,17 +116,31 @@ adminRoutes.get('/state', h(async (req, res) => {
   }
 
   jsonOk(res, {
-    menu: (await q.all('SELECT * FROM categories ORDER BY position ASC, name ASC')).map((c) => ({
-      id: c.id,
-      name: c.name,
-      icon: c.icon,
-      featured: Boolean(c.featured),
-      image: String(c.image ?? ''),
-      blurb: String(c.blurb ?? ''),
-      home: Boolean(c.home),
-      position: Number(c.position) || 0,
-      subcategories: subs.get(String(c.id)) ?? [],
-    })),
+    /*
+     * A mesma árvore que a vitrine vê — inclusive o agrupamento.
+     *
+     * O painel precisa ver o menu como o cliente vê, senão a tela de vitrine
+     * ofereceria destaque na home para uma categoria que já está pendurada
+     * dentro de outra e nem aparece no topo.
+     */
+    menu: montarMenu(await q.all('SELECT * FROM categories ORDER BY position ASC, name ASC'), subs),
+    /*
+     * A lista CRUA, sem agrupar: é ela que a tela de agrupamento precisa, para
+     * poder mostrar e mexer também nas categorias que já estão dentro de um
+     * grupo — o menu, por definição, não as traz no topo.
+     */
+    allCategories: (await q.all('SELECT * FROM categories ORDER BY position ASC, name ASC'))
+      .map((c) => ({
+        id: String(c.id),
+        name: String(c.name),
+        image: String(c.image ?? ''),
+        blurb: String(c.blurb ?? ''),
+        home: Boolean(c.home),
+        position: Number(c.position) || 0,
+        manual: Boolean(c.manual),
+        groupId: c.group_id === null || c.group_id === undefined ? null : String(c.group_id),
+        featured: Boolean(c.featured),
+      })),
     // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
     products: await fetchProducts({ onlyActive: false }),
     /*
@@ -447,6 +461,86 @@ adminRoutes.delete('/products/:id', h(async (req, res) => {
 }));
 
 /**
+ * POST /api/admin/categories — cria uma CATEGORIA GERAL, à mão.
+ *
+ * Existe porque o ERP manda "Pirâmides de Cristal", "de Madeira", "de Impressão
+ * 3D" como categorias soltas, todas no mesmo nível: não há uma "Pirâmides" para
+ * o cliente clicar, e nunca vai haver enquanto o ERP não mandar a hierarquia.
+ * A loja cria a sua.
+ *
+ * Nasce com `manual = 1`, e é isso que a salva: o espelhamento apaga e recria
+ * as categorias a partir do que o ERP mandou, e apagaria junto uma categoria
+ * que o ERP não conhece.
+ */
+adminRoutes.post('/categories', h(async (req, res) => {
+  await requireAdmin(req);
+  const nome = bodyStr(body(req), 'name', '', 120).trim();
+  if (nome === '') fail('Informe o nome da categoria.', 422, 'invalid_name');
+
+  /*
+   * O slug vem do nome, e precisa ser único porque é ele que vai na URL
+   * pública. Um nome repetido ganha sufixo em vez de sobrescrever a categoria
+   * existente — sobrescrever levaria os produtos da outra junto.
+   */
+  const base = nome.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'categoria';
+  let slug = base;
+  for (let n = 2; await q.one('SELECT id FROM categories WHERE id = ?', [slug]); n++) {
+    slug = `${base}-${n}`;
+  }
+
+  const ultima = await q.one('SELECT MAX(position) AS p FROM categories');
+  await q.run(
+    `INSERT INTO categories (id, name, description, icon, featured, position, manual)
+     VALUES (?,?,'','',0,?,1)`,
+    [slug, nome, (Number(ultima?.p) || 0) + 1],
+  );
+
+  jsonOk(res, { ok: true, id: slug, name: nome }, 201);
+}));
+
+/**
+ * DELETE /api/admin/categories/:id — apaga uma categoria criada à mão.
+ *
+ * Só as manuais. Categoria vinda do ERP não se apaga aqui: ela voltaria na
+ * próxima sincronização, e o botão teria prometido algo que não se cumpre.
+ *
+ * Quem estava dentro dela volta ao primeiro nível, e nenhum produto se move —
+ * agrupar nunca mexeu em produto, e desagrupar também não.
+ */
+adminRoutes.delete('/categories/:id', h(async (req, res) => {
+  await requireAdmin(req);
+  const id = String(req.params.id ?? '');
+
+  const linha = await q.one('SELECT id, manual FROM categories WHERE id = ?', [id]);
+  if (linha === null) fail('Categoria não encontrada.', 404, 'not_found');
+  if (!Number(linha.manual)) {
+    fail(
+      'Esta categoria veio do ERP e voltaria na próxima sincronização. '
+      + 'Só dá para apagar as categorias gerais criadas aqui.',
+      409,
+      'category_from_erp',
+    );
+  }
+
+  const comProdutos = await q.one(
+    'SELECT COUNT(*) AS n FROM products WHERE category = ?',
+    [id],
+  );
+  if (Number(comProdutos?.n ?? 0) > 0) {
+    fail(
+      `Existem ${comProdutos!.n} produto(s) nesta categoria. Mova-os antes de apagá-la.`,
+      409,
+      'category_has_products',
+    );
+  }
+
+  await q.run('UPDATE categories SET group_id = NULL WHERE group_id = ?', [id]);
+  await q.run('DELETE FROM categories WHERE id = ?', [id]);
+  jsonOk(res, { ok: true });
+}));
+
+/**
  * PATCH /api/admin/categories/:id — a vitrine de uma categoria.
  *
  * Só mexe no que é DA LOJA: foto, frase e se aparece na home. Nome e hierarquia
@@ -479,6 +573,48 @@ adminRoutes.patch('/categories/:id', h(async (req, res) => {
   if (b.position !== undefined) {
     campos.push('position = ?');
     valores.push(bodyInt(b, 'position', 0));
+  }
+
+  /*
+   * `groupId` pendura esta categoria dentro de outra. String vazia desagrupa.
+   *
+   * Três recusas, e as três evitam um menu que não fecha ou uma categoria que
+   * some: não dá para pendurar numa categoria que não existe, nem em si mesma,
+   * nem dentro de uma categoria que já está dentro de outra — só há um nível
+   * de agrupamento, e é o que basta para o problema real (o ERP mandando
+   * "Pirâmides de X" tudo solto no mesmo nível).
+   */
+  if (b.groupId !== undefined) {
+    const grupo = bodyStr(b, 'groupId', '', 100);
+    if (grupo !== '') {
+      if (grupo === id) fail('Uma categoria não pode ficar dentro dela mesma.', 422, 'invalid_group');
+      const alvo = await q.one('SELECT id, group_id FROM categories WHERE id = ?', [grupo]);
+      if (alvo === null) fail('Categoria geral não encontrada.', 422, 'invalid_group');
+      if (String(alvo.group_id ?? '') !== '') {
+        fail(
+          'Essa categoria já está dentro de outra. Escolha uma categoria geral do primeiro nível.',
+          422,
+          'invalid_group',
+        );
+      }
+      /*
+       * E quem JÁ TEM membros não pode virar membro: viraria um nível a mais,
+       * e os filhos dela sumiriam do menu sem aviso.
+       */
+      const temMembros = await q.one(
+        'SELECT COUNT(*) AS n FROM categories WHERE group_id = ?',
+        [id],
+      );
+      if (Number(temMembros?.n ?? 0) > 0) {
+        fail(
+          'Esta categoria já agrupa outras. Tire as de dentro antes de movê-la.',
+          422,
+          'group_has_members',
+        );
+      }
+    }
+    campos.push('group_id = ?');
+    valores.push(grupo === '' ? null : grupo);
   }
 
   if (campos.length === 0) fail('Nada a alterar.', 422, 'no_fields');

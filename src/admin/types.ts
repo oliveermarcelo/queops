@@ -246,6 +246,25 @@ export interface AdminState {
   users: PanelUser[];
   erpCategories: ErpCategory[];
   /**
+   * TODAS as categorias, sem agrupar — inclusive as que já estão dentro de uma
+   * categoria geral, que por definição não aparecem no `menu` do topo.
+   *
+   * É desta lista que a tela de vitrine vive: ela precisa mostrar e mexer
+   * também no que está agrupado, senão a única forma de desagrupar seria
+   * mexendo no banco.
+   */
+  allCategories?: {
+    id: string;
+    name: string;
+    image: string;
+    blurb: string;
+    home: boolean;
+    position: number;
+    manual: boolean;
+    groupId: string | null;
+    featured: boolean;
+  }[];
+  /**
    * Ids de produtos presos em algum pedido que ainda vale.
    *
    * Decide se "excluir" apaga de verdade ou só tira da vitrine. Pedido

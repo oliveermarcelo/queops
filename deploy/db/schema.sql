@@ -125,7 +125,28 @@ CREATE TABLE IF NOT EXISTS categories (
   image       VARCHAR(500) NOT NULL DEFAULT '',
   blurb       VARCHAR(160) NOT NULL DEFAULT '',
   home        TINYINT(1)   NOT NULL DEFAULT 0,
-  PRIMARY KEY (id)
+  -- ---------------------------------------------------------------------
+  -- Agrupamento feito pela LOJA, por cima do que o ERP manda.
+  --
+  -- O ERP manda "Pirâmides de Cristal", "de Madeira", "de Impressão 3D" como
+  -- categorias SOLTAS, todas no mesmo nível — ele tem o campo de hierarquia e
+  -- não o usa. O resultado é um menu com dezenas de irmãs e nenhuma categoria
+  -- "Pirâmides" para o cliente clicar.
+  --
+  -- `group_id` aponta para outra linha desta mesma tabela: a categoria geral.
+  -- Agrupar NÃO move produto nenhum — cada produto continua apontando para a
+  -- categoria do ERP em que o ERP o colocou, e é a navegação da loja que passa
+  -- a somar os filhos. Assim a integração continua intacta, e desagrupar é
+  -- tirar uma referência, não remexer 1.400 produtos.
+  --
+  -- `manual` marca a categoria criada no painel: o espelhamento do ERP apaga e
+  -- recria as linhas a partir do que o ERP mandou, e apagaria junto a categoria
+  -- geral que o ERP não conhece.
+  -- ---------------------------------------------------------------------
+  group_id    VARCHAR(100) NULL,
+  manual      TINYINT(1)   NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_cat_group (group_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Subcategorias ficam em tabela própria de propósito: alguns slugs se repetem

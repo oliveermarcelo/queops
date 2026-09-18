@@ -705,24 +705,30 @@ async function espelharArvoreDoErp() {
     }
     const raizes = ativas.filter((c) => mapaPai.get(String(c.code)) === null);
     const vitrineAntiga = /* @__PURE__ */ new Map();
-    const antes = await tx.all("SELECT id, image, blurb, home FROM categories");
+    const antes = await tx.all("SELECT id, image, blurb, home, group_id FROM categories");
     for (const c of antes) {
       vitrineAntiga.set(String(c.id), {
         image: String(c.image ?? ""),
         blurb: String(c.blurb ?? ""),
-        home: Number(c.home) || 0
+        home: Number(c.home) || 0,
+        // O agrupamento é da loja, e o ERP não o reenvia: sem isto, cada
+        // sincronização desmontaria o menu que alguém organizou à mão.
+        group: c.group_id === null || c.group_id === void 0 ? null : String(c.group_id)
       });
     }
-    await tx.run("DELETE FROM categories");
-    const slugsRaiz = /* @__PURE__ */ new Set();
+    await tx.run("DELETE FROM categories WHERE manual = 0");
+    const slugsRaiz = new Set(
+      (await tx.all("SELECT id FROM categories")).map((c) => String(c.id))
+    );
     const slugPorCodigo = /* @__PURE__ */ new Map();
     let posicao = 0;
     for (const c of raizes) {
       const slug = slugUnico(slugificar(String(c.name)), slugsRaiz);
-      const vitrine = vitrineAntiga.get(slug) ?? { image: "", blurb: "", home: 0 };
+      const vitrine = vitrineAntiga.get(slug) ?? { image: "", blurb: "", home: 0, group: null };
       await tx.run(
-        `INSERT INTO categories (id, name, description, icon, featured, position, image, blurb, home)
-         VALUES (?,?,?,?,0,?,?,?,?)`,
+        `INSERT INTO categories
+           (id, name, description, icon, featured, position, image, blurb, home, group_id, manual)
+         VALUES (?,?,?,?,0,?,?,?,?,?,0)`,
         [
           slug,
           String(c.name).slice(0, 120),
@@ -731,7 +737,8 @@ async function espelharArvoreDoErp() {
           posicao,
           vitrine.image,
           vitrine.blurb,
-          vitrine.home
+          vitrine.home,
+          vitrine.group
         ]
       );
       slugPorCodigo.set(String(c.code), { categoria: slug, sub: null });
@@ -835,6 +842,7 @@ __export(store_exports, {
   getShipping: () => getShipping,
   integrationSecrets: () => integrationSecrets,
   integrationToApi: () => integrationToApi,
+  montarMenu: () => montarMenu,
   orderRowToApi: () => orderRowToApi,
   productRowToApi: () => productRowToApi,
   publicSettings: () => publicSettings,
@@ -966,6 +974,48 @@ async function fetchProducts(opcoes = {}) {
   const linhas = await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`);
   const galerias = await galeriasDe(linhas.map((r) => String(r.id)), exec);
   return linhas.map((r) => productRowToApi(r, codigos, galerias.get(String(r.id))));
+}
+function montarMenu(categorias, subsPorCategoria) {
+  const membros = /* @__PURE__ */ new Map();
+  for (const c of categorias) {
+    const grupo = c.group_id === null || c.group_id === void 0 ? "" : String(c.group_id);
+    if (grupo === "") continue;
+    const lista = membros.get(grupo);
+    if (lista) lista.push(c);
+    else membros.set(grupo, [c]);
+  }
+  const ehGrupo = /* @__PURE__ */ __name((id) => membros.has(id), "ehGrupo");
+  const existe = new Set(categorias.map((c) => String(c.id)));
+  const noTopo = /* @__PURE__ */ __name((c) => {
+    const grupo = String(c.group_id ?? "");
+    if (grupo === "") return true;
+    if (!existe.has(grupo)) return true;
+    return ehGrupo(String(c.id));
+  }, "noTopo");
+  return categorias.filter(noTopo).map((c) => {
+    const id = String(c.id);
+    const filhos = [
+      ...(membros.get(id) ?? []).map((m) => ({
+        id: String(m.id),
+        name: String(m.name),
+        isCategory: true
+      })),
+      ...subsPorCategoria.get(id) ?? []
+    ];
+    return {
+      id,
+      name: String(c.name),
+      icon: String(c.icon ?? ""),
+      featured: Boolean(c.featured),
+      image: String(c.image ?? ""),
+      blurb: String(c.blurb ?? ""),
+      home: Boolean(c.home),
+      position: Number(c.position) || 0,
+      manual: Boolean(c.manual),
+      groupId: c.group_id === null || c.group_id === void 0 ? null : String(c.group_id),
+      subcategories: filhos
+    };
+  });
 }
 function documentoDoCliente(bruto) {
   const digitos = String(bruto ?? "").replace(/\D/g, "");
@@ -1379,6 +1429,7 @@ var init_store = __esm({
     __name(productRowToApi, "productRowToApi");
     __name(galeriasDe, "galeriasDe");
     __name(fetchProducts, "fetchProducts");
+    __name(montarMenu, "montarMenu");
     vazioOuNulo = /* @__PURE__ */ __name((v) => {
       const s = String(v ?? "").trim();
       return s === "" ? null : s;
@@ -2365,6 +2416,29 @@ var init_schema = __esm({
         // Único: é por ele que o webhook do provedor encontra o pedido, e o mesmo
         // pagamento não pode acabar vinculado a dois pedidos diferentes.
         definicao: "UNIQUE KEY uq_order_payment_ref (payment_ref)"
+      },
+      /*
+       * Os dois abaixo entraram aqui depois de um susto: índice declarado só no
+       * `CREATE TABLE` do schema.sql nasce em instalação NOVA e nunca aparece numa
+       * que foi atualizada. O resultado é o pior tipo de divergência — duas lojas
+       * na mesma versão, com desempenho diferente, e nada na tela dizendo por quê.
+       * Índice novo em tabela que já existe precisa estar nesta lista.
+       */
+      {
+        tabela: "orders",
+        nome: "idx_order_updated",
+        /*
+         * É por ele que o ERP varre o que MUDOU (`?updatedSince=`), a cada poucos
+         * minutos, para sempre. Sem o índice, cada varredura lê a tabela inteira —
+         * barato com cem pedidos, caro com cinquenta mil, e a conta chega quando a
+         * loja estiver vendendo bem.
+         */
+        definicao: "KEY idx_order_updated (updated_at)"
+      },
+      {
+        tabela: "categories",
+        nome: "idx_cat_group",
+        definicao: "KEY idx_cat_group (group_id)"
       }
     ];
     __name(addMissingIndexes, "addMissingIndexes");
@@ -3762,16 +3836,29 @@ adminRoutes.get("/state", h(async (req, res) => {
     else subs.set(key, [entry]);
   }
   jsonOk(res, {
-    menu: (await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC")).map((c) => ({
-      id: c.id,
-      name: c.name,
-      icon: c.icon,
-      featured: Boolean(c.featured),
+    /*
+     * A mesma árvore que a vitrine vê — inclusive o agrupamento.
+     *
+     * O painel precisa ver o menu como o cliente vê, senão a tela de vitrine
+     * ofereceria destaque na home para uma categoria que já está pendurada
+     * dentro de outra e nem aparece no topo.
+     */
+    menu: montarMenu(await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC"), subs),
+    /*
+     * A lista CRUA, sem agrupar: é ela que a tela de agrupamento precisa, para
+     * poder mostrar e mexer também nas categorias que já estão dentro de um
+     * grupo — o menu, por definição, não as traz no topo.
+     */
+    allCategories: (await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC")).map((c) => ({
+      id: String(c.id),
+      name: String(c.name),
       image: String(c.image ?? ""),
       blurb: String(c.blurb ?? ""),
       home: Boolean(c.home),
       position: Number(c.position) || 0,
-      subcategories: subs.get(String(c.id)) ?? []
+      manual: Boolean(c.manual),
+      groupId: c.group_id === null || c.group_id === void 0 ? null : String(c.group_id),
+      featured: Boolean(c.featured)
     })),
     // O painel vê tudo: inativo e sem categoria também — é ele quem resolve.
     products: await fetchProducts({ onlyActive: false }),
@@ -3980,6 +4067,50 @@ adminRoutes.delete("/products/:id", h(async (req, res) => {
   await q.run("UPDATE products SET active = 0 WHERE id = ?", [id]);
   jsonOk(res, { ok: true, apagado: false });
 }));
+adminRoutes.post("/categories", h(async (req, res) => {
+  await requireAdmin(req);
+  const nome = bodyStr(body(req), "name", "", 120).trim();
+  if (nome === "") fail("Informe o nome da categoria.", 422, "invalid_name");
+  const base2 = nome.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "categoria";
+  let slug = base2;
+  for (let n = 2; await q.one("SELECT id FROM categories WHERE id = ?", [slug]); n++) {
+    slug = `${base2}-${n}`;
+  }
+  const ultima = await q.one("SELECT MAX(position) AS p FROM categories");
+  await q.run(
+    `INSERT INTO categories (id, name, description, icon, featured, position, manual)
+     VALUES (?,?,'','',0,?,1)`,
+    [slug, nome, (Number(ultima?.p) || 0) + 1]
+  );
+  jsonOk(res, { ok: true, id: slug, name: nome }, 201);
+}));
+adminRoutes.delete("/categories/:id", h(async (req, res) => {
+  await requireAdmin(req);
+  const id = String(req.params.id ?? "");
+  const linha = await q.one("SELECT id, manual FROM categories WHERE id = ?", [id]);
+  if (linha === null) fail("Categoria n\xE3o encontrada.", 404, "not_found");
+  if (!Number(linha.manual)) {
+    fail(
+      "Esta categoria veio do ERP e voltaria na pr\xF3xima sincroniza\xE7\xE3o. S\xF3 d\xE1 para apagar as categorias gerais criadas aqui.",
+      409,
+      "category_from_erp"
+    );
+  }
+  const comProdutos = await q.one(
+    "SELECT COUNT(*) AS n FROM products WHERE category = ?",
+    [id]
+  );
+  if (Number(comProdutos?.n ?? 0) > 0) {
+    fail(
+      `Existem ${comProdutos.n} produto(s) nesta categoria. Mova-os antes de apag\xE1-la.`,
+      409,
+      "category_has_products"
+    );
+  }
+  await q.run("UPDATE categories SET group_id = NULL WHERE group_id = ?", [id]);
+  await q.run("DELETE FROM categories WHERE id = ?", [id]);
+  jsonOk(res, { ok: true });
+}));
 adminRoutes.patch("/categories/:id", h(async (req, res) => {
   await requireAdmin(req);
   const id = String(req.params.id ?? "");
@@ -4001,6 +4132,34 @@ adminRoutes.patch("/categories/:id", h(async (req, res) => {
   if (b.position !== void 0) {
     campos.push("position = ?");
     valores.push(bodyInt(b, "position", 0));
+  }
+  if (b.groupId !== void 0) {
+    const grupo = bodyStr(b, "groupId", "", 100);
+    if (grupo !== "") {
+      if (grupo === id) fail("Uma categoria n\xE3o pode ficar dentro dela mesma.", 422, "invalid_group");
+      const alvo = await q.one("SELECT id, group_id FROM categories WHERE id = ?", [grupo]);
+      if (alvo === null) fail("Categoria geral n\xE3o encontrada.", 422, "invalid_group");
+      if (String(alvo.group_id ?? "") !== "") {
+        fail(
+          "Essa categoria j\xE1 est\xE1 dentro de outra. Escolha uma categoria geral do primeiro n\xEDvel.",
+          422,
+          "invalid_group"
+        );
+      }
+      const temMembros = await q.one(
+        "SELECT COUNT(*) AS n FROM categories WHERE group_id = ?",
+        [id]
+      );
+      if (Number(temMembros?.n ?? 0) > 0) {
+        fail(
+          "Esta categoria j\xE1 agrupa outras. Tire as de dentro antes de mov\xEA-la.",
+          422,
+          "group_has_members"
+        );
+      }
+    }
+    campos.push("group_id = ?");
+    valores.push(grupo === "" ? null : grupo);
   }
   if (campos.length === 0) fail("Nada a alterar.", 422, "no_fields");
   const mudou = await q.run(
@@ -4753,23 +4912,15 @@ publicRoutes.get("/catalog", h(async (_req, res) => {
   jsonOk(res, {
     products: await fetchProducts({ exigirCategoria: true }),
     categories: parents.map((c) => ({ id: c.id, name: c.name, description: c.description })),
-    menu: parents.map((c) => ({
-      id: c.id,
-      name: c.name,
-      icon: c.icon,
-      featured: Boolean(c.featured),
-      /*
-       * Vitrine da categoria, editada no painel.
-       *
-       * `home` é o que decide quem aparece na seção "Explore por categoria".
-       * Ela era seis cartões cravados no código — com ids que deixaram de
-       * existir quando a loja passou a espelhar a árvore do ERP.
-       */
-      image: String(c.image ?? ""),
-      blurb: String(c.blurb ?? ""),
-      home: Boolean(c.home),
-      subcategories: children.get(String(c.id)) ?? []
-    })),
+    /*
+     * O menu sai de `montarMenu`, que é o mesmo código que o painel usa.
+     *
+     * Ele resolve o agrupamento: as categorias que a loja pendurou numa
+     * categoria geral somem do topo e aparecem dentro dela. Painel e vitrine
+     * discordando sobre onde uma categoria está seria o tipo de divergência que
+     * ninguém percebe até um produto sumir da navegação.
+     */
+    menu: montarMenu(parents, children),
     settings: await publicSettings()
   });
 }));

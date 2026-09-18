@@ -231,9 +231,29 @@ export function espelharCategoriasDoErp(): Promise<{
  */
 export function updateCategoryShowcase(
   id: string,
-  patch: { image?: string; blurb?: string; home?: boolean; position?: number },
+  patch: {
+    image?: string; blurb?: string; home?: boolean; position?: number;
+    /** Categoria geral em que esta fica. String vazia desagrupa. */
+    groupId?: string;
+  },
 ): Promise<{ categories: { id: string; image: string; blurb: string; home: boolean }[] }> {
   return api.patch(`/admin/categories/${encodeURIComponent(id)}`, patch);
+}
+
+/**
+ * Cria uma categoria geral, à mão.
+ *
+ * O ERP manda "Pirâmides de Cristal", "de Madeira" e "de Impressão 3D" soltas,
+ * no mesmo nível — não existe uma "Pirâmides" para o cliente clicar, e não vai
+ * existir enquanto o ERP não mandar a hierarquia. Esta é a da loja.
+ */
+export function createCategory(name: string): Promise<{ id: string; name: string }> {
+  return api.post<{ id: string; name: string }>('/admin/categories', { name });
+}
+
+/** Apaga uma categoria geral criada aqui. O servidor recusa as vindas do ERP. */
+export function deleteCategory(id: string): Promise<void> {
+  return api.del(`/admin/categories/${encodeURIComponent(id)}`);
 }
 
 /** Trocar a própria senha exige a atual — a sessão aberta não basta. */

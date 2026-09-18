@@ -26,11 +26,24 @@ type SortOption = 'relevance' | 'price-asc' | 'price-desc' | 'name-asc';
 const isPromo = (p: Product) => !!p.tag && p.tag !== 'NOVIDADE';
 const isNew = (p: Product) => p.tag === 'NOVIDADE';
 
-function matchesCategory(p: Product, categoryId: string): boolean {
+/**
+ * O produto pertence a esta categoria?
+ *
+ * `membros` são as categorias agrupadas DENTRO desta. O ERP manda "Pirâmides
+ * de Cristal", "de Madeira" e "de Impressão 3D" soltas; a loja as pendura numa
+ * categoria geral "Pirâmides", e nenhum produto se move — cada um continua
+ * apontando para a categoria do ERP. Então, para a categoria geral, pertencer é
+ * estar em QUALQUER uma das filhas.
+ *
+ * Sem isso, clicar em "Pirâmides" mostraria zero produtos: nenhum produto tem
+ * essa categoria, porque ela é da loja e não do ERP.
+ */
+function matchesCategory(p: Product, categoryId: string, membros: string[] = []): boolean {
   if (categoryId === 'all') return true;
   if (categoryId === 'destaques' || categoryId === 'promocoes') return isPromo(p);
   if (categoryId === 'novidades') return isNew(p);
-  return p.category === categoryId;
+  if (p.category === categoryId) return true;
+  return membros.includes(p.category);
 }
 
 export default function ProductsPage({
@@ -67,11 +80,32 @@ export default function ProductsPage({
       : menuCategory?.name ?? 'Produtos';
   const activeSubName = menuCategory?.subcategories.find((s) => s.id === activeSubcategory)?.name;
 
+  /*
+   * As categorias agrupadas dentro da que está aberta.
+   *
+   * Vêm marcadas com `isCategory` pelo servidor, ao lado das subcategorias de
+   * sempre. A distinção importa na hora de filtrar: uma subcategoria se compara
+   * com `product.subcategory`, e uma categoria agrupada com `product.category`.
+   */
+  const membrosDoGrupo = useMemo(
+    () => (menuCategory?.subcategories ?? [])
+      .filter((s) => s.isCategory === true)
+      .map((s) => s.id),
+    [menuCategory],
+  );
+
+  /** O item aberto no segundo nível é uma categoria agrupada, e não uma subcategoria? */
+  const subEhCategoria = membrosDoGrupo.includes(activeSubcategory ?? '');
+
   const filteredProducts = useMemo(() => {
     const q = searchQuery.toLowerCase();
     const list = products.filter((product) => {
-      const matchCat = matchesCategory(product, activeCategory);
-      const matchSub = !activeSubcategory || product.subcategory === activeSubcategory;
+      const matchCat = matchesCategory(product, activeCategory, membrosDoGrupo);
+      const matchSub = !activeSubcategory
+        ? true
+        : subEhCategoria
+          ? product.category === activeSubcategory
+          : product.subcategory === activeSubcategory;
       const matchSearch =
         !q ||
         product.name.toLowerCase().includes(q) ||
@@ -96,7 +130,10 @@ export default function ProductsPage({
         break;
     }
     return sorted;
-  }, [products, activeCategory, activeSubcategory, searchQuery, priceCeiling, sort]);
+  }, [
+    products, activeCategory, activeSubcategory, searchQuery, priceCeiling, sort,
+    membrosDoGrupo, subEhCategoria,
+  ]);
 
   const handleResetFilters = () => {
     onSelectCategory('all');
@@ -106,7 +143,13 @@ export default function ProductsPage({
   };
 
   const countFor = (categoryId: string) =>
-    products.filter((p) => matchesCategory(p, categoryId)).length;
+    products.filter((p) => matchesCategory(
+      p,
+      categoryId,
+      (menu.find((c) => c.id === categoryId)?.subcategories ?? [])
+        .filter((x) => x.isCategory === true)
+        .map((x) => x.id),
+    )).length;
 
   // Filters panel (shared between sidebar and mobile drawer)
   const FiltersContent = () => (

@@ -191,6 +191,29 @@ const INDICES: { tabela: string; nome: string; definicao: string }[] = [
     // pagamento não pode acabar vinculado a dois pedidos diferentes.
     definicao: 'UNIQUE KEY uq_order_payment_ref (payment_ref)',
   },
+  /*
+   * Os dois abaixo entraram aqui depois de um susto: índice declarado só no
+   * `CREATE TABLE` do schema.sql nasce em instalação NOVA e nunca aparece numa
+   * que foi atualizada. O resultado é o pior tipo de divergência — duas lojas
+   * na mesma versão, com desempenho diferente, e nada na tela dizendo por quê.
+   * Índice novo em tabela que já existe precisa estar nesta lista.
+   */
+  {
+    tabela: 'orders',
+    nome: 'idx_order_updated',
+    /*
+     * É por ele que o ERP varre o que MUDOU (`?updatedSince=`), a cada poucos
+     * minutos, para sempre. Sem o índice, cada varredura lê a tabela inteira —
+     * barato com cem pedidos, caro com cinquenta mil, e a conta chega quando a
+     * loja estiver vendendo bem.
+     */
+    definicao: 'KEY idx_order_updated (updated_at)',
+  },
+  {
+    tabela: 'categories',
+    nome: 'idx_cat_group',
+    definicao: 'KEY idx_cat_group (group_id)',
+  },
 ];
 
 export async function addMissingIndexes(say: Log): Promise<number> {

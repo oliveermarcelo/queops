@@ -60,6 +60,15 @@ export interface Category {
 export interface SubCategory {
   id: string;
   name: string;
+  /**
+   * Verdadeiro quando este item do segundo nível é, ele próprio, uma
+   * CATEGORIA agrupada — e não uma subcategoria.
+   *
+   * O ERP manda categorias soltas ("Pirâmides de Cristal", "de Madeira"); a
+   * loja as pendura numa categoria geral sem mover produto nenhum. Filtrar por
+   * uma delas é comparar com `product.category`, e não com `product.subcategory`.
+   */
+  isCategory?: boolean;
 }
 
 export interface MenuCategory {
@@ -78,6 +87,10 @@ export interface MenuCategory {
   blurb?: string;
   home?: boolean;
   position?: number;
+  /** Criada no painel (categoria geral), e não vinda do ERP. */
+  manual?: boolean;
+  /** Categoria geral em que esta está pendurada, ou null. */
+  groupId?: string | null;
   subcategories: SubCategory[];
 }
 

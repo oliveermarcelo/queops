@@ -24,7 +24,7 @@ import {
 } from '../pricing.ts';
 import { fireWebhooks } from '../providers.ts';
 import {
-  fetchProducts, getSettings, getShipping, productRowToApi, publicSettings,
+  fetchProducts, getSettings, getShipping, montarMenu, productRowToApi, publicSettings,
 } from '../store.ts';
 import { h } from './helpers.ts';
 
@@ -85,23 +85,15 @@ publicRoutes.get('/catalog', h(async (_req, res) => {
   jsonOk(res, {
     products: await fetchProducts({ exigirCategoria: true }),
     categories: parents.map((c) => ({ id: c.id, name: c.name, description: c.description })),
-    menu: parents.map((c) => ({
-      id: c.id,
-      name: c.name,
-      icon: c.icon,
-      featured: Boolean(c.featured),
-      /*
-       * Vitrine da categoria, editada no painel.
-       *
-       * `home` é o que decide quem aparece na seção "Explore por categoria".
-       * Ela era seis cartões cravados no código — com ids que deixaram de
-       * existir quando a loja passou a espelhar a árvore do ERP.
-       */
-      image: String(c.image ?? ''),
-      blurb: String(c.blurb ?? ''),
-      home: Boolean(c.home),
-      subcategories: children.get(String(c.id)) ?? [],
-    })),
+    /*
+     * O menu sai de `montarMenu`, que é o mesmo código que o painel usa.
+     *
+     * Ele resolve o agrupamento: as categorias que a loja pendurou numa
+     * categoria geral somem do topo e aparecem dentro dela. Painel e vitrine
+     * discordando sobre onde uma categoria está seria o tipo de divergência que
+     * ninguém percebe até um produto sumir da navegação.
+     */
+    menu: montarMenu(parents, children),
     settings: await publicSettings(),
   });
 }));

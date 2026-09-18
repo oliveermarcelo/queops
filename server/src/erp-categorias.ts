@@ -498,32 +498,58 @@ export async function espelharArvoreDoErp(): Promise<ResultadoDoEspelho> {
      * renomear a categoria, o slug muda e a foto não volta — é o certo, porque
      * aí passou a ser outra categoria, e herdar a foto da antiga seria pior.
      */
-    const vitrineAntiga = new Map<string, { image: string; blurb: string; home: number }>();
-    const antes = await tx.all('SELECT id, image, blurb, home FROM categories');
+    const vitrineAntiga = new Map<
+      string,
+      { image: string; blurb: string; home: number; group: string | null }
+    >();
+    const antes = await tx.all('SELECT id, image, blurb, home, group_id FROM categories');
     for (const c of antes) {
       vitrineAntiga.set(String(c.id), {
         image: String(c.image ?? ''),
         blurb: String(c.blurb ?? ''),
         home: Number(c.home) || 0,
+        // O agrupamento é da loja, e o ERP não o reenvia: sem isto, cada
+        // sincronização desmontaria o menu que alguém organizou à mão.
+        group: c.group_id === null || c.group_id === undefined ? null : String(c.group_id),
       });
     }
-    // `subcategories` tem FK com ON DELETE CASCADE: some junto.
-    await tx.run('DELETE FROM categories');
 
-    // ---------------------------------------------------- monta o novo ----
-    const slugsRaiz = new Set<string>();
+    /*
+     * As categorias GERAIS, criadas no painel, não são apagadas.
+     *
+     * O ERP não as conhece e nunca vai reenviá-las — elas existem justamente
+     * porque ele manda "Pirâmides de Cristal", "de Madeira" e "de Impressão 3D"
+     * soltas, sem uma "Pirâmides" acima. Apagá-las aqui destruiria, a cada
+     * sincronização, a organização inteira do menu.
+     */
+    // `subcategories` tem FK com ON DELETE CASCADE: some junto.
+    await tx.run('DELETE FROM categories WHERE manual = 0');
+
+    /*
+     * ------------------------------------------------- monta o novo ----
+     *
+     * Os slugs das categorias gerais entram JÁ OCUPADOS. Elas sobreviveram ao
+     * DELETE, e uma categoria do ERP com o mesmo nome geraria o mesmo slug —
+     * o INSERT falharia por chave duplicada e derrubaria o espelhamento
+     * inteiro. Com o slug reservado, a do ERP ganha sufixo e as duas convivem.
+     */
+    const slugsRaiz = new Set<string>(
+      (await tx.all('SELECT id FROM categories')).map((c) => String(c.id)),
+    );
     const slugPorCodigo = new Map<string, { categoria: string; sub: string | null }>();
 
     let posicao = 0;
     for (const c of raizes) {
       const slug = slugUnico(slugificar(String(c.name)), slugsRaiz);
-      const vitrine = vitrineAntiga.get(slug) ?? { image: '', blurb: '', home: 0 };
+      const vitrine = vitrineAntiga.get(slug)
+        ?? { image: '', blurb: '', home: 0, group: null };
       await tx.run(
-        `INSERT INTO categories (id, name, description, icon, featured, position, image, blurb, home)
-         VALUES (?,?,?,?,0,?,?,?,?)`,
+        `INSERT INTO categories
+           (id, name, description, icon, featured, position, image, blurb, home, group_id, manual)
+         VALUES (?,?,?,?,0,?,?,?,?,?,0)`,
         [
           slug, String(c.name).slice(0, 120), '', '', posicao,
-          vitrine.image, vitrine.blurb, vitrine.home,
+          vitrine.image, vitrine.blurb, vitrine.home, vitrine.group,
         ],
       );
       slugPorCodigo.set(String(c.code), { categoria: slug, sub: null });

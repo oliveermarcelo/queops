@@ -34,8 +34,12 @@ interface AdminContextValue {
   setOrderStatus: (id: string, status: OrderStatus, cancelReason?: string) => Promise<void>;
   updateCategoryShowcase: (
     id: string,
-    patch: { image?: string; blurb?: string; home?: boolean; position?: number },
+    patch: {
+      image?: string; blurb?: string; home?: boolean; position?: number; groupId?: string;
+    },
   ) => Promise<void>;
+  createCategory: (name: string) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
   deleteOrder: (id: string) => Promise<void>;
   upsertCoupon: (c: Coupon) => Promise<void>;
   deleteCoupon: (id: string) => Promise<void>;
@@ -211,10 +215,26 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         mutate(
           (s) => ({
             ...s,
+            allCategories: (s.allCategories ?? []).map((c) => (c.id === id
+              ? { ...c, ...patch, groupId: patch.groupId === undefined
+                  ? c.groupId
+                  : (patch.groupId === '' ? null : patch.groupId) }
+              : c)),
             menu: s.menu.map((c) => (c.id === id ? { ...c, ...patch } : c)),
           }),
           () => store.updateCategoryShowcase(id, patch).then(() => undefined),
         ),
+
+      /*
+       * Criar e apagar categoria geral NÃO mexem na tela por conta própria.
+       *
+       * As duas mudam a árvore inteira — quem estava dentro volta ao topo, o
+       * slug é decidido pelo servidor —, e adivinhar o resultado aqui daria uma
+       * tela momentaneamente diferente do banco. O `refresh()` do `mutate`
+       * resolve com a verdade.
+       */
+      createCategory: (name) => mutate((s) => s, () => store.createCategory(name).then(() => undefined)),
+      deleteCategory: (id) => mutate((s) => s, () => store.deleteCategory(id)),
 
       setOrderStatus: (id, status, cancelReason = '') =>
         mutate(
