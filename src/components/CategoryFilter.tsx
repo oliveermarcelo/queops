@@ -72,15 +72,31 @@ export default function CategoryFilter({ setActiveCategory }: CategoryFilterProp
             >
               {/*
                 O fundo em degradê fica SEMPRE, atrás da foto.
-                Categoria sem foto cadastrada continua um cartão legível, com o
-                nome em cima do verde da marca — e não um retângulo quebrado.
+                Categoria sem foto cadastrada continua um cartão legível — e não
+                um retângulo quebrado.
+
+                O tom é COBRE, e não o verde da marca, porque o véu por cima é
+                marrom: verde por baixo de marrom dá uma mistura suja, que
+                parecia defeito justamente no cartão que ainda não tem foto.
+                Sendo da mesma família, o cartão sem imagem lê como uma escolha.
               */}
-              <div className="absolute inset-0 bg-gradient-to-br from-brand-green-200 to-brand-green-300" />
+              <div className="absolute inset-0 bg-gradient-to-br from-[#c9a888] to-[#a97b52]" />
               {(cat.image ?? '') !== '' && (
                 <img
                   src={safeImageSrc(cat.image ?? '')}
                   alt=""
-                  className="absolute inset-0 w-full h-full object-contain p-6 transform group-hover:scale-110 transition-transform duration-700 ease-out"
+                  /*
+                    `object-cover`, e não `object-contain`.
+                    Com `contain` a foto era encaixada INTEIRA dentro do
+                    cartão, com margem: sobrava o fundo verde em volta e a
+                    imagem virava um retângulo flutuando, com as bordas à
+                    mostra e o título por cima. Aquilo servia às imagens
+                    antigas, que eram recortes de produto sem fundo. A partir
+                    do momento em que a foto é enviada pela lojista — foto de
+                    verdade, tirada na loja —, o certo é preencher o cartão e
+                    deixar o corte acontecer nas beiradas.
+                  */
+                  className="absolute inset-0 w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-out"
                   loading="lazy"
                   referrerPolicy="no-referrer"
                   /*
@@ -93,7 +109,21 @@ export default function CategoryFilter({ setActiveCategory }: CategoryFilterProp
                 />
               )}
               {/* Readability gradient */}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#1b2b18]/85 via-[#3a5634]/25 to-transparent" />
+              {/*
+                Véu marrom escuro, e não verde.
+
+                Ele existe para o nome da categoria ser legível sobre qualquer
+                foto — sem ele, um título branco sobre uma parede clara
+                desaparece. O verde de antes tingia a foto inteira: uma peça de
+                cobre saía esverdeada, e a cor do produto na vitrine deixava de
+                ser a cor do produto.
+
+                O marrom é da família do cobre da marca, mas ESCURO de
+                propósito: o cobre puro é claro demais para segurar texto
+                branco, e lavaria a foto de laranja — o que estragaria
+                justamente as peças de cristal e ametista.
+              */}
+              <div className="absolute inset-0 bg-gradient-to-t from-[#2d1c10]/[0.88] via-[#4a2f1c]/30 to-transparent" />
 
               <div className="absolute inset-0 p-5 sm:p-6 flex flex-col justify-end">
                 <h3 className="text-lg sm:text-2xl font-extrabold text-white leading-tight drop-shadow-sm">
