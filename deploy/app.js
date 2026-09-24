@@ -112,6 +112,7 @@ var init_config = __esm({
       secureCookies: envBool("SECURE_COOKIES", true),
       publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
       midiaDir: env("MIDIA_DIR", "midia"),
+      notasDir: env("NOTAS_DIR", "notas"),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");
@@ -411,6 +412,11 @@ function iso(value) {
   if (!m) return s;
   return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}-03:00`;
 }
+function mysqlDateTime(iso8601) {
+  const t = Date.parse(iso8601);
+  if (!Number.isFinite(t)) return null;
+  return new Date(t - 3 * 36e5).toISOString().slice(0, 19).replace("T", " ");
+}
 function dateSP(plusDays) {
   const now = new Date(Date.now() + plusDays * 864e5 - 3 * 36e5);
   return now.toISOString().slice(0, 10);
@@ -478,6 +484,7 @@ var init_http = __esm({
     __name(roundTo, "roundTo");
     __name(brl, "brl");
     __name(iso, "iso");
+    __name(mysqlDateTime, "mysqlDateTime");
     __name(dateSP, "dateSP");
     __name(dateBR, "dateBR");
     __name(clientIpBinary, "clientIpBinary");
@@ -486,6 +493,211 @@ var init_http = __esm({
     __name(validEmail, "validEmail");
     __name(validCpf, "validCpf");
     __name(digits, "digits");
+  }
+});
+
+// server/src/notas.ts
+function pastaDeNotas() {
+  return import_node_path4.default.resolve(process.cwd(), config.notasDir);
+}
+function novoToken() {
+  return (0, import_node_crypto4.randomBytes)(24).toString("hex");
+}
+function tokenValido(token) {
+  return /^[0-9a-f]{48}$/.test(String(token));
+}
+function caminhoDoArquivo(token, extensao) {
+  return import_node_path4.default.join(pastaDeNotas(), `${token}.${extensao}`);
+}
+async function guardarArquivoDaNota(token, extensao, bytes) {
+  const pasta = pastaDeNotas();
+  await import_node_fs4.promises.mkdir(pasta, { recursive: true });
+  const temporario = import_node_path4.default.join(pasta, `.tmp-${(0, import_node_crypto4.randomBytes)(8).toString("hex")}`);
+  await import_node_fs4.promises.writeFile(temporario, bytes, { mode: 384 });
+  await import_node_fs4.promises.rename(temporario, caminhoDoArquivo(token, extensao));
+}
+async function lerArquivoDaNota(token, extensao) {
+  if (!tokenValido(token)) return null;
+  try {
+    return await import_node_fs4.promises.readFile(caminhoDoArquivo(token, extensao));
+  } catch {
+    return null;
+  }
+}
+async function apagarArquivoDaNota(token, extensao) {
+  if (!tokenValido(token)) return false;
+  try {
+    await import_node_fs4.promises.unlink(caminhoDoArquivo(token, extensao));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function chaveDeNfeValida(chave) {
+  return /^\d{44}$/.test(String(chave));
+}
+function problemaNoPdf(bytes) {
+  if (bytes.length === 0) return "O PDF chegou vazio.";
+  if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") {
+    return 'O arquivo enviado em "pdf" n\xE3o \xE9 um PDF (n\xE3o come\xE7a com %PDF-).';
+  }
+  return "";
+}
+function problemaNoXml(bytes) {
+  if (bytes.length === 0) return "O XML chegou vazio.";
+  let texto;
+  try {
+    texto = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return "O XML precisa estar em UTF-8 \u2014 a NF-e autorizada sempre est\xE1.";
+  }
+  if (texto.charCodeAt(0) === 65279) texto = texto.slice(1);
+  if (/<!\s*(DOCTYPE|ENTITY)/i.test(texto)) {
+    return "O XML declara DOCTYPE ou ENTITY. NF-e autorizada n\xE3o tem declara\xE7\xE3o de entidade, e ela \xE9 a porta de entrada de XXE \u2014 o arquivo foi recusado.";
+  }
+  const problema = problemaDeFormaDoXml(texto);
+  return problema === "" ? "" : `O XML n\xE3o est\xE1 bem formado: ${problema}.`;
+}
+function problemaNasEntidades(trecho) {
+  let i = trecho.indexOf("&");
+  while (i >= 0) {
+    const fim = trecho.indexOf(";", i + 1);
+    if (fim < 0 || fim - i > 12) return `refer\xEAncia "&" sem ";" logo depois`;
+    const nome = trecho.slice(i + 1, fim);
+    if (!ENTIDADE.test(nome)) return `entidade "&${nome};" n\xE3o \xE9 permitida`;
+    i = trecho.indexOf("&", fim + 1);
+  }
+  return "";
+}
+function fimDaTag(s, inicio) {
+  let aspas = "";
+  for (let i = inicio; i < s.length; i++) {
+    const c = s[i];
+    if (aspas !== "") {
+      if (c === aspas) aspas = "";
+      continue;
+    }
+    if (c === '"' || c === "'") aspas = c;
+    else if (c === ">") return i;
+  }
+  return -1;
+}
+function problemaNosAtributos(resto) {
+  let i = 0;
+  for (; ; ) {
+    while (i < resto.length && /\s/.test(resto[i])) i++;
+    if (i >= resto.length) return "";
+    const m = /^([^\s=/>]+)\s*=\s*("([^"]*)"|'([^']*)')/.exec(resto.slice(i));
+    if (m === null) return `atributo malformado em "${resto.slice(i, i + 30).trim()}"`;
+    if (!NOME.test(m[1])) return `nome de atributo inv\xE1lido "${m[1]}"`;
+    const problema = problemaNasEntidades(m[3] ?? m[4] ?? "");
+    if (problema !== "") return problema;
+    i += m[0].length;
+  }
+}
+function problemaDeFormaDoXml(s) {
+  const pilha = [];
+  let raizes = 0;
+  let i = 0;
+  const foraDaRaiz = /* @__PURE__ */ __name(() => pilha.length === 0, "foraDaRaiz");
+  while (i < s.length) {
+    const abre = s.indexOf("<", i);
+    const texto = abre < 0 ? s.slice(i) : s.slice(i, abre);
+    if (foraDaRaiz() && texto.trim() !== "") return "h\xE1 texto fora do elemento raiz";
+    const problemaDeTexto = problemaNasEntidades(texto);
+    if (problemaDeTexto !== "") return problemaDeTexto;
+    if (abre < 0) break;
+    if (s.startsWith("<!--", abre)) {
+      const fim = s.indexOf("-->", abre + 4);
+      if (fim < 0) return "coment\xE1rio n\xE3o fechado";
+      i = fim + 3;
+      continue;
+    }
+    if (s.startsWith("<![CDATA[", abre)) {
+      if (foraDaRaiz()) return "CDATA fora do elemento raiz";
+      const fim = s.indexOf("]]>", abre + 9);
+      if (fim < 0) return "CDATA n\xE3o fechado";
+      i = fim + 3;
+      continue;
+    }
+    if (s.startsWith("<?", abre)) {
+      const fim = s.indexOf("?>", abre + 2);
+      if (fim < 0) return "declara\xE7\xE3o <? ... ?> n\xE3o fechada";
+      i = fim + 2;
+      continue;
+    }
+    if (s.startsWith("<!", abre)) {
+      return "declara\xE7\xE3o <! ... > n\xE3o \xE9 aceita";
+    }
+    const fecha = fimDaTag(s, abre + 1);
+    if (fecha < 0) return "tag n\xE3o fechada";
+    const bruto = s.slice(abre + 1, fecha);
+    i = fecha + 1;
+    if (bruto.startsWith("/")) {
+      const nome = bruto.slice(1).trim();
+      if (!NOME.test(nome)) return `nome de elemento inv\xE1lido "${nome}"`;
+      if (pilha.pop() !== nome) return `</${nome}> n\xE3o fecha o elemento aberto`;
+      continue;
+    }
+    const proprio = bruto.endsWith("/");
+    const miolo = proprio ? bruto.slice(0, -1) : bruto;
+    const m = /^([^\s/>]+)([\s\S]*)$/.exec(miolo.trim());
+    if (m === null) return "tag vazia";
+    if (!NOME.test(m[1])) return `nome de elemento inv\xE1lido "${m[1]}"`;
+    const problemaDeAtributo = problemaNosAtributos(m[2]);
+    if (problemaDeAtributo !== "") return problemaDeAtributo;
+    if (foraDaRaiz()) raizes++;
+    if (!proprio) pilha.push(m[1]);
+  }
+  if (pilha.length > 0) return `o elemento <${pilha[pilha.length - 1]}> ficou aberto`;
+  if (raizes === 0) return "n\xE3o h\xE1 elemento nenhum";
+  if (raizes > 1) return "h\xE1 mais de um elemento raiz";
+  return "";
+}
+function invoiceRowToApi(r) {
+  const token = /* @__PURE__ */ __name((t, ext) => `${config.appUrl.replace(/\/+$/, "")}/api/v1/invoices/${String(t)}.${ext}`, "token");
+  return {
+    key: String(r.nfe_key ?? ""),
+    number: Number(r.number) || 0,
+    series: Number(r.series) || 0,
+    issuedAt: iso(r.issued_at),
+    /** Texto, não número — ver o comentário acima. */
+    totalAmount: String(r.total_amount_txt ?? r.total_amount ?? "0"),
+    status: String(r.status ?? "authorized"),
+    xmlUrl: token(r.xml_token, "xml"),
+    pdfUrl: token(r.pdf_token, "pdf")
+  };
+}
+var import_node_crypto4, import_node_fs4, import_node_path4, TETO_XML, TETO_PDF, TETO_CORPO, NOME, ENTIDADE, COLUNAS_DA_NOTA;
+var init_notas = __esm({
+  "server/src/notas.ts"() {
+    "use strict";
+    import_node_crypto4 = require("node:crypto");
+    import_node_fs4 = require("node:fs");
+    import_node_path4 = __toESM(require("node:path"), 1);
+    init_config();
+    init_http();
+    TETO_XML = 1024 * 1024;
+    TETO_PDF = 2 * 1024 * 1024;
+    TETO_CORPO = TETO_XML + TETO_PDF + 128 * 1024;
+    __name(pastaDeNotas, "pastaDeNotas");
+    __name(novoToken, "novoToken");
+    __name(tokenValido, "tokenValido");
+    __name(caminhoDoArquivo, "caminhoDoArquivo");
+    __name(guardarArquivoDaNota, "guardarArquivoDaNota");
+    __name(lerArquivoDaNota, "lerArquivoDaNota");
+    __name(apagarArquivoDaNota, "apagarArquivoDaNota");
+    __name(chaveDeNfeValida, "chaveDeNfeValida");
+    __name(problemaNoPdf, "problemaNoPdf");
+    __name(problemaNoXml, "problemaNoXml");
+    NOME = /^[A-Za-z_:][A-Za-z0-9_.:-]*$/;
+    ENTIDADE = /^(amp|lt|gt|quot|apos|#\d{1,7}|#x[0-9A-Fa-f]{1,6})$/;
+    __name(problemaNasEntidades, "problemaNasEntidades");
+    __name(fimDaTag, "fimDaTag");
+    __name(problemaNosAtributos, "problemaNosAtributos");
+    __name(problemaDeFormaDoXml, "problemaDeFormaDoXml");
+    __name(invoiceRowToApi, "invoiceRowToApi");
+    COLUNAS_DA_NOTA = "nfe_key, order_id, number, series, issued_at, status, xml_token, pdf_token, CAST(total_amount AS CHAR) AS total_amount_txt";
   }
 });
 
@@ -842,6 +1054,7 @@ __export(store_exports, {
   getShipping: () => getShipping,
   integrationSecrets: () => integrationSecrets,
   integrationToApi: () => integrationToApi,
+  invoicesPorPedido: () => invoicesPorPedido,
   montarMenu: () => montarMenu,
   orderRowToApi: () => orderRowToApi,
   productRowToApi: () => productRowToApi,
@@ -1059,7 +1272,7 @@ function transicaoDeStatus(status, motivo, quem) {
   }
   return { sql: campos.join(", "), params };
 }
-function orderRowToApi(r, items) {
+function orderRowToApi(r, items, invoices = []) {
   return {
     id: r.id,
     createdAt: iso(r.created_at),
@@ -1286,8 +1499,38 @@ function orderRowToApi(r, items) {
      * o dinheiro entraria sem pedido nenhum. Só o booleano sai daqui — a
      * referência da cobrança no provedor não tem por que circular.
      */
-    hasOpenCharge: String(r.payment_ref ?? "") !== "" && !r.paid_at
+    hasOpenCharge: String(r.payment_ref ?? "") !== "" && !r.paid_at,
+    /*
+     * As notas fiscais do pedido — só as URLs, nunca os binários.
+     *
+     * Lista VAZIA quando não há nota, e não campo ausente: o ERP usa esta
+     * resposta para conferir o que já subiu, e "não veio o campo" e "não há
+     * nota" precisam ser a mesma coisa para ele, senão uma versão antiga da
+     * loja faria o ERP reenviar tudo.
+     *
+     * Nota cancelada CONTINUA aqui, com `status: "canceled"`. O ERP precisa do
+     * histórico completo; quem não pode mostrá-la como válida é a loja, e isso
+     * acontece na tela do comprador e na rota de download, não aqui.
+     */
+    invoices: invoices.map(invoiceRowToApi)
   };
+}
+async function invoicesPorPedido(ids, exec = q) {
+  const porPedido = /* @__PURE__ */ new Map();
+  if (ids.length === 0) return porPedido;
+  const rows = await exec.all(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices
+      WHERE order_id IN (${placeholders(ids.length)})
+      ORDER BY issued_at ASC, nfe_key ASC`,
+    ids
+  );
+  for (const row of rows) {
+    const chave = String(row.order_id);
+    const lista = porPedido.get(chave);
+    if (lista) lista.push(row);
+    else porPedido.set(chave, [row]);
+  }
+  return porPedido;
 }
 async function fetchOrders(limit = 500, exec = q) {
   const cap = Math.max(1, Math.min(Math.trunc(limit) || 500, 2e3));
@@ -1305,7 +1548,12 @@ async function fetchOrders(limit = 500, exec = q) {
     if (list) list.push(row);
     else byOrder.set(key, [row]);
   }
-  return orders.map((o) => orderRowToApi(o, byOrder.get(String(o.id)) ?? []));
+  const notas = await invoicesPorPedido(ids, exec);
+  return orders.map((o) => orderRowToApi(
+    o,
+    byOrder.get(String(o.id)) ?? [],
+    notas.get(String(o.id)) ?? []
+  ));
 }
 function integrationToApi(row) {
   const fields = decryptPayload(row.fields_enc);
@@ -1353,6 +1601,7 @@ var init_store = __esm({
     init_db();
     init_erp_categorias();
     init_http();
+    init_notas();
     DEFAULT_SETTINGS = {
       name: "Qu\xE9ops Pir\xE2mides",
       email: "contato@queopspiramides.com.br",
@@ -1442,6 +1691,7 @@ var init_store = __esm({
     __name(eixosDoPedido, "eixosDoPedido");
     __name(transicaoDeStatus, "transicaoDeStatus");
     __name(orderRowToApi, "orderRowToApi");
+    __name(invoicesPorPedido, "invoicesPorPedido");
     __name(fetchOrders, "fetchOrders");
     __name(integrationToApi, "integrationToApi");
     __name(fetchIntegrations, "fetchIntegrations");
@@ -2259,12 +2509,12 @@ __export(schema_exports, {
 });
 function dbDir() {
   const candidatos2 = [
-    import_node_path5.default.resolve(process.cwd(), "server/db"),
-    import_node_path5.default.resolve(process.cwd(), "db")
+    import_node_path6.default.resolve(process.cwd(), "server/db"),
+    import_node_path6.default.resolve(process.cwd(), "db")
   ];
   for (const c of candidatos2) {
     try {
-      (0, import_node_fs5.readFileSync)(import_node_path5.default.join(c, "schema.sql"));
+      (0, import_node_fs6.readFileSync)(import_node_path6.default.join(c, "schema.sql"));
       return c;
     } catch {
     }
@@ -2388,7 +2638,7 @@ async function widenColumns(say) {
   return convertidas;
 }
 async function sincronizarEstrutura(say) {
-  const sql = (0, import_node_fs5.readFileSync)(import_node_path5.default.join(dbDir(), "schema.sql"), "utf8");
+  const sql = (0, import_node_fs6.readFileSync)(import_node_path6.default.join(dbDir(), "schema.sql"), "utf8");
   const { statements, noComments } = splitStatements(sql);
   const tabelas = await createMissingTables(statements, say);
   const colunas = await addMissingColumns(noComments, say);
@@ -2396,12 +2646,12 @@ async function sincronizarEstrutura(say) {
   const convertidas = await widenColumns(say);
   return { tabelas, colunas, indices, convertidas };
 }
-var import_node_fs5, import_node_path5, TIPOS_SQL, INDICES, ALARGAMENTOS;
+var import_node_fs6, import_node_path6, TIPOS_SQL, INDICES, ALARGAMENTOS;
 var init_schema = __esm({
   "server/src/schema.ts"() {
     "use strict";
-    import_node_fs5 = require("node:fs");
-    import_node_path5 = __toESM(require("node:path"), 1);
+    import_node_fs6 = require("node:fs");
+    import_node_path6 = __toESM(require("node:path"), 1);
     init_db();
     __name(dbDir, "dbDir");
     __name(splitStatements, "splitStatements");
@@ -2472,8 +2722,8 @@ var init_schema = __esm({
 });
 
 // server/src/app.ts
-var import_node_fs4 = require("node:fs");
-var import_node_path4 = __toESM(require("node:path"), 1);
+var import_node_fs5 = require("node:fs");
+var import_node_path5 = __toESM(require("node:path"), 1);
 var import_compression = __toESM(require("compression"), 1);
 var import_express6 = __toESM(require("express"), 1);
 
@@ -2732,6 +2982,7 @@ var import_express = require("express");
 init_db();
 init_errors();
 init_http();
+init_notas();
 
 // server/src/routes/helpers.ts
 function h(fn) {
@@ -2781,6 +3032,22 @@ async function customerPayload(id) {
       else itemsByOrder.set(key, [item]);
     }
   }
+  const notasPorPedido = /* @__PURE__ */ new Map();
+  if (orders.length) {
+    const ids = orders.map((o) => o.id);
+    const linhas = await q.all(
+      `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices
+        WHERE order_id IN (${placeholders(ids.length)}) AND status = 'authorized'
+        ORDER BY issued_at ASC, nfe_key ASC`,
+      ids
+    );
+    for (const linha of linhas) {
+      const chave = String(linha.order_id);
+      const lista = notasPorPedido.get(chave);
+      if (lista) lista.push(invoiceRowToApi(linha));
+      else notasPorPedido.set(chave, [invoiceRowToApi(linha)]);
+    }
+  }
   return {
     name: c.name,
     email: c.email,
@@ -2792,7 +3059,8 @@ async function customerPayload(id) {
       date: iso(o.created_at),
       status: o.status,
       total: Number(o.total) || 0,
-      items: itemsByOrder.get(String(o.id)) ?? []
+      items: itemsByOrder.get(String(o.id)) ?? [],
+      invoices: notasPorPedido.get(String(o.id)) ?? []
     })),
     favorites: (await q.all("SELECT product_id FROM customer_favorites WHERE customer_id = ?", [id])).map((f) => f.product_id)
   };
@@ -2968,7 +3236,7 @@ accountRoutes.put("/favorites", h(async (req, res) => {
 }));
 
 // server/src/routes/admin.ts
-var import_node_crypto4 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
 var import_express2 = require("express");
 init_config();
 init_crypto();
@@ -3773,7 +4041,7 @@ __name(nomeValido, "nomeValido");
 // server/src/routes/admin.ts
 var adminRoutes = (0, import_express2.Router)();
 var STATUS_PEDIDO = ["pending", "paid", "shipped", "delivered", "canceled"];
-var rid = /* @__PURE__ */ __name((prefix, bytes) => prefix + (0, import_node_crypto4.randomBytes)(bytes).toString("hex"), "rid");
+var rid = /* @__PURE__ */ __name((prefix, bytes) => prefix + (0, import_node_crypto5.randomBytes)(bytes).toString("hex"), "rid");
 adminRoutes.post("/login", h(async (req, res) => {
   const b = body(req);
   const user = await adminLogin(req, bodyStr(b, "email", "", 190), typeof b.password === "string" ? b.password : "");
@@ -4383,7 +4651,7 @@ adminRoutes.post("/carts/:id/remind", h(async (req, res) => {
 adminRoutes.post("/api-keys", h(async (req, res) => {
   await requireAdmin(req);
   const name = bodyStr(body(req), "name", "Nova chave", 120);
-  const token = "qp_live_" + (0, import_node_crypto4.randomBytes)(20).toString("hex");
+  const token = "qp_live_" + (0, import_node_crypto5.randomBytes)(20).toString("hex");
   const id = rid("k-", 6);
   await q.run("INSERT INTO api_keys (id, name, token_prefix, token_hash) VALUES (?,?,?,?)", [
     id,
@@ -5375,6 +5643,147 @@ init_db();
 init_errors();
 init_erp_categorias();
 init_http();
+
+// server/src/multipart.ts
+var SEM_ARQUIVOS = {};
+function falha(erro, status, codigo) {
+  return { erro, status, codigo, campos: {}, arquivos: SEM_ARQUIVOS };
+}
+__name(falha, "falha");
+var TETO_ABSOLUTO = 25 * 1024 * 1024;
+var MAXIMO_DE_PARTES = 20;
+var MAXIMO_DE_CABECALHO = 4 * 1024;
+async function lerCorpo(req, maximo) {
+  const declarado = Number(req.get("Content-Length") ?? "");
+  if (Number.isFinite(declarado) && declarado > TETO_ABSOLUTO) {
+    return { erro: "Corpo grande demais.", bytes: Buffer.alloc(0) };
+  }
+  return await new Promise((resolve) => {
+    const pedacos = [];
+    let total = 0;
+    let estourou = false;
+    req.on("data", (pedaco) => {
+      total += pedaco.length;
+      if (total > TETO_ABSOLUTO) {
+        estourou = true;
+        req.destroy();
+        return;
+      }
+      if (total <= maximo) pedacos.push(pedaco);
+      else estourou = true;
+    });
+    req.on("end", () => {
+      resolve(estourou ? { erro: "Corpo grande demais.", bytes: Buffer.alloc(0) } : { erro: "", bytes: Buffer.concat(pedacos) });
+    });
+    req.on("error", () => {
+      resolve({ erro: "A requisi\xE7\xE3o foi interrompida antes de terminar.", bytes: Buffer.alloc(0) });
+    });
+  });
+}
+__name(lerCorpo, "lerCorpo");
+function boundaryDe(contentType) {
+  const m = /;\s*boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
+  if (m === null) return "";
+  return (m[1] ?? m[2] ?? "").trim();
+}
+__name(boundaryDe, "boundaryDe");
+function atributoDoCabecalho(linha, nome) {
+  const re = new RegExp(`;\\s*${nome}\\s*=\\s*(?:"([^"]*)"|([^;\\s]+))`, "i");
+  const m = re.exec(linha);
+  if (m === null) return "";
+  return (m[1] ?? m[2] ?? "").trim();
+}
+__name(atributoDoCabecalho, "atributoDoCabecalho");
+async function lerMultipart(req, maximoDoCorpo) {
+  const contentType = req.get("Content-Type") ?? "";
+  if (!/^multipart\/form-data\b/i.test(contentType)) {
+    return falha(
+      "Envie os arquivos como multipart/form-data.",
+      415,
+      "unsupported_media_type"
+    );
+  }
+  const boundary = boundaryDe(contentType);
+  if (boundary === "") {
+    return falha(
+      "O cabe\xE7alho Content-Type veio sem boundary \u2014 o corpo multipart n\xE3o pode ser lido.",
+      422,
+      "invalid_multipart"
+    );
+  }
+  const lido = await lerCorpo(req, maximoDoCorpo);
+  if (lido.erro !== "") {
+    return falha(
+      `Corpo da requisi\xE7\xE3o grande demais (m\xE1ximo de ${Math.round(maximoDoCorpo / 1024)} KB no total).`,
+      413,
+      "file_too_large"
+    );
+  }
+  const separador = Buffer.from(`\r
+--${boundary}`);
+  const corpo = Buffer.concat([Buffer.from("\r\n"), lido.bytes]);
+  let posicao = corpo.indexOf(separador);
+  if (posicao < 0) {
+    return falha("Corpo multipart malformado: boundary n\xE3o encontrado.", 422, "invalid_multipart");
+  }
+  const campos = {};
+  const arquivos = {};
+  let partes = 0;
+  for (; ; ) {
+    let p = posicao + separador.length;
+    if (corpo[p] === 45 && corpo[p + 1] === 45) break;
+    while (corpo[p] === 32 || corpo[p] === 9) p++;
+    if (!(corpo[p] === 13 && corpo[p + 1] === 10)) {
+      return falha("Corpo multipart malformado.", 422, "invalid_multipart");
+    }
+    p += 2;
+    const fim = corpo.indexOf(separador, p);
+    if (fim < 0) {
+      return falha(
+        "Corpo multipart incompleto \u2014 o envio terminou antes do boundary final.",
+        422,
+        "invalid_multipart"
+      );
+    }
+    if (++partes > MAXIMO_DE_PARTES) {
+      return falha("Formul\xE1rio com partes demais.", 422, "invalid_multipart");
+    }
+    const parte = corpo.subarray(p, fim);
+    const corte = parte.indexOf("\r\n\r\n");
+    if (corte < 0 || corte > MAXIMO_DE_CABECALHO) {
+      return falha("Parte do formul\xE1rio sem cabe\xE7alho v\xE1lido.", 422, "invalid_multipart");
+    }
+    const cabecalho = parte.subarray(0, corte).toString("utf8");
+    const conteudo = parte.subarray(corte + 4);
+    let disposition = "";
+    let tipo = "";
+    for (const linha of cabecalho.split("\r\n")) {
+      if (/^content-disposition\s*:/i.test(linha)) disposition = linha;
+      else if (/^content-type\s*:/i.test(linha)) tipo = linha.split(":").slice(1).join(":").trim();
+    }
+    const nome = atributoDoCabecalho(disposition, "name");
+    if (nome === "") {
+      return falha("Parte do formul\xE1rio sem nome de campo.", 422, "invalid_multipart");
+    }
+    const nomeDoArquivo = atributoDoCabecalho(disposition, "filename");
+    if (nomeDoArquivo === "" && !/;\s*filename\s*=/i.test(disposition)) {
+      campos[nome] = conteudo.toString("utf8").trim().slice(0, 500);
+    } else {
+      arquivos[nome] = {
+        campo: nome,
+        nomeDoArquivo: nomeDoArquivo.slice(0, 200),
+        tipo: tipo.split(";")[0].trim().toLowerCase(),
+        bytes: conteudo
+      };
+    }
+    posicao = fim;
+  }
+  return { erro: "", codigo: "", status: 200, campos, arquivos };
+}
+__name(lerMultipart, "lerMultipart");
+
+// server/src/routes/v1.ts
+init_notas();
 init_providers();
 init_store();
 var v1Routes = (0, import_express4.Router)();
@@ -5582,11 +5991,7 @@ v1Routes.get("/orders", h(async (req, res) => {
     where.push("status = ?");
     params.push(status);
   }
-  const emHoraLocal = /* @__PURE__ */ __name((iso8601) => {
-    const t = Date.parse(iso8601);
-    if (!Number.isFinite(t)) return null;
-    return new Date(t - 3 * 36e5).toISOString().slice(0, 19).replace("T", " ");
-  }, "emHoraLocal");
+  const emHoraLocal = mysqlDateTime;
   const since = queryStr(req, "since", "", 40);
   if (since !== "") {
     const quando = emHoraLocal(since);
@@ -5622,14 +6027,26 @@ v1Routes.get("/orders", h(async (req, res) => {
       else items.set(key, [i]);
     }
   }
-  jsonOk(res, { orders: orders.map((o) => orderRowToApi(o, items.get(String(o.id)) ?? [])) });
+  const notas = await invoicesPorPedido(orders.map((o) => o.id));
+  jsonOk(res, {
+    orders: orders.map((o) => orderRowToApi(
+      o,
+      items.get(String(o.id)) ?? [],
+      notas.get(String(o.id)) ?? []
+    ))
+  });
 }));
 v1Routes.get("/orders/:id", h(async (req, res) => {
   await requireApiKey(req);
   const o = await q.one("SELECT * FROM orders WHERE id = ?", [req.params.id]);
   if (o === null) fail("Pedido n\xE3o encontrado.", 404, "not_found");
   const items = await q.all("SELECT * FROM order_items WHERE order_id = ? ORDER BY id ASC", [req.params.id]);
-  jsonOk(res, { order: orderRowToApi(o, items) });
+  const notas = await q.all(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE order_id = ?
+      ORDER BY issued_at ASC, nfe_key ASC`,
+    [req.params.id]
+  );
+  jsonOk(res, { order: orderRowToApi(o, items, notas) });
 }));
 v1Routes.patch("/orders/:id", h(async (req, res) => {
   await requireApiKey(req);
@@ -5644,6 +6061,223 @@ v1Routes.patch("/orders/:id", h(async (req, res) => {
   }
   fireWebhooks("order.status_changed", { orderId: req.params.id, status });
   jsonOk(res, { ok: true });
+}));
+function problemaComANota(linha, pedidoId) {
+  if (String(linha.order_id) !== pedidoId) {
+    return {
+      erro: `Esta chave de NF-e j\xE1 est\xE1 registrada no pedido ${String(linha.order_id)}. Uma chave pertence a um pedido s\xF3.`,
+      status: 409,
+      codigo: "invoice_key_conflict"
+    };
+  }
+  if (String(linha.status) === "canceled") {
+    return {
+      erro: "Esta nota fiscal est\xE1 cancelada e n\xE3o volta a valer por reenvio. Emita uma nota nova, com chave nova.",
+      status: 409,
+      codigo: "invoice_canceled"
+    };
+  }
+  return { erro: "", status: 200, codigo: "" };
+}
+__name(problemaComANota, "problemaComANota");
+v1Routes.post("/orders/:id/invoices", h(async (req, res) => {
+  await requireApiKey(req);
+  const pedidoId = String(req.params.id ?? "");
+  const form = await lerMultipart(req, TETO_CORPO);
+  if (form.erro !== "") fail(form.erro, form.status, form.codigo);
+  if (await q.one("SELECT id FROM orders WHERE id = ?", [pedidoId]) === null) {
+    fail("Pedido n\xE3o encontrado.", 404, "not_found");
+  }
+  const chave = String(form.campos.key ?? "").trim();
+  if (!chaveDeNfeValida(chave)) {
+    fail(
+      "A chave de acesso da NF-e precisa ter exatamente 44 d\xEDgitos, sem espa\xE7os nem m\xE1scara.",
+      422,
+      "invalid_nfe_key"
+    );
+  }
+  const inteiro = /* @__PURE__ */ __name((valor2) => /^\d{1,9}$/.test(valor2.trim()) ? Number(valor2) : -1, "inteiro");
+  const numero2 = inteiro(String(form.campos.number ?? ""));
+  if (numero2 < 0) fail('Informe "number" como um n\xFAmero inteiro.', 422, "invalid_invoice");
+  const serie = inteiro(String(form.campos.series ?? ""));
+  if (serie < 0) fail('Informe "series" como um n\xFAmero inteiro.', 422, "invalid_invoice");
+  const emitidaEm = String(form.campos.issuedAt ?? "").trim();
+  const emitidaComFuso = /(?:Z|[+-]\d{2}:?\d{2})$/.test(emitidaEm);
+  const emitidaLocal = emitidaComFuso ? mysqlDateTime(emitidaEm) : null;
+  if (emitidaLocal === null) {
+    fail(
+      'Informe "issuedAt" em ISO 8601 COM fuso (ex.: 2026-09-22T14:32:10-03:00).',
+      422,
+      "invalid_invoice"
+    );
+  }
+  const valorBruto = String(form.campos.totalAmount ?? "").trim().replace(",", ".");
+  if (!/^\d{1,10}(\.\d{1,2})?$/.test(valorBruto)) {
+    fail('Informe "totalAmount" como decimal (ex.: "1234.56").', 422, "invalid_invoice");
+  }
+  const xml = form.arquivos.xml;
+  const pdf = form.arquivos.pdf;
+  if (xml === void 0) fail('Envie o XML processado no campo "xml".', 422, "invalid_invoice");
+  if (pdf === void 0) fail('Envie o DANFE no campo "pdf".', 422, "invalid_invoice");
+  if (xml.bytes.length > TETO_XML) {
+    fail(`O XML tem ${Math.round(xml.bytes.length / 1024)} KB; o m\xE1ximo \xE9 1 MB.`, 413, "file_too_large");
+  }
+  if (pdf.bytes.length > TETO_PDF) {
+    fail(`O PDF tem ${Math.round(pdf.bytes.length / 1024)} KB; o m\xE1ximo \xE9 2 MB.`, 413, "file_too_large");
+  }
+  const problemaXml = problemaNoXml(xml.bytes);
+  if (problemaXml !== "") fail(problemaXml, 415, "unsupported_media_type");
+  const problemaPdf = problemaNoPdf(pdf.bytes);
+  if (problemaPdf !== "") fail(problemaPdf, 415, "unsupported_media_type");
+  const existente = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+    [chave]
+  );
+  if (existente !== null) {
+    const p = problemaComANota(existente, pedidoId);
+    if (p.erro !== "") fail(p.erro, p.status, p.codigo);
+  }
+  const tokenXml = novoToken();
+  const tokenPdf = novoToken();
+  await guardarArquivoDaNota(tokenXml, "xml", xml.bytes);
+  await guardarArquivoDaNota(tokenPdf, "pdf", pdf.bytes);
+  const descartarNovos = /* @__PURE__ */ __name(async () => {
+    await apagarArquivoDaNota(tokenXml, "xml");
+    await apagarArquivoDaNota(tokenPdf, "pdf");
+  }, "descartarNovos");
+  let criada = existente === null;
+  if (criada) {
+    try {
+      await q.run(
+        `INSERT INTO order_invoices
+           (nfe_key, order_id, number, series, issued_at, total_amount, status, xml_token, pdf_token)
+         VALUES (?, ?, ?, ?, ?, ?, 'authorized', ?, ?)`,
+        [chave, pedidoId, numero2, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf]
+      );
+    } catch (e) {
+      if (e?.code !== "ER_DUP_ENTRY") {
+        await descartarNovos();
+        throw e;
+      }
+      criada = false;
+    }
+  }
+  if (!criada) {
+    const atual = await q.one(
+      `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+      [chave]
+    );
+    if (atual === null) {
+      await descartarNovos();
+      fail("N\xE3o foi poss\xEDvel gravar a nota. Tente novamente.", 409, "invoice_key_conflict");
+    }
+    const p = problemaComANota(atual, pedidoId);
+    if (p.erro !== "") {
+      await descartarNovos();
+      fail(p.erro, p.status, p.codigo);
+    }
+    const trocadas = await q.run(
+      `UPDATE order_invoices
+          SET number = ?, series = ?, issued_at = ?, total_amount = ?,
+              xml_token = ?, pdf_token = ?
+        WHERE nfe_key = ? AND order_id = ? AND status = 'authorized'`,
+      [numero2, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf, chave, pedidoId]
+    );
+    if (trocadas === 0) {
+      await descartarNovos();
+      fail(
+        "Esta nota fiscal est\xE1 cancelada e n\xE3o volta a valer por reenvio.",
+        409,
+        "invoice_canceled"
+      );
+    }
+    await apagarArquivoDaNota(String(atual.xml_token), "xml");
+    await apagarArquivoDaNota(String(atual.pdf_token), "pdf");
+  }
+  const gravada = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+    [chave]
+  );
+  jsonOk(res, { invoice: invoiceRowToApi(gravada ?? {}) }, criada ? 201 : 200);
+}));
+v1Routes.patch("/orders/:id/invoices/:key", h(async (req, res) => {
+  await requireApiKey(req);
+  const status = bodyStr(body(req), "status", "", 20);
+  if (status !== "canceled") {
+    fail(
+      'A \xFAnica mudan\xE7a aceita \xE9 {"status": "canceled"}. Nota autorizada n\xE3o volta atr\xE1s por aqui.',
+      422,
+      "invalid_status"
+    );
+  }
+  const chave = String(req.params.key ?? "").trim();
+  if (!chaveDeNfeValida(chave)) {
+    fail("A chave de acesso da NF-e precisa ter exatamente 44 d\xEDgitos.", 422, "invalid_nfe_key");
+  }
+  const pedidoId = String(req.params.id ?? "");
+  const nota = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ? AND order_id = ?`,
+    [chave, pedidoId]
+  );
+  if (nota === null) fail("Nota fiscal n\xE3o encontrada neste pedido.", 404, "not_found");
+  if (String(nota.status) !== "canceled") {
+    await q.run(
+      `UPDATE order_invoices SET status = 'canceled', canceled_at = NOW()
+        WHERE nfe_key = ? AND order_id = ?`,
+      [chave, pedidoId]
+    );
+  }
+  const depois = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+    [chave]
+  );
+  jsonOk(res, { invoice: invoiceRowToApi(depois ?? {}) });
+}));
+v1Routes.get("/invoices/:arquivo", h(async (req, res) => {
+  const m = /^([0-9a-f]{48})\.(xml|pdf)$/.exec(String(req.params.arquivo ?? ""));
+  if (m === null || !tokenValido(m[1])) fail("Nota fiscal n\xE3o encontrada.", 404, "not_found");
+  const token = m[1];
+  const extensao = m[2];
+  const coluna = extensao === "xml" ? "xml_token" : "pdf_token";
+  const nota = await q.one(
+    `SELECT i.nfe_key, i.number, i.series, i.status, o.customer_id
+       FROM order_invoices i
+       JOIN orders o ON o.id = i.order_id
+      WHERE i.${coluna} = ?`,
+    [token]
+  );
+  if (nota === null) fail("Nota fiscal n\xE3o encontrada.", 404, "not_found");
+  const daIntegracao = (req.get("Authorization") ?? "") !== "" && await currentApiKey(req) !== null;
+  const daLoja = daIntegracao || await currentAdmin(req) !== null;
+  const clienteId = currentCustomerId(req);
+  const doComprador = clienteId !== null && nota.customer_id !== null && Number(nota.customer_id) === clienteId;
+  if (!daLoja && !doComprador) {
+    if (clienteId === null) {
+      fail("Entre na sua conta para baixar a nota fiscal deste pedido.", 401, "unauthenticated");
+    }
+    fail("Nota fiscal n\xE3o encontrada.", 404, "not_found");
+  }
+  if (!daLoja && String(nota.status) === "canceled") {
+    fail(
+      "Esta nota fiscal foi cancelada. Se houver nota nova para este pedido, ela aparece na sua conta.",
+      404,
+      "not_found"
+    );
+  }
+  const bytes = await lerArquivoDaNota(token, extensao);
+  if (bytes === null) fail("O arquivo desta nota fiscal n\xE3o est\xE1 mais dispon\xEDvel.", 404, "not_found");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  res.setHeader("Cache-Control", "no-store, private");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader(
+    "Content-Type",
+    extensao === "xml" ? "application/xml; charset=utf-8" : "application/pdf"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="nota-fiscal-${Number(nota.number) || 0}-${Number(nota.series) || 0}.${extensao}"`
+  );
+  res.send(bytes);
 }));
 v1Routes.get("/customers", h(async (req, res) => {
   await requireApiKey(req);
@@ -5777,14 +6411,14 @@ webhookRoutes.post("/mercadopago", h(async (req, res) => {
 }));
 
 // server/src/session.ts
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 init_config();
 init_db();
 var COOKIE_NAME = "qp_session";
 var ROTATE_AFTER_MS = 30 * 60 * 1e3;
 var GC_DAYS = 14;
 function newId() {
-  return (0, import_node_crypto5.randomBytes)(32).toString("hex");
+  return (0, import_node_crypto6.randomBytes)(32).toString("hex");
 }
 __name(newId, "newId");
 var Session = class {
@@ -5970,8 +6604,8 @@ function createApp() {
       }
     })
   );
-  const publicDir = import_node_path4.default.resolve(process.cwd(), config.publicDir);
-  const indexHtml = import_node_path4.default.join(publicDir, "index.html");
+  const publicDir = import_node_path5.default.resolve(process.cwd(), config.publicDir);
+  const indexHtml = import_node_path5.default.join(publicDir, "index.html");
   app.use(
     import_express6.default.static(publicDir, {
       index: false,
@@ -6000,7 +6634,7 @@ function createApp() {
       next();
       return;
     }
-    if (!(0, import_node_fs4.existsSync)(indexHtml)) {
+    if (!(0, import_node_fs5.existsSync)(indexHtml)) {
       res.status(500).type("text/plain").send(
         `Front-end n\xE3o encontrado. Rode \`npm run build\` e confirme que a pasta "${config.publicDir}" est\xE1 ao lado do servidor.`
       );

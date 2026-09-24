@@ -12,6 +12,7 @@ import {
 import { placeholders, q, transaction } from '../db.ts';
 import { fail } from '../errors.ts';
 import { body, bodyBool, bodyStr, iso, jsonOk, validCpf, validEmail } from '../http.ts';
+import { COLUNAS_DA_NOTA, invoiceRowToApi } from '../notas.ts';
 import { h } from './helpers.ts';
 
 export const accountRoutes = Router();
@@ -62,6 +63,31 @@ async function customerPayload(id: number): Promise<Record<string, unknown>> {
     }
   }
 
+  /*
+   * As notas fiscais que o comprador pode baixar.
+   *
+   * Só as AUTORIZADAS. Nota cancelada continua existindo para o ERP (ele
+   * precisa do histórico), mas apresentá-la na conta do cliente como um
+   * "Baixar nota fiscal" seria entregar como válido um documento que não vale
+   * mais — e quem baixasse só descobriria isso na contabilidade.
+   */
+  const notasPorPedido = new Map<string, Record<string, unknown>[]>();
+  if (orders.length) {
+    const ids = orders.map((o) => o.id);
+    const linhas = await q.all(
+      `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices
+        WHERE order_id IN (${placeholders(ids.length)}) AND status = 'authorized'
+        ORDER BY issued_at ASC, nfe_key ASC`,
+      ids,
+    );
+    for (const linha of linhas) {
+      const chave = String(linha.order_id);
+      const lista = notasPorPedido.get(chave);
+      if (lista) lista.push(invoiceRowToApi(linha));
+      else notasPorPedido.set(chave, [invoiceRowToApi(linha)]);
+    }
+  }
+
   return {
     name: c.name,
     email: c.email,
@@ -74,6 +100,7 @@ async function customerPayload(id: number): Promise<Record<string, unknown>> {
       status: o.status,
       total: Number(o.total) || 0,
       items: itemsByOrder.get(String(o.id)) ?? [],
+      invoices: notasPorPedido.get(String(o.id)) ?? [],
     })),
     favorites: (
       await q.all('SELECT product_id FROM customer_favorites WHERE customer_id = ?', [id])

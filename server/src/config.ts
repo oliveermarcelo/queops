@@ -72,6 +72,16 @@ export interface AppConfig {
    * coisa à outra. Aqui é uma pasta só de conteúdo, que o deploy não toca.
    */
   midiaDir: string;
+  /**
+   * Pasta dos arquivos de nota fiscal (XML e DANFE), NUNCA servida estaticamente.
+   *
+   * A diferença para `midiaDir` é o motivo de existirem duas pastas: `midia/`
+   * é servida em /midia porque foto de produto tem de aparecer para quem passa
+   * na vitrine. O XML da NF-e traz CPF, nome e endereço do comprador — atrás
+   * de uma URL pública seria vazamento de dado pessoal esperando um buscador
+   * passar. Cada arquivo daqui sai por uma rota que confere quem está pedindo.
+   */
+  notasDir: string;
   /** Confia em X-Forwarded-* (Passenger/nginx na Hostinger sempre põe). */
   trustProxy: boolean;
 }
@@ -95,6 +105,7 @@ export const config: AppConfig = {
   secureCookies: envBool('SECURE_COOKIES', true),
   publicDir: env('PUBLIC_DIR', '') || detectPublicDir(),
   midiaDir: env('MIDIA_DIR', 'midia'),
+  notasDir: env('NOTAS_DIR', 'notas'),
   trustProxy: envBool('TRUST_PROXY', true),
 } as AppConfig;
 

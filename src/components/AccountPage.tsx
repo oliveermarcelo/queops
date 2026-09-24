@@ -6,10 +6,10 @@
 import React, { useState } from 'react';
 import {
   Package, User, MapPin, Heart, LogOut, ArrowLeft, Check, X, Plus,
-  Pencil, Trash2, ChevronRight,
+  Pencil, Trash2, ChevronRight, FileText, FileCode2,
 } from 'lucide-react';
 import {
-  CustomerAccount, CustomerAddress, ORDER_STATUS_LABEL,
+  CustomerAccount, CustomerAddress, CustomerOrder, ORDER_STATUS_LABEL,
   createAddress, deleteAddress, saveFavorites, saveProfile, updateAddress,
 } from '../account/session';
 import { Product } from '../types';
@@ -144,9 +144,59 @@ function OrdersTab({ account }: { account: CustomerAccount }) {
                 <span className="font-extrabold text-primary-blue">{brl(o.total)}</span>
               </div>
             </div>
+            <NotasFiscais notas={o.invoices ?? []} />
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * As notas fiscais do pedido, para o comprador baixar.
+ *
+ * Só aparece quando existe nota. Um rodapé "Nota fiscal: ainda não emitida" em
+ * todo pedido novo transformaria a espera normal do faturamento numa pendência
+ * visível, e traria pergunta ao WhatsApp da loja no dia seguinte à compra.
+ *
+ * Um pedido pode ter VÁRIAS notas — faturamento parcial —, então a lista é
+ * numerada em vez de um botão só. As canceladas nem chegam aqui: o servidor
+ * manda apenas as autorizadas.
+ */
+function NotasFiscais({ notas }: { notas: NonNullable<CustomerOrder['invoices']> }) {
+  if (notas.length === 0) return null;
+  return (
+    <div className="px-5 py-3 border-t border-gray-100 bg-gray-50/50">
+      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">
+        {notas.length === 1 ? 'Nota fiscal' : 'Notas fiscais'}
+      </p>
+      <div className="space-y-1.5">
+        {notas.map((n) => (
+          <div key={n.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-xs text-gray-500">
+              Nº {n.number}{n.series ? ` · série ${n.series}` : ''}
+            </span>
+            {/*
+              Dois arquivos, porque são duas coisas diferentes: o PDF é o DANFE,
+              que a pessoa imprime e lê; o XML é o documento fiscal em si, o que
+              a contabilidade e uma eventual troca precisam. Oferecer só o PDF
+              deixaria quem compra como pessoa jurídica sem o arquivo que vale.
+            */}
+            <a
+              href={n.pdfUrl}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-blue hover:underline"
+            >
+              <FileText size={13} /> Baixar nota (PDF)
+            </a>
+            <a
+              href={n.xmlUrl}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-primary-blue hover:underline"
+            >
+              <FileCode2 size={13} /> XML
+            </a>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -4,10 +4,10 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Loader2, Package, Search, Trash2 } from 'lucide-react';
+import { FileCode2, FileText, Loader2, Package, Search, Trash2 } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
 import { fetchOrderTracking, setOrderTracking } from '../store';
-import { Order, OrderStatus, TrackingEvent } from '../types';
+import { Order, OrderInvoice, OrderStatus, TrackingEvent } from '../types';
 import { brl, fmtDate, Btn, Card, ConfirmDialog, inputCls } from '../ui';
 
 /**
@@ -157,6 +157,56 @@ function TrackingRow({
           ))}
         </ol>
       )}
+    </div>
+  );
+}
+
+/**
+ * As notas fiscais do pedido, do jeito que a lojista precisa delas.
+ *
+ * Quem emite é o ERP; a loja só recebe e guarda. A linha existe porque o
+ * pedido que chega pelo WhatsApp ("manda a nota de novo") é atendido daqui,
+ * sem abrir o ERP.
+ *
+ * A nota CANCELADA aparece, riscada e marcada. Sumir com ela seria pior:
+ * quando o cliente ligar perguntando da nota que ele recebeu e que não vale
+ * mais, a tela precisa explicar o que aconteceu — e não fingir que aquela nota
+ * nunca existiu.
+ */
+function LinhaDeNotas({ notas }: { notas: OrderInvoice[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
+        Nota fiscal
+      </span>
+      {notas.map((n) => {
+        const cancelada = n.status === 'canceled';
+        return (
+          <span key={n.key} className="inline-flex items-center gap-2">
+            <span className={`text-xs ${cancelada ? 'text-gray-400 line-through' : 'text-gray-600'}`}>
+              Nº {n.number}{n.series ? `/${n.series}` : ''} · R$ {n.totalAmount}
+            </span>
+            {cancelada && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-500">
+                cancelada
+              </span>
+            )}
+            <a
+              href={n.pdfUrl}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-primary-blue hover:underline"
+              title={`Chave ${n.key}`}
+            >
+              <FileText size={13} /> DANFE
+            </a>
+            <a
+              href={n.xmlUrl}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-primary-blue hover:underline"
+            >
+              <FileCode2 size={13} /> XML
+            </a>
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -357,6 +407,13 @@ export default function OrdersAdmin() {
                         initialCode={o.trackingCode ?? ''}
                         lastStatus={o.trackingStatus ?? ''}
                       />
+                    </td>
+                  </tr>
+                )}
+                {(o.invoices ?? []).length > 0 && (
+                  <tr className="border-b border-gray-50 bg-gray-50/30">
+                    <td colSpan={7} className="py-2 px-4">
+                      <LinhaDeNotas notas={o.invoices ?? []} />
                     </td>
                   </tr>
                 )}

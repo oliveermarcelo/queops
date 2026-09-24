@@ -410,6 +410,42 @@ CREATE TABLE IF NOT EXISTS order_items (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
+-- Notas fiscais (NF-e) enviadas pelo ERP no faturamento.
+--
+-- Um pedido pode ter VÁRIAS notas: faturamento parcial é comum.
+--
+-- A chave de acesso é a CHAVE PRIMÁRIA, e não uma coluna qualquer com índice.
+-- É o que garante a idempotência que o ERP precisa: ele reenvia por retry, e
+-- duas requisições simultâneas com a mesma chave não podem virar duas notas.
+-- Checar na aplicação antes de inserir não resolveria isso — as duas checagens
+-- passariam antes de qualquer uma das duas gravações.
+--
+-- Os arquivos NÃO ficam aqui, e sim na pasta notas/ (fora de public/ e fora de
+-- midia/, que é servida publicamente). Estas colunas guardam só o token
+-- sorteado de cada um, que é o nome do arquivo e o segredo da URL.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS order_invoices (
+  nfe_key      CHAR(44)      NOT NULL,
+  order_id     VARCHAR(24)   NOT NULL,
+  number       INT UNSIGNED  NOT NULL DEFAULT 0,
+  series       INT UNSIGNED  NOT NULL DEFAULT 0,
+  issued_at    DATETIME      NOT NULL,
+  total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  status       VARCHAR(20)   NOT NULL DEFAULT 'authorized',
+  xml_token    CHAR(48)      NOT NULL,
+  pdf_token    CHAR(48)      NOT NULL,
+  canceled_at  DATETIME      NULL,
+  created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (nfe_key),
+  KEY idx_invoice_order (order_id),
+  UNIQUE KEY uq_invoice_xml (xml_token),
+  UNIQUE KEY uq_invoice_pdf (pdf_token),
+  CONSTRAINT fk_invoice_order FOREIGN KEY (order_id)
+    REFERENCES orders (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
 -- Cupons
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS coupons (

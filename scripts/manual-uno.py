@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 3.1 — 14 de setembro de 2026'
+VERSAO = 'Versão 3.2 — 24 de setembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -225,6 +225,8 @@ def construir(saida='Manual-Integracao-Queops-UNO-ERP.pdf'):
             ['<b>Trava por campo</b>: o que o painel edita o ERP não sobrescreve', '<b>Pronto</b>', 'seção 6'],
             ['Buscar só o que mudou desde X (sincronização incremental)', 'A construir', 'seção 7.1'],
             ['<b>Endereço de entrega e transportadora</b> no pedido', '<b>Pronto</b>', 'GET /orders'],
+            ['<b>Enviar a NF-e do pedido</b> (XML + DANFE), com o cliente baixando na conta dele',
+             '<b>Pronto</b>', 'seção 4.6'],
         ],
         [88 * mm, 27 * mm, 50 * mm],
         mono_cols=(2,),
@@ -853,6 +855,156 @@ PATCH /api/v1/orders/QP-000142
         'credenciais do UNO, não a arquivo de configuração compartilhado nem a repositório, e o '
         'corpo destas respostas não deve ir para log.'))
 
+    # ----------------------------------------------- 4.6 notas fiscais ----
+    add(PageBreak())
+    add(Paragraph('4.6 Notas fiscais (NF-e)', H2))
+    add(Paragraph(
+        'O UNO emite a nota no faturamento e envia para a loja o <b>XML processado</b> e o '
+        '<b>DANFE</b> de cada nota, amarrados ao pedido. Um pedido pode ter <b>várias</b> notas — '
+        'faturamento parcial é o caso normal de quem tem estoque em mais de um lugar. O comprador '
+        'passa a ver "Baixar nota fiscal" no pedido dele, e a lojista, no painel.', P))
+    add(Spacer(1, 4))
+    add(aviso(
+        'Esta é a única rota da API que NÃO fala JSON',
+        'O envio é <font face="Courier">multipart/form-data</font>, com os binários como arquivos e '
+        'não em base64: são até 3 MB somados, e base64 incharia 33% para depois obrigar os dois '
+        'lados a montar a string inteira na memória. Todo o restante da v1 continua JSON.'))
+
+    for parte in endpoint('POST', '/orders/{id}/invoices',
+                          'Sobe uma nota fiscal do pedido. Idempotente pela chave de acesso.'):
+        add(parte)
+    add(tabela(
+        ['Campo', 'Tipo', 'Regra'],
+        [
+            ['key', 'texto, 44 dígitos', 'Chave de acesso da NF-e. É o identificador único da nota'],
+            ['number', 'inteiro', 'Número da nota'],
+            ['series', 'inteiro', 'Série'],
+            ['issuedAt', 'ISO 8601 <b>com fuso</b>', 'Data/hora da autorização na SEFAZ'],
+            ['totalAmount', 'decimal em texto', 'Valor total. Guardado como decimal exato, nunca float'],
+            ['xml', 'arquivo', 'XML processado, máximo de 1 MB'],
+            ['pdf', 'arquivo', 'DANFE, máximo de 2 MB'],
+        ],
+        [24 * mm, 33 * mm, 108 * mm],
+        mono_cols=(0,),
+    ))
+    add(Spacer(1, 6))
+    add(bloco("""
+POST /api/v1/orders/QP-000142/invoices
+Authorization: Bearer qp_live_...
+Content-Type: multipart/form-data; boundary=...
+
+key=35260912345678000199550010000123451000123456
+number=12345   series=1
+issuedAt=2026-09-22T14:32:10-03:00
+totalAmount=1234.56
+xml=@nota.xml   pdf=@danfe.pdf
+
+201 (criada) ou 200 (mesma chave reenviada) →
+{ "invoice": {
+    "key": "3526...", "number": 12345, "series": 1,
+    "issuedAt": "2026-09-22T14:32:10-03:00",
+    "totalAmount": "1234.56", "status": "authorized",
+    "xmlUrl": "https://.../api/v1/invoices/<token>.xml",
+    "pdfUrl": "https://.../api/v1/invoices/<token>.pdf" } }
+"""))
+    add(Paragraph(
+        '<b>Reenvio é esperado.</b> O UNO pode repetir a chamada à vontade: a mesma '
+        '<font face="Courier">key</font> substitui os arquivos e os metadados e responde '
+        '<font face="Courier">200</font>, sem criar duplicata. A garantia é uma <b>chave primária</b> '
+        'no banco, e não uma checagem da aplicação — duas requisições simultâneas com a mesma chave '
+        'não viram duas notas.', P))
+    add(Paragraph(
+        '<b>No reenvio, as URLs mudam.</b> Tokens novos são sorteados e os arquivos anteriores são '
+        'apagados: a URL antiga passa a responder 404, de propósito, porque ela já circulou por '
+        'e-mail e por log. Guarde sempre as URLs da última resposta.', P))
+    add(Spacer(1, 6))
+    add(aviso(
+        'Esta rota NÃO muda o status do pedido',
+        'Faturar não é despachar. A transição para <font face="Courier">shipped</font> continua '
+        'exclusiva do <font face="Courier">PATCH /orders/{id}</font>, e subir a nota não mexe em '
+        'nada do pedido. Quem faz as duas coisas precisa fazer as duas chamadas.'))
+
+    for parte in endpoint('PATCH', '/orders/{id}/invoices/{key}',
+                          'Cancela uma nota. Única transição aceita: authorized → canceled.'):
+        add(parte)
+    add(bloco("""
+PATCH /api/v1/orders/QP-000142/invoices/3526...
+{ "status": "canceled" }
+
+200 → { "invoice": { ..., "status": "canceled" } }
+422 → invalid_status     (qualquer valor que não seja "canceled")
+404 → not_found          (a chave não é deste pedido)
+"""))
+    add(Paragraph(
+        'Repetir o cancelamento de uma nota já cancelada responde <font face="Courier">200</font> '
+        'com a mesma nota — é <i>retry</i>, não erro. A nota cancelada <b>continua</b> aparecendo no '
+        'GET do pedido com <font face="Courier">status: "canceled"</font>, porque o UNO precisa do '
+        'histórico completo; quem deixa de apresentá-la como válida é a loja, na conta do cliente e '
+        'na rota de download.', P))
+
+    for parte in endpoint('GET', '/orders/{id}',
+                          'Passa a incluir "invoices": apenas URLs, nunca binários.'):
+        add(parte)
+    add(bloco("""
+{ "order": { ..., "invoices": [ { "key": "...", "status": "authorized",
+                                  "xmlUrl": "...", "pdfUrl": "..." } ] } }
+
+# Pedido sem nota devolve lista VAZIA, não campo ausente.
+"""))
+    add(Paragraph(
+        'É por aqui que o UNO confere o que já subiu, sem guardar estado próprio.', P))
+
+    add(Paragraph('Privacidade dos arquivos', H3))
+    add(Paragraph(
+        'O XML da NF-e traz <b>CPF, nome e endereço</b> do comprador. Os arquivos ficam numa pasta '
+        'que <b>não</b> é servida estaticamente (ao contrário de <font face="Courier">/midia</font>, '
+        'que é pública por ser vitrine) e saem por uma rota que confere quem está pedindo.', P))
+    add(Spacer(1, 4))
+    add(tabela(
+        ['Quem baixa', 'Como se identifica', 'O que consegue'],
+        [
+            ['UNO', 'Chave de API no Authorization', 'Todas as notas, inclusive as canceladas'],
+            ['Lojista', 'Sessão do painel', 'Todas as notas, inclusive as canceladas'],
+            ['Comprador', 'Sessão da conta dele', 'Só as notas dos pedidos dele, e só as autorizadas'],
+            ['Qualquer outro', '—', '401 sem sessão; 404 com sessão de outra pessoa'],
+        ],
+        [28 * mm, 55 * mm, 82 * mm],
+    ))
+    add(Spacer(1, 6))
+    add(Paragraph(
+        'O caminho do arquivo é um <b>token sorteado de 192 bits</b> e nada mais: não é a chave da '
+        'NF-e, não é o id do pedido, não é derivado de nada. XML e PDF têm tokens diferentes, então '
+        'vazar um não entrega o outro. As respostas vão com '
+        '<font face="Courier">X-Robots-Tag: noindex</font> e '
+        '<font face="Courier">Cache-Control: no-store</font>, e não há listagem de diretório.', P))
+
+    add(Paragraph('Validação e erros desta rota', H3))
+    add(tabela(
+        ['HTTP', 'code', 'Quando acontece'],
+        [
+            ['404', 'not_found', 'Pedido inexistente, ou chave inexistente no PATCH'],
+            ['422', 'invalid_nfe_key', 'A chave não tem exatamente 44 dígitos numéricos'],
+            ['422', 'invalid_invoice', 'Campo obrigatório ausente ou com tipo inválido'],
+            ['422', 'invalid_status', 'PATCH com status diferente de "canceled"'],
+            ['413', 'file_too_large', 'XML acima de 1 MB, PDF acima de 2 MB, ou corpo acima do teto'],
+            ['415', 'unsupported_media_type', 'O conteúdo não é PDF ou o XML não é bem formado'],
+            ['409', 'invoice_key_conflict', 'A chave já está registrada em OUTRO pedido'],
+            ['409', 'invoice_canceled', 'Reenvio de nota cancelada — ela não volta a valer'],
+        ],
+        [15 * mm, 42 * mm, 108 * mm],
+        mono_cols=(1,),
+    ))
+    add(Spacer(1, 8))
+    add(aviso(
+        'O tipo do arquivo é conferido pelo CONTEÚDO',
+        'O PDF precisa começar com <font face="Courier">%PDF-</font> e o XML precisa ser bem '
+        'formado — o <font face="Courier">Content-Type</font> declarado não é levado em conta, '
+        'porque quem o escreve é o cliente. Em compensação, o '
+        '<font face="Courier">application/octet-stream</font> que muitas bibliotecas HTTP mandam por '
+        'padrão é aceito sem drama. <b>XML com <font face="Courier">&lt;!DOCTYPE&gt;</font> ou '
+        '<font face="Courier">&lt;!ENTITY&gt;</font> é recusado</b>: NF-e autorizada nunca tem '
+        'declaração de entidade, e é por ela que entra o XXE.'))
+
     # ---------------------------------------------------- 5. webhooks ----
     add(PageBreak())
     add(Paragraph('5. Webhooks da loja', H1))
@@ -1038,6 +1190,15 @@ X-Queops-Signature: t=1787061681,v1=<hmac_sha256(segredo, "t.corpo")>
             ['422', 'missing_name', 'Produto novo sem "name"', 'Enviar o nome, ou conferir o id'],
             ['422', 'invalid_batch', 'Lote sem "products" ou vazio', 'Corrigir o corpo'],
             ['422', 'batch_too_large', 'Mais de 200 produtos no lote', 'Dividir em lotes de 200'],
+            ['422', 'invalid_nfe_key', 'Chave de NF-e sem 44 dígitos', 'Corrigir a chave na origem'],
+            ['409', 'invoice_key_conflict', 'Chave de NF-e já usada em outro pedido',
+             'Conferir a que pedido a nota pertence'],
+            ['409', 'invoice_canceled', 'Reenvio de nota cancelada',
+             'Emitir nota nova; cancelada não reativa'],
+            ['413', 'file_too_large', 'XML acima de 1 MB ou PDF acima de 2 MB',
+             'Reduzir o arquivo; não repetir igual'],
+            ['415', 'unsupported_media_type', 'Conteúdo não é PDF, ou XML mal formado',
+             'Conferir o arquivo antes de reenviar'],
             ['500', 'schema_outdated', 'Banco da loja desatualizado após um deploy',
              'Avisar o responsável: falta rodar a migração'],
             ['500', 'internal_error', 'Falha inesperada', 'Repetir com espera crescente'],
@@ -1086,7 +1247,13 @@ X-Queops-Signature: t=1787061681,v1=<hmac_sha256(segredo, "t.corpo")>
              'Painel mostra "enviado"; webhook order.status_changed dispara'],
             ['12', 'Desligar a URL do webhook e fazer outra compra',
              'A varredura por since encontra o pedido — prova o plano B'],
-            ['13', 'Revogar a chave no painel e repetir o passo 2',
+            ['13', 'POST /orders/{id}/invoices com o XML e o DANFE de uma nota de teste',
+             '201; o pedido passa a trazer invoices e o status NÃO muda'],
+            ['13b', 'Repetir o mesmo POST, com a mesma key',
+             '200, sem duplicata — e as URLs anteriores param de responder'],
+            ['13c', 'Abrir a xmlUrl sem a chave de API',
+             '401; com a conta do comprador dono do pedido, 200'],
+            ['14', 'Revogar a chave no painel e repetir o passo 2',
              '401 imediato'],
         ],
         [8 * mm, 82 * mm, 75 * mm],

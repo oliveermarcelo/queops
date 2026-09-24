@@ -100,6 +100,7 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 | `npm run teste` | Testes de preço e de pagamento (`node --test`, sem banco) |
 | `npm run teste:pagamento` | Travas de pagamento contra um MySQL de verdade |
 | `npm run teste:cobranca` | Checkout pela HTTP: nenhum pedido sem cobrança |
+| `npm run teste:notas` | Notas fiscais (NF-e): upload do ERP e acesso do cliente |
 | `npm run teste:e2e` | Testes de ponta a ponta no navegador (Playwright) |
 
 ---
@@ -122,6 +123,9 @@ curl -H "Authorization: Bearer qp_live_..." \
 | GET | `/api/v1/orders?status=&since=` | Pedidos |
 | GET | `/api/v1/orders/:id` | Um pedido |
 | PATCH | `/api/v1/orders/:id` | Muda o status |
+| POST | `/api/v1/orders/:id/invoices` | Envia a NF-e (XML + DANFE) — `multipart/form-data` |
+| PATCH | `/api/v1/orders/:id/invoices/:key` | Cancela uma nota |
+| GET | `/api/v1/invoices/:token.xml\|.pdf` | Baixa o arquivo (confere quem pede) |
 | GET | `/api/v1/customers` | Clientes |
 
 O servidor guarda apenas o hash do token: ele aparece uma única vez, na

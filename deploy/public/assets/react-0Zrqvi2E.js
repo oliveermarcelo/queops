@@ -1,4 +1,4 @@
-import{r as d1}from"./icons-DjpNpTvo.js";var ti={exports:{}},me={},ai={exports:{}},ui={};/**
+import{r as d1}from"./icons-BXZvJIxr.js";var ti={exports:{}},me={},ai={exports:{}},ui={};/**
  * @license React
  * scheduler.production.js
  *

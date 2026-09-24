@@ -7,6 +7,7 @@ import { decryptPayload } from './crypto.ts';
 import { placeholders, q, type Q, type Row } from './db.ts';
 import { codigoNoMapa, mapaDeCodigos } from './erp-categorias.ts';
 import { iso, round2 } from './http.ts';
+import { COLUNAS_DA_NOTA, invoiceRowToApi } from './notas.ts';
 
 export interface StoreSettings {
   name: string;
@@ -598,7 +599,7 @@ export function transicaoDeStatus(
   return { sql: campos.join(', '), params };
 }
 
-export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
+export function orderRowToApi(r: Row, items: Row[], invoices: Row[] = []): Record<string, unknown> {
   return {
     id: r.id,
     createdAt: iso(r.created_at),
@@ -834,7 +835,45 @@ export function orderRowToApi(r: Row, items: Row[]): Record<string, unknown> {
      * referência da cobrança no provedor não tem por que circular.
      */
     hasOpenCharge: String(r.payment_ref ?? '') !== '' && !r.paid_at,
+    /*
+     * As notas fiscais do pedido — só as URLs, nunca os binários.
+     *
+     * Lista VAZIA quando não há nota, e não campo ausente: o ERP usa esta
+     * resposta para conferir o que já subiu, e "não veio o campo" e "não há
+     * nota" precisam ser a mesma coisa para ele, senão uma versão antiga da
+     * loja faria o ERP reenviar tudo.
+     *
+     * Nota cancelada CONTINUA aqui, com `status: "canceled"`. O ERP precisa do
+     * histórico completo; quem não pode mostrá-la como válida é a loja, e isso
+     * acontece na tela do comprador e na rota de download, não aqui.
+     */
+    invoices: invoices.map(invoiceRowToApi),
   };
+}
+
+/**
+ * Notas fiscais de vários pedidos, em uma consulta só.
+ *
+ * O `orderRowToApi` recebe a lista pronta em vez de ir buscá-la: uma listagem
+ * de 500 pedidos faria 500 consultas se cada um fosse atrás das próprias notas
+ * — o mesmo N+1 que `fetchOrders` já evita para os itens.
+ */
+export async function invoicesPorPedido(ids: unknown[], exec: Q = q): Promise<Map<string, Row[]>> {
+  const porPedido = new Map<string, Row[]>();
+  if (ids.length === 0) return porPedido;
+  const rows = await exec.all(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices
+      WHERE order_id IN (${placeholders(ids.length)})
+      ORDER BY issued_at ASC, nfe_key ASC`,
+    ids,
+  );
+  for (const row of rows) {
+    const chave = String(row.order_id);
+    const lista = porPedido.get(chave);
+    if (lista) lista.push(row);
+    else porPedido.set(chave, [row]);
+  }
+  return porPedido;
 }
 
 /** Carrega pedidos com seus itens em duas consultas (evita N+1). */
@@ -855,7 +894,12 @@ export async function fetchOrders(limit = 500, exec: Q = q): Promise<Record<stri
     if (list) list.push(row);
     else byOrder.set(key, [row]);
   }
-  return orders.map((o) => orderRowToApi(o, byOrder.get(String(o.id)) ?? []));
+  const notas = await invoicesPorPedido(ids, exec);
+  return orders.map((o) => orderRowToApi(
+    o,
+    byOrder.get(String(o.id)) ?? [],
+    notas.get(String(o.id)) ?? [],
+  ));
 }
 
 // -------------------------------------------------------- Integrações ----

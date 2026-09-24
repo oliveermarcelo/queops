@@ -51,6 +51,22 @@ export interface Order {
   /** Por que foi cancelado, e por quem (loja, cliente, gateway ou ERP). */
   cancelReason?: string | null;
   canceledBy?: string | null;
+  /** Notas fiscais enviadas pelo ERP no faturamento. Um pedido pode ter várias. */
+  invoices?: OrderInvoice[];
+}
+
+/** Uma NF-e do pedido. Os arquivos ficam fora do banco; aqui só as URLs. */
+export interface OrderInvoice {
+  /** Chave de acesso, 44 dígitos. */
+  key: string;
+  number: number;
+  series: number;
+  issuedAt: string | null;
+  /** Texto, e não número: valor de nota fiscal não passa por ponto flutuante. */
+  totalAmount: string;
+  status: 'authorized' | 'canceled';
+  xmlUrl: string;
+  pdfUrl: string;
 }
 
 /** Um evento do rastreio dos Correios. */

@@ -108,6 +108,7 @@ var init_config = __esm({
       secureCookies: envBool("SECURE_COOKIES", true),
       publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
       midiaDir: env("MIDIA_DIR", "midia"),
+      notasDir: env("NOTAS_DIR", "notas"),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");
@@ -299,6 +300,19 @@ var init_erp_categorias = __esm({
   }
 });
 
+// server/src/notas.ts
+var TETO_XML, TETO_PDF, TETO_CORPO;
+var init_notas = __esm({
+  "server/src/notas.ts"() {
+    "use strict";
+    init_config();
+    init_http();
+    TETO_XML = 1024 * 1024;
+    TETO_PDF = 2 * 1024 * 1024;
+    TETO_CORPO = TETO_XML + TETO_PDF + 128 * 1024;
+  }
+});
+
 // server/src/store.ts
 async function configSet(key, value, exec = q) {
   await exec.run(
@@ -315,6 +329,7 @@ var init_store = __esm({
     init_db();
     init_erp_categorias();
     init_http();
+    init_notas();
     DEFAULT_SETTINGS = {
       name: "Qu\xE9ops Pir\xE2mides",
       email: "contato@queopspiramides.com.br",

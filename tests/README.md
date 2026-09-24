@@ -124,6 +124,34 @@ Roteiro manual, depois de cadastrar as credenciais:
 > pedido. O navegador escolhe entre as opções; o preço é sempre o que o servidor
 > cotou.
 
+## Notas fiscais (NF-e) — o que o ERP sobe e o cliente baixa
+
+Precisa da loja no ar.
+
+```bash
+npm run teste:notas       # 62 verificações pela HTTP
+```
+
+`notas-fiscais.mjs` não persegue "a rota respondeu 200". Persegue o conjunto de
+coisas que, se der errado, dá errado em silêncio e caro:
+
+- **reenvio criando duplicata.** O ERP reenvia por retry — sempre. A mesma
+  chave tem de responder 200 e continuar sendo uma nota só no banco.
+- **URL antiga continuando a funcionar** depois da substituição. Ela já
+  circulou por e-mail e por log; se não morrer, a nota "substituída" continua
+  baixável para sempre.
+- **XML de um comprador baixável por outro**, ou por qualquer um. O XML tem
+  CPF, nome e endereço — o teste tenta baixar sem sessão, com a sessão de outro
+  cliente, com a do dono e com a chave do ERP, e espera coisa diferente de cada
+  um.
+- **nota cancelada oferecida ao cliente como válida.** Ela continua no GET do
+  pedido (o ERP precisa do histórico) e some da conta do comprador.
+- **upload mexendo no status do pedido.** Faturar não é despachar.
+
+Cobre também cada linha da tabela de erros do contrato (404, 422, 413, 415,
+409) e, em especial, o XML com `<!DOCTYPE>`/`<!ENTITY>` — a porta de entrada do
+XXE, recusada com 415.
+
 ## Ponta a ponta (Playwright)
 
 Precisam da loja no ar. Com o build pronto:

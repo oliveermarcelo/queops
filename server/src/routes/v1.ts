@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 
-import { requireApiKey } from '../auth.ts';
+import { currentAdmin, currentApiKey, currentCustomerId, requireApiKey } from '../auth.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
 import {
@@ -20,9 +20,17 @@ import {
   produtosSemCategoria, traduzirCodigo,
 } from '../erp-categorias.ts';
 import { gravarProdutoDoErp } from '../erp-produtos.ts';
-import { body, bodyFloat, bodyInt, bodyStr, iso, jsonOk, queryStr } from '../http.ts';
+import { body, bodyFloat, bodyInt, bodyStr, iso, jsonOk, mysqlDateTime, queryStr } from '../http.ts';
+import { lerMultipart } from '../multipart.ts';
+import {
+  apagarArquivoDaNota, chaveDeNfeValida, COLUNAS_DA_NOTA, guardarArquivoDaNota, invoiceRowToApi,
+  lerArquivoDaNota, novoToken, problemaNoPdf, problemaNoXml, TETO_CORPO, TETO_PDF, TETO_XML,
+  tokenValido,
+} from '../notas.ts';
 import { fireWebhooks } from '../providers.ts';
-import { fetchProducts, orderRowToApi, productRowToApi, transicaoDeStatus } from '../store.ts';
+import {
+  fetchProducts, invoicesPorPedido, orderRowToApi, productRowToApi, transicaoDeStatus,
+} from '../store.ts';
 import { h } from './helpers.ts';
 
 export const v1Routes = Router();
@@ -398,12 +406,8 @@ v1Routes.get('/orders', h(async (req, res) => {
    * documentado e em uso. Quem faz varredura de segurança deve usar
    * `updatedSince`; quem faz carga inicial, `since`.
    */
-  const emHoraLocal = (iso8601: string): string | null => {
-    const t = Date.parse(iso8601);
-    if (!Number.isFinite(t)) return null;
-    // Convertido para a hora de São Paulo, que é o fuso da sessão MySQL.
-    return new Date(t - 3 * 3_600_000).toISOString().slice(0, 19).replace('T', ' ');
-  };
+  // Convertido para a hora de São Paulo, que é o fuso da sessão MySQL.
+  const emHoraLocal = mysqlDateTime;
 
   const since = queryStr(req, 'since', '', 40);
   if (since !== '') {
@@ -450,7 +454,14 @@ v1Routes.get('/orders', h(async (req, res) => {
     }
   }
 
-  jsonOk(res, { orders: orders.map((o) => orderRowToApi(o, items.get(String(o.id)) ?? [])) });
+  const notas = await invoicesPorPedido(orders.map((o) => o.id));
+  jsonOk(res, {
+    orders: orders.map((o) => orderRowToApi(
+      o,
+      items.get(String(o.id)) ?? [],
+      notas.get(String(o.id)) ?? [],
+    )),
+  });
 }));
 
 // GET /api/v1/orders/:id
@@ -459,7 +470,12 @@ v1Routes.get('/orders/:id', h(async (req, res) => {
   const o = await q.one('SELECT * FROM orders WHERE id = ?', [req.params.id]);
   if (o === null) fail('Pedido não encontrado.', 404, 'not_found');
   const items = await q.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id ASC', [req.params.id]);
-  jsonOk(res, { order: orderRowToApi(o, items) });
+  const notas = await q.all(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE order_id = ?
+      ORDER BY issued_at ASC, nfe_key ASC`,
+    [req.params.id],
+  );
+  jsonOk(res, { order: orderRowToApi(o, items, notas) });
 }));
 
 // PATCH /api/v1/orders/:id — muda o status (ERP confirmando faturamento/envio)
@@ -485,6 +501,381 @@ v1Routes.patch('/orders/:id', h(async (req, res) => {
   }
   fireWebhooks('order.status_changed', { orderId: req.params.id, status });
   jsonOk(res, { ok: true });
+}));
+
+// --------------------------------------------------- notas fiscais ----
+
+/**
+ * O que impede esta chave de NF-e de ser gravada neste pedido agora.
+ *
+ * Devolve o problema em `erro` em vez de lançar, para quem chama poder apagar
+ * os arquivos recém-gravados antes de abortar — é o mesmo padrão de
+ * `lerDataUrl` e `motivoParaNaoDesativar`, e existe porque o tsconfig da raiz
+ * compila sem `strict`.
+ */
+function problemaComANota(linha: Row, pedidoId: string): { erro: string; status: number; codigo: string } {
+  if (String(linha.order_id) !== pedidoId) {
+    return {
+      erro: `Esta chave de NF-e já está registrada no pedido ${String(linha.order_id)}. `
+        + 'Uma chave pertence a um pedido só.',
+      status: 409,
+      codigo: 'invoice_key_conflict',
+    };
+  }
+  if (String(linha.status) === 'canceled') {
+    return {
+      erro: 'Esta nota fiscal está cancelada e não volta a valer por reenvio. '
+        + 'Emita uma nota nova, com chave nova.',
+      status: 409,
+      codigo: 'invoice_canceled',
+    };
+  }
+  return { erro: '', status: 200, codigo: '' };
+}
+
+/**
+ * POST /api/v1/orders/{id}/invoices — o ERP sobe a NF-e do faturamento.
+ *
+ * `multipart/form-data`, e não JSON com base64: são dois binários de até 3 MB
+ * somados, e base64 incharia 33% para depois obrigar o servidor a montar a
+ * string inteira na memória. É a única rota da API que não fala JSON.
+ *
+ * Idempotente pela chave de acesso: o ERP reenvia por retry sem medo. A
+ * garantia está na CHAVE PRIMÁRIA da tabela, não numa checagem daqui —
+ * checagem na aplicação não segura duas requisições simultâneas com a mesma
+ * chave, porque as duas leriam "não existe" antes de qualquer uma gravar.
+ *
+ * Esta rota NÃO mexe no status do pedido. Faturar não é despachar, e a
+ * transição para `shipped` continua sendo exclusividade do PATCH /orders/{id}.
+ */
+v1Routes.post('/orders/:id/invoices', h(async (req, res) => {
+  await requireApiKey(req);
+  const pedidoId = String(req.params.id ?? '');
+
+  /*
+   * O corpo é lido ANTES de olhar se o pedido existe.
+   *
+   * Parece invertido — 404 seria mais barato antes de carregar 3 MB —, mas
+   * responder sem consumir a requisição deixa o restante do envio na conexão,
+   * e vários clientes HTTP transformam isso em "connection reset" em vez de
+   * mostrarem o 404 que já tinha sido enviado. O integrador leria erro de rede
+   * onde havia uma resposta clara.
+   */
+  const form = await lerMultipart(req, TETO_CORPO);
+  if (form.erro !== '') fail(form.erro, form.status, form.codigo);
+
+  if ((await q.one('SELECT id FROM orders WHERE id = ?', [pedidoId])) === null) {
+    fail('Pedido não encontrado.', 404, 'not_found');
+  }
+
+  // ------------------------------------------------------ os campos ----
+
+  const chave = String(form.campos.key ?? '').trim();
+  if (!chaveDeNfeValida(chave)) {
+    fail(
+      'A chave de acesso da NF-e precisa ter exatamente 44 dígitos, sem espaços nem máscara.',
+      422,
+      'invalid_nfe_key',
+    );
+  }
+
+  const inteiro = (valor: string): number => (/^\d{1,9}$/.test(valor.trim()) ? Number(valor) : -1);
+  const numero = inteiro(String(form.campos.number ?? ''));
+  if (numero < 0) fail('Informe "number" como um número inteiro.', 422, 'invalid_invoice');
+  const serie = inteiro(String(form.campos.series ?? ''));
+  if (serie < 0) fail('Informe "series" como um número inteiro.', 422, 'invalid_invoice');
+
+  /*
+   * A data de autorização precisa vir COM fuso.
+   *
+   * "2026-09-22T14:32:10", sem o `-03:00`, é ambíguo: o servidor teria de
+   * chutar um fuso, e uma nota autorizada às 23h30 mudaria de dia conforme o
+   * chute. A SEFAZ sempre devolve o deslocamento; exigir aqui é exigir o que
+   * o ERP já tem em mãos.
+   */
+  const emitidaEm = String(form.campos.issuedAt ?? '').trim();
+  const emitidaComFuso = /(?:Z|[+-]\d{2}:?\d{2})$/.test(emitidaEm);
+  const emitidaLocal = emitidaComFuso ? mysqlDateTime(emitidaEm) : null;
+  if (emitidaLocal === null) {
+    fail(
+      'Informe "issuedAt" em ISO 8601 COM fuso (ex.: 2026-09-22T14:32:10-03:00).',
+      422,
+      'invalid_invoice',
+    );
+  }
+
+  /*
+   * O valor entra como TEXTO e sai como texto.
+   *
+   * Passar por `Number` aqui seria perder o ponto: 1234.56 não existe exato em
+   * binário, e valor de nota fiscal tem de bater centavo a centavo com o XML.
+   * A string vai direto para a coluna DECIMAL, que guarda os dígitos.
+   */
+  const valorBruto = String(form.campos.totalAmount ?? '').trim().replace(',', '.');
+  if (!/^\d{1,10}(\.\d{1,2})?$/.test(valorBruto)) {
+    fail('Informe "totalAmount" como decimal (ex.: "1234.56").', 422, 'invalid_invoice');
+  }
+
+  // ---------------------------------------------------- os arquivos ----
+
+  const xml = form.arquivos.xml;
+  const pdf = form.arquivos.pdf;
+  if (xml === undefined) fail('Envie o XML processado no campo "xml".', 422, 'invalid_invoice');
+  if (pdf === undefined) fail('Envie o DANFE no campo "pdf".', 422, 'invalid_invoice');
+
+  if (xml.bytes.length > TETO_XML) {
+    fail(`O XML tem ${Math.round(xml.bytes.length / 1024)} KB; o máximo é 1 MB.`, 413, 'file_too_large');
+  }
+  if (pdf.bytes.length > TETO_PDF) {
+    fail(`O PDF tem ${Math.round(pdf.bytes.length / 1024)} KB; o máximo é 2 MB.`, 413, 'file_too_large');
+  }
+
+  /*
+   * O tipo é conferido pelo CONTEÚDO, não pelo Content-Type declarado.
+   *
+   * O cabeçalho é escrito pelo cliente: um executável anunciado como
+   * `application/pdf` entraria sem esta checagem, e a loja passaria a servir
+   * esse arquivo a compradores. O `application/octet-stream` que várias
+   * bibliotecas HTTP mandam por padrão, por outro lado, é aceito sem drama —
+   * recusar por causa dele barraria envio legítimo por um detalhe que não diz
+   * nada sobre o arquivo.
+   */
+  const problemaXml = problemaNoXml(xml.bytes);
+  if (problemaXml !== '') fail(problemaXml, 415, 'unsupported_media_type');
+  const problemaPdf = problemaNoPdf(pdf.bytes);
+  if (problemaPdf !== '') fail(problemaPdf, 415, 'unsupported_media_type');
+
+  // ------------------------------------------------------- gravação ----
+
+  const existente = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+    [chave],
+  );
+  if (existente !== null) {
+    const p = problemaComANota(existente, pedidoId);
+    if (p.erro !== '') fail(p.erro, p.status, p.codigo);
+  }
+
+  const tokenXml = novoToken();
+  const tokenPdf = novoToken();
+  await guardarArquivoDaNota(tokenXml, 'xml', xml.bytes);
+  await guardarArquivoDaNota(tokenPdf, 'pdf', pdf.bytes);
+  const descartarNovos = async (): Promise<void> => {
+    await apagarArquivoDaNota(tokenXml, 'xml');
+    await apagarArquivoDaNota(tokenPdf, 'pdf');
+  };
+
+  let criada = existente === null;
+  if (criada) {
+    try {
+      await q.run(
+        `INSERT INTO order_invoices
+           (nfe_key, order_id, number, series, issued_at, total_amount, status, xml_token, pdf_token)
+         VALUES (?, ?, ?, ?, ?, ?, 'authorized', ?, ?)`,
+        [chave, pedidoId, numero, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf],
+      );
+    } catch (e) {
+      if ((e as { code?: string })?.code !== 'ER_DUP_ENTRY') {
+        await descartarNovos();
+        throw e;
+      }
+      /*
+       * Corrida: outra requisição com a MESMA chave inseriu entre a consulta
+       * acima e este INSERT. É exatamente o caso que a chave primária existe
+       * para resolver; aqui só seguimos para o caminho de substituição.
+       */
+      criada = false;
+    }
+  }
+
+  if (!criada) {
+    const atual = await q.one(
+      `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+      [chave],
+    );
+    if (atual === null) {
+      await descartarNovos();
+      fail('Não foi possível gravar a nota. Tente novamente.', 409, 'invoice_key_conflict');
+    }
+    const p = problemaComANota(atual, pedidoId);
+    if (p.erro !== '') {
+      await descartarNovos();
+      fail(p.erro, p.status, p.codigo);
+    }
+
+    const trocadas = await q.run(
+      `UPDATE order_invoices
+          SET number = ?, series = ?, issued_at = ?, total_amount = ?,
+              xml_token = ?, pdf_token = ?
+        WHERE nfe_key = ? AND order_id = ? AND status = 'authorized'`,
+      [numero, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf, chave, pedidoId],
+    );
+    if (trocadas === 0) {
+      await descartarNovos();
+      fail(
+        'Esta nota fiscal está cancelada e não volta a valer por reenvio.',
+        409,
+        'invoice_canceled',
+      );
+    }
+
+    /*
+     * Os arquivos antigos SOMEM, e é a parte que não pode ser esquecida.
+     *
+     * Token novo sem apagar o velho deixaria a URL anterior funcionando para
+     * sempre — e ela já circulou: foi para o e-mail do comprador e para o log
+     * do ERP. Substituir uma nota tem de invalidar o que foi substituído.
+     */
+    await apagarArquivoDaNota(String(atual.xml_token), 'xml');
+    await apagarArquivoDaNota(String(atual.pdf_token), 'pdf');
+  }
+
+  const gravada = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+    [chave],
+  );
+  jsonOk(res, { invoice: invoiceRowToApi(gravada ?? {}) }, criada ? 201 : 200);
+}));
+
+/**
+ * PATCH /api/v1/orders/{id}/invoices/{key} — cancelamento da nota.
+ *
+ * Aceita uma transição só: `authorized → canceled`. Reenviar o cancelamento de
+ * uma nota já cancelada responde 200 com a mesma nota, de propósito — é retry
+ * do ERP, não erro, e transformar retry em 422 faria o outro lado repetir para
+ * sempre tentando "consertar" algo que já está no estado pedido.
+ *
+ * A nota cancelada CONTINUA na resposta do pedido, com `status: "canceled"`:
+ * o ERP precisa do histórico. Quem deixa de apresentá-la como válida é a loja
+ * — a tela do comprador não a mostra, e a rota de download a recusa para ele.
+ */
+v1Routes.patch('/orders/:id/invoices/:key', h(async (req, res) => {
+  await requireApiKey(req);
+
+  const status = bodyStr(body(req), 'status', '', 20);
+  if (status !== 'canceled') {
+    fail(
+      'A única mudança aceita é {"status": "canceled"}. Nota autorizada não volta atrás por aqui.',
+      422,
+      'invalid_status',
+    );
+  }
+
+  const chave = String(req.params.key ?? '').trim();
+  if (!chaveDeNfeValida(chave)) {
+    fail('A chave de acesso da NF-e precisa ter exatamente 44 dígitos.', 422, 'invalid_nfe_key');
+  }
+
+  const pedidoId = String(req.params.id ?? '');
+  const nota = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ? AND order_id = ?`,
+    [chave, pedidoId],
+  );
+  if (nota === null) fail('Nota fiscal não encontrada neste pedido.', 404, 'not_found');
+
+  if (String(nota.status) !== 'canceled') {
+    await q.run(
+      `UPDATE order_invoices SET status = 'canceled', canceled_at = NOW()
+        WHERE nfe_key = ? AND order_id = ?`,
+      [chave, pedidoId],
+    );
+  }
+
+  const depois = await q.one(
+    `SELECT ${COLUNAS_DA_NOTA} FROM order_invoices WHERE nfe_key = ?`,
+    [chave],
+  );
+  jsonOk(res, { invoice: invoiceRowToApi(depois ?? {}) });
+}));
+
+/**
+ * GET /api/v1/invoices/{token}.xml|.pdf — o arquivo em si.
+ *
+ * É a ÚNICA rota da v1 que não exige chave de API, e a exceção é o ponto do
+ * desenho: quem baixa a nota é, na maior parte das vezes, o comprador, do
+ * navegador dele. Três identidades servem:
+ *
+ *   - o ERP, pela chave de API (é quem subiu o arquivo);
+ *   - o dono da loja, pela sessão do painel;
+ *   - o cliente logado, e SÓ se o pedido for dele.
+ *
+ * O token do caminho tem 192 bits de aleatoriedade e nenhum significado: não é
+ * a chave da NF-e, não é o id do pedido, não é derivado de nada. Mesmo assim
+ * ele sozinho não basta — a conferência de quem está pedindo é o que protege o
+ * arquivo caso a URL vaze num encaminhamento de e-mail ou num log.
+ *
+ * O XML tem CPF, nome e endereço do comprador. Nada disto é cacheável nem
+ * indexável, e os cabeçalhos abaixo dizem isso explicitamente.
+ */
+v1Routes.get('/invoices/:arquivo', h(async (req, res) => {
+  const m = /^([0-9a-f]{48})\.(xml|pdf)$/.exec(String(req.params.arquivo ?? ''));
+  if (m === null || !tokenValido(m[1])) fail('Nota fiscal não encontrada.', 404, 'not_found');
+  const token = m[1];
+  const extensao = m[2] as 'xml' | 'pdf';
+
+  const coluna = extensao === 'xml' ? 'xml_token' : 'pdf_token';
+  const nota = await q.one(
+    `SELECT i.nfe_key, i.number, i.series, i.status, o.customer_id
+       FROM order_invoices i
+       JOIN orders o ON o.id = i.order_id
+      WHERE i.${coluna} = ?`,
+    [token],
+  );
+  if (nota === null) fail('Nota fiscal não encontrada.', 404, 'not_found');
+
+  /*
+   * Quem está pedindo. A chave de API é conferida primeiro e só quando o
+   * header existe — a verificação custa um bcrypt, e o comprador nunca manda
+   * header nenhum.
+   */
+  const daIntegracao = (req.get('Authorization') ?? '') !== '' && (await currentApiKey(req)) !== null;
+  const daLoja = daIntegracao || (await currentAdmin(req)) !== null;
+  const clienteId = currentCustomerId(req);
+  const doComprador = clienteId !== null
+    && nota.customer_id !== null
+    && Number(nota.customer_id) === clienteId;
+
+  if (!daLoja && !doComprador) {
+    /*
+     * Sem identidade nenhuma, 401 — é quase sempre sessão expirada, e mandar
+     * entrar de novo resolve. Com identidade que não é a do dono, 404: dizer
+     * "existe, mas não é sua" confirmaria a existência daquela nota a quem
+     * está tentando adivinhar tokens.
+     */
+    if (clienteId === null) {
+      fail('Entre na sua conta para baixar a nota fiscal deste pedido.', 401, 'unauthenticated');
+    }
+    fail('Nota fiscal não encontrada.', 404, 'not_found');
+  }
+
+  if (!daLoja && String(nota.status) === 'canceled') {
+    fail(
+      'Esta nota fiscal foi cancelada. Se houver nota nova para este pedido, ela aparece na sua conta.',
+      404,
+      'not_found',
+    );
+  }
+
+  const bytes = await lerArquivoDaNota(token, extensao);
+  if (bytes === null) fail('O arquivo desta nota fiscal não está mais disponível.', 404, 'not_found');
+
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.setHeader('Cache-Control', 'no-store, private');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader(
+    'Content-Type',
+    extensao === 'xml' ? 'application/xml; charset=utf-8' : 'application/pdf',
+  );
+  /*
+   * O nome oferecido no download traz número e série, e não a chave de acesso.
+   * A chave não entra no caminho por contrato; mantê-la fora também do nome do
+   * arquivo evita que ela acabe num log de servidor de arquivos alheio.
+   */
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="nota-fiscal-${Number(nota.number) || 0}-${Number(nota.series) || 0}.${extensao}"`,
+  );
+  res.send(bytes);
 }));
 
 // GET /api/v1/customers

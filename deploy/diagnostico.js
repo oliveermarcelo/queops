@@ -112,6 +112,7 @@ var init_config = __esm({
       secureCookies: envBool("SECURE_COOKIES", true),
       publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
       midiaDir: env("MIDIA_DIR", "midia"),
+      notasDir: env("NOTAS_DIR", "notas"),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");

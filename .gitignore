@@ -39,3 +39,8 @@ _transfer/
 # Imagens enviadas pelo painel. Conteúdo do cliente, não código: fica fora do
 # repositório e não pode ser apagado num deploy.
 midia/
+
+# Notas fiscais enviadas pelo ERP (XML e DANFE). Mais sensível que midia/: o
+# XML da NF-e traz CPF, nome e endereço do comprador. Não vai para o Git em
+# hipótese nenhuma, e o deploy não pode apagar a pasta.
+notas/

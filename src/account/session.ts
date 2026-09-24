@@ -31,12 +31,31 @@ export interface CustomerOrderItem {
   unitPrice: number;
 }
 
+/**
+ * Uma nota fiscal do pedido, como o comprador a vê.
+ *
+ * As URLs não são links públicos: cada uma leva a uma rota que confere se quem
+ * está pedindo é o dono do pedido. Fora da conta, elas não abrem.
+ */
+export interface CustomerInvoice {
+  key: string;
+  number: number;
+  series: number;
+  issuedAt: string | null;
+  totalAmount: string;
+  status: 'authorized' | 'canceled';
+  xmlUrl: string;
+  pdfUrl: string;
+}
+
 export interface CustomerOrder {
   id: string;
   date: string; // ISO
   status: 'pending' | 'paid' | 'shipped' | 'delivered' | 'canceled';
   items: CustomerOrderItem[];
   total: number;
+  /** Notas fiscais já emitidas. Vazio até o faturamento — pedido pode ter mais de uma. */
+  invoices?: CustomerInvoice[];
 }
 
 export interface CustomerAccount {

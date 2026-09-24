@@ -151,6 +151,7 @@ Na tela da aplicação Node, seção **Environment variables**, adicione:
 | `SECURE_COOKIES` | `true` |
 | `PUBLIC_DIR` | `public` (opcional — o servidor detecta sozinho) |
 | `MIDIA_DIR` | `midia` (opcional — pasta das fotos enviadas pelo painel) |
+| `NOTAS_DIR` | `notas` (opcional — pasta das notas fiscais enviadas pelo ERP) |
 
 ```bash
 # gera a APP_KEY (32 bytes em base64)
@@ -303,6 +304,19 @@ O roteiro de teste com os cartões que forçam aprovação e recusa está em
   > recuperar. Por isso ela fica fora de `public/`, que o deploy substitui
   > inteiro. Suba os arquivos **por cima**, não recrie a pasta da aplicação.
   > Vale incluir `midia/` no backup junto com o banco.
+
+  > **A pasta `notas/` segue a mesma regra, e com mais rigor.** São os XML e
+  > os DANFE das notas fiscais que o ERP envia. Apagá-la deixa os compradores
+  > sem a nota deles e a loja sem o arquivo que a contabilidade precisa
+  > guardar por cinco anos. Duas diferenças em relação a `midia/`:
+  >
+  > - ela **não é servida como pasta pública** (o `/midia` tem `express.static`;
+  >   `notas/` não tem). Cada arquivo sai por uma rota que confere quem pede.
+  >   Se algum dia alguém apontar o servidor web direto para ela, o CPF, o nome
+  >   e o endereço de todo comprador ficam abertos na internet;
+  > - ela **entra no backup obrigatoriamente**, junto com o banco. O banco
+  >   guarda só o token de cada arquivo; sem a pasta, os registros apontam para
+  >   o nada.
 
 ---
 

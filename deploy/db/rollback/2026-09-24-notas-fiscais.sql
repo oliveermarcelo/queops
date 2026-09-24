@@ -1,0 +1,40 @@
+-- ---------------------------------------------------------------------
+-- VOLTA ATRÁS da migração das notas fiscais (NF-e por pedido).
+--
+-- Por que este arquivo existe, e por que ele é só isto
+-- ----------------------------------------------------
+-- A migração automática da loja (server/src/schema.ts) é ADITIVA e só anda
+-- para a frente, de propósito: ela roda sozinha a cada subida do servidor, e
+-- código que APAGA coluna rodando sozinho, sem ninguém olhando, é como se
+-- perde dado de produção. Desfazer é decisão humana, e decisão humana tem
+-- arquivo com nome e data — este.
+--
+-- A migração das notas é reversível de verdade, e barata, porque ela não
+-- tocou em nada do que já existia: nenhuma coluna nova em `orders`, nenhum
+-- tipo alterado, nenhum dado convertido. Ela só ACRESCENTOU uma tabela. Voltar
+-- atrás é remover essa tabela — e todo o resto do banco fica exatamente como
+-- estava antes.
+--
+-- Quando usar
+-- -----------
+-- Só se a funcionalidade for retirada do ar. Uma versão antiga do código
+-- convive sem problema com a tabela presente: quem não a consulta não é
+-- afetado por ela existir.
+--
+-- O QUE VOCÊ PERDE
+-- ----------------
+-- O vínculo entre cada nota e o pedido dela: chave de acesso, número, série,
+-- data de autorização, valor e o token de cada arquivo. Os ARQUIVOS em si
+-- continuam na pasta `notas/`, mas sem esta tabela ninguém sabe mais de que
+-- pedido cada um é — o nome do arquivo é um token sorteado, sem significado.
+--
+-- Faça o backup ANTES:
+--
+--   mysqldump -u USUARIO -p BANCO order_invoices > order_invoices-backup.sql
+--   tar czf notas-backup.tgz notas/
+--
+-- Para restaurar depois, rode o `migrate.js` (ele recria a tabela a partir do
+-- schema.sql) e importe o dump acima.
+-- ---------------------------------------------------------------------
+
+DROP TABLE IF EXISTS order_invoices;

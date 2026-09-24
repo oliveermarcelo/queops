@@ -111,6 +111,20 @@ export function iso(value: unknown): string | null {
   return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}-03:00`;
 }
 
+/**
+ * ISO-8601 → `YYYY-MM-DD HH:MM:SS` na hora de São Paulo.
+ *
+ * É a conversão que toda data vinda de fora precisa antes de virar DATETIME: a
+ * sessão MySQL roda em -03:00 (ver db.ts), então gravar o horário UTC cru
+ * deslocaria a data em três horas — e um pedido autorizado às 23h30 mudaria de
+ * dia. Devolve null quando a entrada não é uma data interpretável.
+ */
+export function mysqlDateTime(iso8601: string): string | null {
+  const t = Date.parse(iso8601);
+  if (!Number.isFinite(t)) return null;
+  return new Date(t - 3 * 3_600_000).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /** "hoje" no fuso de São Paulo, como YYYY-MM-DD. */
 export function todaySP(): string {
   return dateSP(0);
