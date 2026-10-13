@@ -15,7 +15,7 @@ import { Product } from '../types';
 import {
   AdminState, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
   IntegrationId, AbandonedStatus, RecoveryConfig, ShippingConfig, TrackingEvent, Webhook,
-  PanelUser, ErpCategory, ProdutosParados,
+  PanelUser, ErpCategory, ProdutosParados, ProductGroupAdmin,
 } from './types';
 
 /** Estado completo do painel numa requisição só. */
@@ -319,4 +319,41 @@ export function deleteCategory(id: string): Promise<void> {
 /** Trocar a própria senha exige a atual — a sessão aberta não basta. */
 export function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
   return api.put('/admin/me/password', { currentPassword, newPassword });
+}
+
+// ------------------------------------------------- variações (grupos) -----
+
+/**
+ * Grava o grupo INTEIRO — conteúdo, eixos, opções e variações.
+ *
+ * Uma chamada só, e não uma por pedacinho. Eixo, opção e variação são
+ * interdependentes: uma opção que some precisa levar junto as variações que a
+ * usavam. Salvando em pedaços, cada passo intermediário seria um grupo
+ * inválido no banco, e bastaria fechar a aba no meio para a vitrine ficar com
+ * um seletor quebrado.
+ */
+export function saveProductGroup(
+  id: string,
+  grupo: Record<string, unknown>,
+): Promise<EstadoDeVariacoes & { id: string }> {
+  return id === ''
+    ? api.post('/admin/product-groups', grupo)
+    : api.put(`/admin/product-groups/${encodeURIComponent(id)}`, grupo);
+}
+
+/** Desfaz o agrupamento. Os produtos voltam a ser cards soltos; nada é apagado. */
+export function deleteProductGroup(id: string): Promise<EstadoDeVariacoes & { released: number }> {
+  return api.del(`/admin/product-groups/${encodeURIComponent(id)}`);
+}
+
+/** Tira produtos da fila de conferência e publica cada um solto na vitrine. */
+export function publishProducts(ids: string[]): Promise<EstadoDeVariacoes & { released: number }> {
+  return api.post('/admin/products/publicar', { ids });
+}
+
+/** O que toda gravação de variação devolve, para a tela não precisar recarregar. */
+export interface EstadoDeVariacoes {
+  productGroups: ProductGroupAdmin[];
+  products: Product[];
+  productsPendingGroup: number;
 }

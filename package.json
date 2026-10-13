@@ -33,6 +33,7 @@
     "teste:pedido-erp": "node --env-file-if-exists=.env tests/pedido-erp-http.mjs",
     "teste:notas": "node --env-file-if-exists=.env tests/notas-fiscais.mjs",
     "teste:parados": "node --env-file-if-exists=.env tests/produtos-parados.mjs",
+    "teste:variacoes": "node --env-file-if-exists=.env tests/variacoes.mjs",
     "teste:vitrine": "node --env-file-if-exists=.env tests/vitrine-categorias.mjs",
     "teste:e2e": "node tests/e2e/loja-e-painel.mjs && node tests/e2e/compra-completa.mjs && node tests/e2e/sincronia-painel-vitrine.mjs && node tests/e2e/usuarios-painel.mjs && node tests/e2e/teste-de-chave.mjs && node tests/e2e/fotos-painel.mjs && node tests/e2e/apagar-pedido-painel.mjs && node tests/e2e/politicas.mjs"
   },

@@ -188,6 +188,24 @@ export default function App() {
 
   // ---- Operações da sacola ----
   const handleAddToCart = useCallback((product: Product, quantity: number = 1) => {
+    /*
+     * GRUPO NÃO ENTRA NA SACOLA.
+     *
+     * O botão de comprar do card é um atalho: ele pega o produto do card e
+     * manda para a sacola. Num card de grupo isso colocaria o CÓDIGO DO GRUPO
+     * no pedido — e esse é o modo de falha que o contrato com o ERP trata como
+     * inaceitável: se o código do grupo por acaso existir como produto lá, o
+     * pedido importa o produto errado, baixa o estoque errado e emite nota
+     * fiscal errada, sem alerta nenhum.
+     *
+     * Além disso não haveria o que comprar: o grupo não tem tamanho nem cor
+     * escolhidos. Então o atalho vira o que ele deveria ser aqui — abrir a
+     * página para o visitante escolher a variação.
+     */
+    if (product.group !== undefined) {
+      openProductDetail(product);
+      return;
+    }
     setLines((prev) => {
       const existing = prev.find((l) => l.id === product.id);
       if (existing) {

@@ -29,6 +29,7 @@ import { traduzirCodigo } from './erp-categorias.ts';
 import { round2 } from './http.ts';
 import { pesoEmGramas } from './pricing.ts';
 import { safeImageUrl } from './routes/admin.ts';
+import { getSettings } from './store.ts';
 
 /** Campos que o ERP pode gravar → coluna correspondente. */
 const CAMPOS: Record<string, string> = {
@@ -362,6 +363,35 @@ export async function gravarProdutoDoErp(
   }
 
   if (criando) {
+    /*
+     * PRODUTO NOVO NASCE RETIDO, quando a loja está configurada assim.
+     *
+     * O motivo é o card duplicado. Quando existe um grupo de variações e o ERP
+     * cria a variação nova, ela apareceria na vitrine como card solto AO LADO
+     * do card do grupo — a mesma peça em dois lugares, sem erro em lugar
+     * nenhum, até alguém reparar. O ERP pediu explicitamente que isso não
+     * pudesse acontecer em silêncio.
+     *
+     * A retenção mora numa coluna da LOJA (`pending_group`), e não em
+     * `active`. `active` é do ERP: ele manda, e manda de novo a cada ciclo —
+     * se a retenção morasse ali, o envio seguinte publicaria o produto sozinho
+     * e a conferência não teria valido nada.
+     *
+     * Vale só para quem é CRIADO aqui. Produto que já estava na loja não é
+     * tocado, e atualização nenhuma volta a reter: ninguém perde da vitrine um
+     * produto que já estava vendendo.
+     */
+    const reter = (await getSettings(exec)).holdNewProducts !== false;
+    if (reter) {
+      colunas.push('pending_group');
+      valores.push(1);
+      resultado.warnings.push(
+        'Produto criado e RETIDO para conferência: ele não aparece na vitrine até alguém '
+        + 'liberá-lo em Painel → Variações, onde dá para publicá-lo solto ou anexá-lo a um grupo. '
+        + 'Isso evita que uma variação nova apareça como card duplicado ao lado do grupo. '
+        + 'A retenção é desligável em Painel → Configurações.',
+      );
+    }
     await exec.run(
       `INSERT INTO products (id, ${colunas.join(', ')}) VALUES (?${', ?'.repeat(colunas.length)})`,
       [id, ...valores],

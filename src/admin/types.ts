@@ -280,6 +280,26 @@ export interface ProdutosParados {
   grupos: GrupoParado[];
 }
 
+/** Um grupo de variações, como o painel o edita. */
+export interface ProductGroupAdmin {
+  id: string;
+  /** Código do grupo (GRP-...). Diagnóstico apenas — não é SKU e não compra. */
+  code: string;
+  name: string;
+  description: string;
+  longDescription: string;
+  image: string;
+  category: string;
+  subcategory: string | null;
+  categoryLabel: string;
+  tag: string | null;
+  highlight: boolean;
+  active: boolean;
+  position: number;
+  axes: { name: string; position: number; options: { value: string; position: number }[] }[];
+  variants: { productId: string; position: number; values: Record<string, string> }[];
+}
+
 export interface AdminState {
   /** Taxonomia de categorias, para os seletores do painel. */
   menu: MenuCategory[];
@@ -326,4 +346,8 @@ export interface AdminState {
   productsWithActiveOrders: string[];
   /** Produtos sem categoria — invisíveis na vitrine até a amarração. */
   productsWithoutCategory: number;
+  /** Grupos de variação, com eixos, opções e variações. */
+  productGroups: ProductGroupAdmin[];
+  /** Produtos criados pelo ERP e retidos até a conferência de agrupamento. */
+  productsPendingGroup: number;
 }

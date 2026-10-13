@@ -24,6 +24,9 @@ import {
   body, bodyBool, bodyFloat, bodyInt, bodyStr, brl, digits, iso, jsonOk, queryStr,
 } from '../http.ts';
 import { guardarImagem } from '../midia.ts';
+import {
+  apagarGrupo, carregarGrupos, gravarGrupo, type GrupoPedido,
+} from '../variacoes.ts';
 import { fireWebhooks, isInternalHost, providerSendWhatsapp, providerTest } from '../providers.ts';
 import {
   configGet, configMerge, configSet, DEFAULT_RECOVERY, DEFAULT_SETTINGS, DEFAULT_SHIPPING,
@@ -216,6 +219,16 @@ adminRoutes.get('/state', h(async (req, res) => {
     erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
       .map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria(),
+    /*
+     * Os grupos de variação, com eixos, opções e variações.
+     *
+     * Vão no estado porque a tela de Produtos também precisa deles: sem saber
+     * quem está agrupado, o painel mostraria "Pirâmide 15cm" como produto
+     * solto na mesma lista em que a lojista acabou de agrupá-la.
+     */
+    productGroups: await carregarGrupos(),
+    /** Produtos criados pelo ERP e retidos até a conferência de agrupamento. */
+    productsPendingGroup: await produtosRetidos(),
   });
 }));
 
@@ -249,6 +262,103 @@ adminRoutes.put('/erp-categories/:code', h(async (req, res) => {
       .map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria(),
   });
+}));
+
+// ------------------------------------------------------- variações ----
+
+/**
+ * PUT /api/admin/product-groups/:id — grava o grupo INTEIRO.
+ *
+ * Uma rota só para conteúdo, eixos, opções e variações, e não uma por
+ * pedacinho. As três coisas são interdependentes: uma opção que some precisa
+ * levar junto as variações que a usavam, e uma variação só é válida contra os
+ * eixos que existem naquele momento. Salvando em pedaços, cada passo
+ * intermediário seria um grupo inválido no banco — e bastaria fechar a aba no
+ * meio para a vitrine ficar com um seletor quebrado.
+ */
+adminRoutes.put('/product-groups/:id', h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await gravarGrupo(String(req.params.id ?? ''), grupoDoCorpo(body(req)));
+  if (r.erro !== '') fail(r.erro, 422, 'invalid_group');
+  jsonOk(res, { ok: true, id: r.id, ...(await estadoDeVariacoes()) });
+}));
+
+// POST /api/admin/product-groups — cria um grupo novo.
+adminRoutes.post('/product-groups', h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await gravarGrupo('', grupoDoCorpo(body(req)));
+  if (r.erro !== '') fail(r.erro, 422, 'invalid_group');
+  jsonOk(res, { ok: true, id: r.id, ...(await estadoDeVariacoes()) }, 201);
+}));
+
+/**
+ * DELETE /api/admin/product-groups/:id — desfaz o agrupamento.
+ *
+ * Os produtos NÃO são apagados: eles são do ERP, têm estoque e podem estar em
+ * pedidos. Eles voltam a ser cards soltos na vitrine, exatamente como antes de
+ * terem sido agrupados.
+ */
+adminRoutes.delete('/product-groups/:id', h(async (req, res) => {
+  await requireAdmin(req);
+  const soltos = await apagarGrupo(String(req.params.id ?? ''));
+  jsonOk(res, { ok: true, released: soltos, ...(await estadoDeVariacoes()) });
+}));
+
+/** Lê o corpo do grupo com os mesmos limites de sempre. */
+function grupoDoCorpo(b: Record<string, any>): GrupoPedido {
+  return {
+    name: bodyStr(b, 'name', '', 255),
+    description: bodyStr(b, 'description', '', 2000),
+    longDescription: bodyStr(b, 'longDescription', '', 20000),
+    image: bodyStr(b, 'image', '', 500),
+    category: bodyStr(b, 'category', '', 100),
+    subcategory: bodyStr(b, 'subcategory', '', 100),
+    tag: bodyStr(b, 'tag', '', 40),
+    highlight: bodyBool(b, 'highlight', false),
+    active: bodyBool(b, 'active', true),
+    axes: Array.isArray(b.axes) ? b.axes : [],
+    variants: Array.isArray(b.variants) ? b.variants : [],
+  };
+}
+
+/** O que a tela de variações precisa reler depois de qualquer gravação. */
+async function estadoDeVariacoes(): Promise<Record<string, unknown>> {
+  return {
+    productGroups: await carregarGrupos(),
+    products: await fetchProducts({ onlyActive: false }),
+    productsPendingGroup: await produtosRetidos(),
+  };
+}
+
+/** Quantos produtos estão retidos esperando conferência de agrupamento. */
+async function produtosRetidos(): Promise<number> {
+  const r = await q.one('SELECT COUNT(*) AS n FROM products WHERE pending_group = 1');
+  return Number(r?.n ?? 0);
+}
+
+/**
+ * POST /api/admin/products/publicar — solta produtos da fila de conferência.
+ *
+ * É o "publica solto" da fila: o produto não vai para grupo nenhum e passa a
+ * aparecer na vitrine como qualquer outro. Anexar a um grupo é o outro
+ * caminho, e acontece na gravação do grupo — que já libera a retenção junto.
+ */
+adminRoutes.post('/products/publicar', h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+  const ids = Array.isArray(b.ids)
+    ? [...new Set(b.ids.map((x: unknown) => String(x ?? '').trim()).filter((x: string) => x !== ''))]
+    : [];
+  if (ids.length === 0) fail('Selecione ao menos um produto.', 422, 'invalid_batch');
+  if (ids.length > LOTE_DE_CATEGORIA) {
+    fail(`Máximo de ${LOTE_DE_CATEGORIA} produtos por vez.`, 422, 'batch_too_large');
+  }
+
+  const liberados = await q.run(
+    `UPDATE products SET pending_group = 0 WHERE id IN (${placeholders(ids.length)})`,
+    ids,
+  );
+  jsonOk(res, { ok: true, released: liberados, ...(await estadoDeVariacoes()) });
 }));
 
 /**

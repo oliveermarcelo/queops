@@ -238,13 +238,117 @@ CREATE TABLE IF NOT EXISTS products (
   -- guarda "essa categoria eu já mandei" nunca mais tocaria no assunto — os
   -- produtos ficariam invisíveis para sempre, sem erro em lugar nenhum.
   pending_category_code VARCHAR(60) NOT NULL DEFAULT '',
+  -- Grupo de variações a que este produto pertence (Painel → Variações).
+  --
+  -- Fica AQUI, e não numa tabela de ligação, por uma regra do contrato com o
+  -- ERP: "o mesmo SKU não pode estar em dois grupos". Uma coluna só torna isso
+  -- impossível por construção; uma tabela de ligação exigiria um índice único
+  -- e uma checagem que alguém um dia esqueceria.
+  --
+  -- O ERP NUNCA escreve esta coluna: agrupar é informação de vitrine (título,
+  -- galeria, ordem dos seletores), e nada disso existe no cadastro dele.
+  group_id          VARCHAR(40)   NULL,
+  -- Ordem da variação dentro do grupo, quando os eixos empatam.
+  group_position    INT           NOT NULL DEFAULT 0,
+  -- Produto criado pelo ERP que ainda não foi conferido pela lojista.
+  --
+  -- Separado de `active` de propósito. `active` é do ERP — ele manda, e manda
+  -- de novo a cada ciclo; se a retenção morasse ali, o próximo envio
+  -- publicaria o produto sozinho e a conferência não teria valido nada. Esta
+  -- coluna é da loja, e só a loja mexe nela.
+  pending_group     TINYINT(1)    NOT NULL DEFAULT 0,
   position          INT           NOT NULL DEFAULT 0,
   created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_prod_cat (category, subcategory),
   KEY idx_prod_active (active),
-  KEY idx_prod_tag (tag)
+  KEY idx_prod_tag (tag),
+  KEY idx_prod_group (group_id),
+  KEY idx_prod_pending_group (pending_group)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- Variações: o "produto pai" montado no painel.
+--
+-- O ERP continua mandando UM PRODUTO POR VARIAÇÃO, com código próprio — é ele
+-- que tem saldo, preço, item de pedido e item de nota fiscal. O que falta lá
+-- não é dado de produto: é o vínculo entre eles e a apresentação agrupada.
+-- Título de marketing, galeria, slug, ordem dos seletores, rótulo de cada
+-- opção: nada disso existe nem deveria existir no cadastro do ERP.
+--
+-- Por isso o grupo nasce e vive aqui, e por isso ele NÃO É COMPRÁVEL: não tem
+-- estoque, não tem preço, não tem SKU, não entra no carrinho e não vira item
+-- de pedido. O pedido que sai daqui carrega o código da VARIAÇÃO escolhida, e
+-- é indistinguível de um pedido de produtos soltos. O agrupamento morre na
+-- vitrine — é isso que mantém estoque, imposto e NF-e funcionando sem nenhuma
+-- linha nova do lado do ERP.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS product_groups (
+  -- Slug, e é ele que vai para a URL pública (/?produto=piramide-de-cobre).
+  id               VARCHAR(40)   NOT NULL,
+  -- Código estável para diagnóstico na API (GRP-...). Não é SKU e não compra.
+  code             VARCHAR(60)   NOT NULL,
+  name             VARCHAR(255)  NOT NULL,
+  description      TEXT          NULL,
+  long_description MEDIUMTEXT    NULL,
+  image            VARCHAR(500)  NOT NULL DEFAULT '',
+  category         VARCHAR(100)  NOT NULL DEFAULT '',
+  subcategory      VARCHAR(100)  NULL,
+  category_label   VARCHAR(120)  NOT NULL DEFAULT '',
+  tag              VARCHAR(40)   NULL,
+  highlight        TINYINT(1)    NOT NULL DEFAULT 0,
+  active           TINYINT(1)    NOT NULL DEFAULT 1,
+  position         INT           NOT NULL DEFAULT 0,
+  created_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_group_code (code),
+  KEY idx_group_cat (category, subcategory)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Eixos de variação do grupo ("Cor", "Tamanho"). N eixos, não dois.
+CREATE TABLE IF NOT EXISTS product_group_axes (
+  id       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  group_id VARCHAR(40)  NOT NULL,
+  name     VARCHAR(60)  NOT NULL,
+  position INT          NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_axis_name (group_id, name),
+  CONSTRAINT fk_axis_group FOREIGN KEY (group_id)
+    REFERENCES product_groups (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Opções de cada eixo ("Azul", "Preto"), na ordem em que aparecem no seletor.
+CREATE TABLE IF NOT EXISTS product_group_options (
+  id       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  axis_id  BIGINT UNSIGNED NOT NULL,
+  value    VARCHAR(80)  NOT NULL,
+  position INT          NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_option_value (axis_id, value),
+  CONSTRAINT fk_option_axis FOREIGN KEY (axis_id)
+    REFERENCES product_group_axes (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- O valor de cada eixo para cada variação.
+--
+-- A chave primária é (produto, eixo): um produto tem UM valor por eixo, e o
+-- banco é quem garante. "Variação sem valor definido em algum eixo é inválida"
+-- não dá para um índice resolver — isso é checado na gravação, porque depende
+-- de contar os eixos do grupo.
+CREATE TABLE IF NOT EXISTS product_group_values (
+  product_id VARCHAR(100)    NOT NULL,
+  axis_id    BIGINT UNSIGNED NOT NULL,
+  option_id  BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (product_id, axis_id),
+  KEY idx_value_option (option_id),
+  CONSTRAINT fk_value_product FOREIGN KEY (product_id)
+    REFERENCES products (id) ON DELETE CASCADE,
+  CONSTRAINT fk_value_axis FOREIGN KEY (axis_id)
+    REFERENCES product_group_axes (id) ON DELETE CASCADE,
+  CONSTRAINT fk_value_option FOREIGN KEY (option_id)
+    REFERENCES product_group_options (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Fotos extras do produto, além da capa (`products.image`).

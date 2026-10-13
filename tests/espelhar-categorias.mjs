@@ -58,6 +58,21 @@ await painel.sessao();
 await painel.chamar('POST', '/api/admin/login', ADMIN);
 await painel.sessao();
 
+/*
+ * A RETENÇÃO DE PRODUTO NOVO FICA DESLIGADA NESTE TESTE.
+ *
+ * Desde as variações, produto criado pelo ERP nasce retido para conferência de
+ * agrupamento e não aparece na vitrine até alguém liberar. É intencional, e
+ * tem teste próprio (`npm run teste:variacoes`).
+ *
+ * Aqui ela atrapalharia a leitura: o assunto deste arquivo é a amarração de
+ * CATEGORIA — "amarrou, o produto entra na vitrine sozinho, sem o ERP reenviar
+ * nada". Com a retenção ligada, uma falha nessa frase poderia significar duas
+ * coisas diferentes, e o teste deixaria de apontar para um defeito só.
+ */
+await painel.chamar('PUT', '/api/admin/settings', { holdNewProducts: false });
+
+
 const chave = await painel.chamar('POST', '/api/admin/api-keys', { name: 'Teste espelho' });
 const TOKEN = chave.json?.token ?? '';
 const erp = (m, p, b) => cliente().chamar(m, p, b, { Authorization: `Bearer ${TOKEN}` });

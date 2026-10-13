@@ -43,6 +43,66 @@ export interface Product {
   ingredients?: string;
   /** false = fora da vitrine (exclusão suave). Só o painel recebe este campo. */
   active?: boolean;
+  /**
+   * Criado pelo ERP e retido até a conferência de agrupamento.
+   *
+   * Produto retido não aparece na vitrine. A vitrine nem o recebe — quem usa
+   * este campo é o painel, para montar a fila de conferência.
+   */
+  pendingReview?: boolean;
+  /**
+   * O grupo de variações, quando este "produto" é na verdade um produto pai.
+   *
+   * A vitrine representa o grupo como um Product — com o nome, a foto e a
+   * categoria do grupo, e o MENOR preço entre as variações disponíveis. É o
+   * que permite que o card, a listagem, a busca, os filtros e os trilhos
+   * continuem funcionando sem saber que variação existe: para eles, é um
+   * produto como outro qualquer.
+   *
+   * Quem precisa saber é só a página do produto, que lê daqui para montar os
+   * seletores — e o carrinho, que NUNCA recebe este objeto: ele recebe a
+   * variação escolhida, com o id e o SKU de verdade. Essa é a regra que faz o
+   * pedido sair indistinguível de um pedido de produtos soltos.
+   */
+  group?: ProductGroup;
+  /**
+   * Texto extra que a busca enxerga e a tela não mostra.
+   *
+   * Existe para o grupo poder ser encontrado por QUALQUER SKU das variações
+   * dele. Sem isso, quem copia o código da etiqueta e cola na busca não acha
+   * nada — e o código que ela tem na mão é o da variação, nunca o do grupo.
+   */
+  searchTerms?: string;
+}
+
+/** Um eixo de variação ("Cor", "Tamanho") com as opções na ordem do seletor. */
+export interface VariantAxis {
+  name: string;
+  position: number;
+  options: { value: string; position: number }[];
+}
+
+/**
+ * Uma variação dentro do grupo.
+ *
+ * Só o id e os valores dos eixos. Preço, estoque, SKU e foto NÃO se repetem
+ * aqui: eles são do produto, que vem inteiro no mesmo catálogo. Duas fontes
+ * para o mesmo número acabam divergindo, e o dia em que divergissem o seletor
+ * mostraria um preço e o carrinho cobraria outro.
+ */
+export interface VariantRef {
+  productId: string;
+  position: number;
+  /** { "Tamanho": "15cm" } */
+  values: Record<string, string>;
+}
+
+export interface ProductGroup {
+  id: string;
+  /** Código do grupo (GRP-...). Para diagnóstico — não é SKU e não compra. */
+  code: string;
+  axes: VariantAxis[];
+  variants: VariantRef[];
 }
 
 export interface CartItem {

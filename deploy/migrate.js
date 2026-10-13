@@ -300,6 +300,15 @@ var init_erp_categorias = __esm({
   }
 });
 
+// server/src/variacoes.ts
+var init_variacoes = __esm({
+  "server/src/variacoes.ts"() {
+    "use strict";
+    init_db();
+    init_erp_categorias();
+  }
+});
+
 // server/src/notas.ts
 var TETO_XML, TETO_PDF, TETO_CORPO;
 var init_notas = __esm({
@@ -328,6 +337,7 @@ var init_store = __esm({
     init_crypto();
     init_db();
     init_erp_categorias();
+    init_variacoes();
     init_http();
     init_notas();
     DEFAULT_SETTINGS = {
@@ -338,6 +348,7 @@ var init_store = __esm({
       pixDiscountPct: 5,
       // 0 mantém o comportamento de antes: desconto em qualquer valor.
       pixMinOrder: 0,
+      holdNewProducts: true,
       payments: { card: true, pix: true, boleto: true }
     };
     DEFAULT_SHIPPING = {
@@ -528,6 +539,23 @@ var INDICES = [
     tabela: "categories",
     nome: "idx_cat_group",
     definicao: "KEY idx_cat_group (group_id)"
+  },
+  {
+    /*
+     * As duas colunas de variação nasceram num `CREATE TABLE` que nenhuma loja
+     * já instalada volta a executar. Sem esta lista, a vitrine passaria a
+     * filtrar por `group_id` e por `pending_group` varrendo a tabela de
+     * produtos inteira a cada carregamento — e o defeito só apareceria como
+     * "a loja ficou lenta", meses depois, sem ninguém ligar uma coisa à outra.
+     */
+    tabela: "products",
+    nome: "idx_prod_group",
+    definicao: "KEY idx_prod_group (group_id)"
+  },
+  {
+    tabela: "products",
+    nome: "idx_prod_pending_group",
+    definicao: "KEY idx_prod_pending_group (pending_group)"
   }
 ];
 async function addMissingIndexes(say2) {

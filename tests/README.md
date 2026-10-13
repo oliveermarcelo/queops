@@ -190,6 +190,35 @@ derruba os outros, e a categoria gravada **não fica travada** contra o ERP: a
 arrumação em massa é um desempate provisório, e no dia em que o `categoryCode`
 certo chegar ele deve valer.
 
+## Variações — o grupo morre na vitrine
+
+Precisa da loja no ar.
+
+```bash
+npm run teste:variacoes    # 43 verificações pela HTTP
+```
+
+A loja passou a ter um "produto pai" montado no painel, que junta produtos do
+catálogo numa página só com seletor de tamanho ou cor. A promessa feita ao time
+do ERP é que **nada disso vaza para a integração**, e é essa promessa que o
+teste cobra:
+
+- `GET /products` continua **plano**, uma entrada por variação, e o grupo não
+  aparece nele — ele não é produto e não tem SKU;
+- `groupCode`, `groupName` e `options` saem como **leitura**; `groupCode`
+  enviado pelo ERP é ignorado, com aviso;
+- o pedido carrega o SKU da **variação**, e o código do grupo não aparece em
+  campo nenhum. É o modo de falha que mais importa: se o código do grupo
+  coincidisse com um produto real no ERP, o pedido importaria o produto errado,
+  baixaria o estoque errado e emitiria nota errada **sem alerta**;
+- produto criado pelo ERP nasce **retido** (não aparece na vitrine), continua
+  visível na API do ERP, e atualização nunca volta a reter;
+- as três validações duras — mesmo SKU em dois grupos, combinação repetida,
+  variação sem valor num eixo — e a garantia de que seis recusas seguidas não
+  deixam o grupo pela metade;
+- desfazer o grupo devolve os produtos e **não apaga nenhum**; pedido feito
+  antes continua inteiro.
+
 ## Ponta a ponta (Playwright)
 
 Precisam da loja no ar. Com o build pronto:

@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 3.2 — 24 de setembro de 2026'
+VERSAO = 'Versão 3.3 — 13 de outubro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -227,6 +227,8 @@ def construir(saida='Manual-Integracao-Queops-UNO-ERP.pdf'):
             ['<b>Endereço de entrega e transportadora</b> no pedido', '<b>Pronto</b>', 'GET /orders'],
             ['<b>Enviar a NF-e do pedido</b> (XML + DANFE), com o cliente baixando na conta dele',
              '<b>Pronto</b>', 'seção 4.6'],
+            ['<b>Produto com variações</b> (grade) numa página só, agrupado no painel',
+             '<b>Pronto</b>', 'seção 4.7'],
         ],
         [88 * mm, 27 * mm, 50 * mm],
         mono_cols=(2,),
@@ -1004,6 +1006,105 @@ PATCH /api/v1/orders/QP-000142/invoices/3526...
         'padrão é aceito sem drama. <b>XML com <font face="Courier">&lt;!DOCTYPE&gt;</font> ou '
         '<font face="Courier">&lt;!ENTITY&gt;</font> é recusado</b>: NF-e autorizada nunca tem '
         'declaração de entidade, e é por ela que entra o XXE.'))
+
+    # ----------------------------------------------- 4.7 variações ----
+    add(PageBreak())
+    add(Paragraph('4.7 Produto com variações (grade)', H2))
+    add(Paragraph(
+        'A loja passou a ter um <b>produto pai</b>, montado no painel, que agrupa produtos já '
+        'existentes no catálogo e os apresenta numa página só, com um seletor por eixo '
+        '(Tamanho, Cor…). <b>Nada disso muda o contrato de integração.</b>', P))
+    add(Spacer(1, 4))
+    add(aviso(
+        'O agrupamento morre na vitrine',
+        'O UNO continua mandando <b>um produto por variação</b>, com '
+        '<font face="Courier">id</font> = <font face="Courier">sku</font> = código do produto. O '
+        'grupo <b>não é comprável</b>: não tem preço, não tem estoque, não tem SKU, não entra no '
+        'carrinho e <b>não vira item de pedido</b>. Um pedido com duas variações do mesmo grupo é '
+        'indistinguível de um pedido de dois produtos soltos.'))
+    add(Spacer(1, 6))
+    add(tabela(
+        ['Endpoint', 'Muda?'],
+        [
+            ['POST /products/batch', '<b>Não</b>'],
+            ['PUT /products/{id}', '<b>Não</b> — segue atualização parcial'],
+            ['PATCH /products/{id}/stock', '<b>Não</b> — estoque continua por variação'],
+            ['GET /products', 'Forma <b>não</b> muda: lista plana, uma entrada por variação'],
+            ['/orders/*, /categories/*, /invoices', '<b>Não</b>'],
+        ],
+        [95 * mm, 70 * mm],
+        mono_cols=(0,),
+    ))
+
+    add(Paragraph('Campos novos, somente leitura', H3))
+    add(Paragraph(
+        'O <font face="Courier">GET /products</font> e o '
+        '<font face="Courier">GET /products/{id}</font> passam a trazer o agrupamento de cada '
+        'produto. São <b>read-only</b>: se o UNO mandar estes campos numa gravação, eles são '
+        'ignorados e a resposta avisa em <font face="Courier">warnings</font>. Agrupar é decisão '
+        'do painel — título, galeria e ordem dos seletores não existem no cadastro do ERP.', P))
+    add(bloco("""
+{
+  "id": "PIR-COBRE-20",  "sku": "PIR-COBRE-20",
+  "price": 240.00,       "stock": 2,
+  "groupCode": "GRP-PIRAMIDE-DE-COBRE",   // null se nao agrupado
+  "groupName": "Piramide de cobre",
+  "options": [ { "name": "Tamanho", "value": "20cm", "position": 0 } ],
+  "pendingReview": false                  // ver "produto novo", abaixo
+}
+"""))
+    add(Paragraph(
+        '<font face="Courier">groupCode</font> vem <font face="Courier">null</font> e '
+        '<font face="Courier">options</font> vem <font face="Courier">[]</font> no produto sem '
+        'grupo — e não ausentes: "o campo não veio" e "não está agrupado" precisam ser a mesma '
+        'coisa do seu lado, senão uma loja desatualizada seria lida como catálogo todo agrupado.', P))
+
+    add(Paragraph('Produto novo chega RETIDO', H3))
+    add(Paragraph(
+        'Esta é a única mudança de comportamento que o UNO sente. Produto <b>criado</b> pela API '
+        'entra na loja com <font face="Courier">pendingReview: true</font> e <b>não aparece na '
+        'vitrine</b> até a lojista conferir, em Painel → Variações, se ele é uma peça solta ou a '
+        'variação de um grupo.', P))
+    add(Spacer(1, 4))
+    add(aviso(
+        'O que isso significa, e o que NÃO significa',
+        'A gravação <b>funciona normalmente</b>: 201, o produto existe, aparece no '
+        '<font face="Courier">GET /products</font> e a sua reconciliação de vínculo o encontra. '
+        'A resposta traz o aviso em <font face="Courier">warnings</font>. <b>Atualização não '
+        'retém</b>: produto que já estava publicado nunca sai da vitrine por causa de um envio '
+        'seu. E a retenção é <b>desligável</b> pela lojista, em Painel → Configurações — quem '
+        'vende só produto simples volta ao comportamento de antes.'))
+    add(Spacer(1, 6))
+    add(Paragraph(
+        'O motivo é o card duplicado: quando existe um grupo e o UNO cria a variação nova, ela '
+        'apareceria na vitrine como card solto <b>ao lado</b> do card do grupo — a mesma peça em '
+        'dois lugares, sem erro em lugar nenhum, até alguém reparar.', P))
+
+    add(Paragraph('Regras que a loja garante', H3))
+    add(tabela(
+        ['Regra', 'Como a loja garante'],
+        [
+            ['O item do pedido carrega o SKU da VARIAÇÃO',
+             'O carrinho recusa o grupo: o botão do card abre a página para escolher'],
+            ['O mesmo SKU não está em dois grupos',
+             'O vínculo é uma coluna do produto, não uma tabela de ligação'],
+            ['Estoque é sempre por variação',
+             'O grupo não tem saldo; o seletor desabilita a opção esgotada'],
+            ['Agrupar não altera estoque, preço nem pedido',
+             'O grupo só guarda conteúdo de vitrine e o vínculo'],
+            ['Produto sem grupo se comporta como antes',
+             'Nenhum caminho novo passa por ele'],
+        ],
+        [78 * mm, 87 * mm],
+    ))
+    add(Spacer(1, 8))
+    add(Paragraph(
+        'Casos de borda, resolvidos: variação que o UNO desativa sai do seletor, e o grupo some da '
+        'vitrine quando a última sair; grupo com <b>uma</b> variação renderiza como produto '
+        'simples, sem seletor; combinação esgotada <b>aparece desabilitada</b>, não some; duas '
+        'variações do mesmo grupo no carrinho são duas linhas; o card mostra o <b>menor</b> preço '
+        'entre as variações com estoque; e a busca encontra o grupo pelo nome dele <b>ou por '
+        'qualquer SKU</b> das variações.', P))
 
     # ---------------------------------------------------- 5. webhooks ----
     add(PageBreak())

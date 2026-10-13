@@ -106,11 +106,19 @@ export default function ProductsPage({
         : subEhCategoria
           ? product.category === activeSubcategory
           : product.subcategory === activeSubcategory;
+      /*
+       * A busca enxerga o SKU, e no caso de um grupo enxerga o SKU de TODAS as
+       * variações dele (`searchTerms`). Quem copia o código da etiqueta e cola
+       * aqui tem na mão o código da variação, nunca o do grupo — sem isso, a
+       * busca não acharia nada e a peça pareceria não existir na loja.
+       */
       const matchSearch =
         !q ||
         product.name.toLowerCase().includes(q) ||
         product.description.toLowerCase().includes(q) ||
-        product.categoryLabel.toLowerCase().includes(q);
+        product.categoryLabel.toLowerCase().includes(q) ||
+        product.sku.toLowerCase().includes(q) ||
+        (product.searchTerms ?? '').toLowerCase().includes(q);
       const matchPrice = product.price <= priceCeiling;
       return matchCat && matchSub && matchSearch && matchPrice;
     });

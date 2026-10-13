@@ -82,6 +82,15 @@ interface AdminContextValue {
   ) => Promise<number>;
 
   /**
+   * Grava o grupo de variações inteiro. Devolve o id (o slug, que é a URL).
+   */
+  saveProductGroup: (id: string, grupo: Record<string, unknown>) => Promise<string>;
+  /** Desfaz o agrupamento. Devolve quantos produtos voltaram a ser cards soltos. */
+  deleteProductGroup: (id: string) => Promise<number>;
+  /** Tira produtos da fila de conferência. Devolve quantos foram publicados. */
+  publishProducts: (ids: string[]) => Promise<number>;
+
+  /**
    * Move vários produtos para uma categoria de uma vez. Devolve quantos foram
    * alterados. Não trava a categoria contra o ERP — ver o comentário na rota.
    */
@@ -134,6 +143,7 @@ const EMPTY: AdminState = {
   abandonedCarts: [], recovery: { enabled: false, delayMinutes: 60, message: '', couponCode: '' },
   apiKeys: [], webhooks: [], users: [],
   erpCategories: [], productsWithoutCategory: 0, productsWithActiveOrders: [],
+  productGroups: [], productsPendingGroup: 0,
   shipping: {
     defaultPrice: 0, perState: {}, cepRanges: [],
     freeShipping: { enabled: false, minOrder: 0, states: [] },
@@ -430,6 +440,45 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           }));
         }
         // Quantos produtos entraram na vitrine com este clique — a tela avisa.
+        return r.released;
+      },
+
+      saveProductGroup: async (id, grupo) => {
+        const r = await store.saveProductGroup(id, grupo);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            productGroups: r.productGroups,
+            products: r.products,
+            productsPendingGroup: r.productsPendingGroup,
+          }));
+        }
+        return r.id;
+      },
+
+      deleteProductGroup: async (id) => {
+        const r = await store.deleteProductGroup(id);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            productGroups: r.productGroups,
+            products: r.products,
+            productsPendingGroup: r.productsPendingGroup,
+          }));
+        }
+        return r.released;
+      },
+
+      publishProducts: async (ids) => {
+        const r = await store.publishProducts(ids);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            productGroups: r.productGroups,
+            products: r.products,
+            productsPendingGroup: r.productsPendingGroup,
+          }));
+        }
         return r.released;
       },
 

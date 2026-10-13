@@ -6,6 +6,7 @@
 import { decryptPayload } from './crypto.ts';
 import { placeholders, q, type Q, type Row } from './db.ts';
 import { codigoNoMapa, mapaDeCodigos } from './erp-categorias.ts';
+import { agrupamentoDeProdutos } from './variacoes.ts';
 import { iso, round2 } from './http.ts';
 import { COLUNAS_DA_NOTA, invoiceRowToApi } from './notas.ts';
 
@@ -26,6 +27,20 @@ export interface StoreSettings {
    * acha que já atingiu.
    */
   pixMinOrder: number;
+  /**
+   * Produto criado pelo ERP fica RETIDO até a lojista conferir o agrupamento.
+   *
+   * Ligado por padrão, a pedido do time do ERP, e o motivo é o card duplicado:
+   * quando existe um grupo de variações e o ERP cria a variação nova, ela
+   * apareceria na vitrine como card solto AO LADO do card do grupo — a mesma
+   * peça em dois lugares, sem erro nenhum em lugar nenhum.
+   *
+   * O custo é real e precisa ser dito: com isto ligado, nenhum produto novo
+   * entra na loja sozinho. Quem só vende produto simples pode desligar em
+   * Configurações e voltar ao comportamento de sempre; a fila de conferência
+   * continua existindo, só não segura mais ninguém.
+   */
+  holdNewProducts: boolean;
   payments: { card: boolean; pix: boolean; boleto: boolean };
   [k: string]: unknown;
 }
@@ -74,6 +89,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   pixDiscountPct: 5.0,
   // 0 mantém o comportamento de antes: desconto em qualquer valor.
   pixMinOrder: 0,
+  holdNewProducts: true,
   payments: { card: true, pix: true, boleto: true },
 };
 
@@ -260,6 +276,15 @@ export function productRowToApi(
     weight: Number(r.weight_kg) || 0,
     weightLabel: String(r.weight ?? ''),
     active: Boolean(r.active),
+    /*
+     * Produto criado pelo ERP e RETIDO até a lojista conferir o agrupamento.
+     *
+     * Sai também na API do ERP, de propósito: sem isto, o integrador vê o
+     * produto na lista, não o encontra na vitrine, e não tem como saber se o
+     * problema é categoria, estoque ou conferência pendente. O campo responde
+     * essa pergunta sem ninguém precisar abrir o painel.
+     */
+    pendingReview: Boolean(r.pending_group),
   };
   if (r.subcategory) out.subcategory = r.subcategory;
   if (r.long_description) out.longDescription = r.long_description;
@@ -350,26 +375,60 @@ export interface OpcoesDeCatalogo {
    * resolver a pendência precisa enxergá-la.
    */
   exigirCategoria?: boolean;
+  /**
+   * Esconder produto retido para conferência de agrupamento.
+   *
+   * Mesma lógica de `exigirCategoria`, pelo mesmo motivo: a VITRINE não mostra,
+   * e todo o resto continua enxergando. O painel precisa ver para liberar, e a
+   * API do ERP precisa ver porque a reconciliação de vínculo dela lê a lista de
+   * produtos e tem de encontrar cada SKU — esconder ali faria o ERP concluir
+   * que o produto que ele acabou de criar não existe.
+   */
+  semRetidos?: boolean;
   /** Anexar `categoryCode` a cada produto. Só a API do ERP usa. */
   comCodigos?: boolean;
+  /** Anexar `groupCode`/`groupName`/`options`. Só a API do ERP usa. */
+  comAgrupamento?: boolean;
   exec?: Q;
 }
 
 export async function fetchProducts(
   opcoes: OpcoesDeCatalogo = {},
 ): Promise<Record<string, unknown>[]> {
-  const { onlyActive = true, exigirCategoria = false, comCodigos = false, exec = q } = opcoes;
+  const {
+    onlyActive = true, exigirCategoria = false, semRetidos = false,
+    comCodigos = false, comAgrupamento = false, exec = q,
+  } = opcoes;
 
   const filtros: string[] = [];
   if (onlyActive) filtros.push('active = 1');
   if (exigirCategoria) filtros.push("category <> ''");
+  if (semRetidos) filtros.push('pending_group = 0');
   const where = filtros.length > 0 ? ` WHERE ${filtros.join(' AND ')}` : '';
 
   // Uma consulta para o catálogo inteiro, não uma por produto.
   const codigos = comCodigos ? await mapaDeCodigos(exec) : undefined;
   const linhas = await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`);
   const galerias = await galeriasDe(linhas.map((r) => String(r.id)), exec);
-  return linhas.map((r) => productRowToApi(r, codigos, galerias.get(String(r.id))));
+  const agrupamento = comAgrupamento
+    ? await agrupamentoDeProdutos(linhas.map((r) => String(r.id)), exec)
+    : undefined;
+  return linhas.map((r) => {
+    const api = productRowToApi(r, codigos, galerias.get(String(r.id)));
+    if (agrupamento !== undefined) {
+      /*
+       * `groupCode` sai como null quando o produto não está agrupado, e não
+       * ausente: o ERP usa estes campos para diagnóstico, e "o campo não veio"
+       * e "não está agrupado" precisam ser a mesma coisa para ele — senão uma
+       * versão antiga da loja seria lida como catálogo inteiro agrupado.
+       */
+      const g = agrupamento.get(String(r.id));
+      api.groupCode = g?.groupCode ?? null;
+      api.groupName = g?.groupName ?? null;
+      api.options = g?.options ?? [];
+    }
+    return api;
+  });
 }
 
 // ---------------------------------------------------------- Categorias ----

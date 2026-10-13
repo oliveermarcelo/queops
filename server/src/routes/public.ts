@@ -26,6 +26,7 @@ import { fireWebhooks } from '../providers.ts';
 import {
   fetchProducts, getSettings, getShipping, montarMenu, productRowToApi, publicSettings,
 } from '../store.ts';
+import { carregarGrupos } from '../variacoes.ts';
 import { h } from './helpers.ts';
 
 export const publicRoutes = Router();
@@ -83,7 +84,24 @@ publicRoutes.get('/catalog', h(async (_req, res) => {
   }
 
   jsonOk(res, {
-    products: await fetchProducts({ exigirCategoria: true }),
+    /*
+     * Os produtos saem TODOS, inclusive os que pertencem a um grupo.
+     *
+     * Quem decide não mostrar o card solto de uma variação é a vitrine, não
+     * esta consulta: a página do grupo precisa do preço, do estoque, do peso e
+     * da foto de cada variação para montar os seletores, e ela lê daqui. Tirar
+     * os agrupados da lista obrigaria uma segunda chamada para trazer de volta
+     * exatamente os mesmos produtos.
+     *
+     * `semRetidos` tira os que esperam conferência de agrupamento — esses não
+     * podem aparecer em lugar nenhum da loja ainda.
+     */
+    products: await fetchProducts({ exigirCategoria: true, semRetidos: true }),
+    /*
+     * Os grupos de variação. Cada um substitui, na listagem, os cards das suas
+     * variações — um card por grupo, nunca N cards da mesma peça.
+     */
+    groups: await carregarGrupos({ apenasAtivos: true }),
     categories: parents.map((c) => ({ id: c.id, name: c.name, description: c.description })),
     /*
      * O menu sai de `montarMenu`, que é o mesmo código que o painel usa.

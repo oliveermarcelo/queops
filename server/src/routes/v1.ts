@@ -31,6 +31,7 @@ import { fireWebhooks } from '../providers.ts';
 import {
   fetchProducts, invoicesPorPedido, orderRowToApi, productRowToApi, transicaoDeStatus,
 } from '../store.ts';
+import { agrupamentoDeProdutos } from '../variacoes.ts';
 import { h } from './helpers.ts';
 
 export const v1Routes = Router();
@@ -245,7 +246,18 @@ v1Routes.get('/products', h(async (req, res) => {
    * E aqui os produtos sem categoria APARECEM, ao contrário da vitrine: são
    * justamente os que o ERP precisa reenviar depois da amarração.
    */
-  jsonOk(res, { products: await fetchProducts({ comCodigos: true }) });
+  /*
+   * `comAgrupamento` acrescenta `groupCode`, `groupName` e `options` a cada
+   * produto — somente LEITURA, a pedido do time do ERP: sem eles, quando a
+   * vitrine está estranha, não há como ver pela API se um produto está
+   * agrupado ou não.
+   *
+   * A forma da lista NÃO muda: continua plana, uma entrada por variação. Essa
+   * é uma regra dura do contrato — a reconciliação de vínculo do ERP lê daqui
+   * e precisa enxergar cada SKU individualmente. Grupo não aparece nesta lista
+   * em hipótese nenhuma: ele não é produto, não tem SKU e não compra.
+   */
+  jsonOk(res, { products: await fetchProducts({ comCodigos: true, comAgrupamento: true }) });
 }));
 
 // GET /api/v1/products/:id
@@ -253,7 +265,13 @@ v1Routes.get('/products/:id', h(async (req, res) => {
   await requireApiKey(req);
   const row = await q.one('SELECT * FROM products WHERE id = ?', [req.params.id]);
   if (row === null) fail('Produto não encontrado.', 404, 'not_found');
-  jsonOk(res, { product: productRowToApi(row, await mapaDeCodigos()) });
+  const produto = productRowToApi(row, await mapaDeCodigos());
+  // Os mesmos campos de agrupamento da listagem, pelo mesmo motivo.
+  const g = (await agrupamentoDeProdutos([String(row.id)])).get(String(row.id));
+  produto.groupCode = g?.groupCode ?? null;
+  produto.groupName = g?.groupName ?? null;
+  produto.options = g?.options ?? [];
+  jsonOk(res, { product: produto });
 }));
 
 /**

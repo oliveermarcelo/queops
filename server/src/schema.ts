@@ -214,6 +214,23 @@ const INDICES: { tabela: string; nome: string; definicao: string }[] = [
     nome: 'idx_cat_group',
     definicao: 'KEY idx_cat_group (group_id)',
   },
+  {
+    /*
+     * As duas colunas de variação nasceram num `CREATE TABLE` que nenhuma loja
+     * já instalada volta a executar. Sem esta lista, a vitrine passaria a
+     * filtrar por `group_id` e por `pending_group` varrendo a tabela de
+     * produtos inteira a cada carregamento — e o defeito só apareceria como
+     * "a loja ficou lenta", meses depois, sem ninguém ligar uma coisa à outra.
+     */
+    tabela: 'products',
+    nome: 'idx_prod_group',
+    definicao: 'KEY idx_prod_group (group_id)',
+  },
+  {
+    tabela: 'products',
+    nome: 'idx_prod_pending_group',
+    definicao: 'KEY idx_prod_pending_group (pending_group)',
+  },
 ];
 
 export async function addMissingIndexes(say: Log): Promise<number> {

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useCallback, useState, useMemo, useEffect } from 'react';
 import {
   ArrowLeft, ShoppingCart, Check, Info, Shield, Award,
   Truck, ChevronRight, Star, Heart, Share2, Minus, Plus,
@@ -44,13 +44,104 @@ interface ShippingEstimate {
 }
 
 export default function ProductDetailPage({
-  product,
+  product: base,
   products,
   onBack,
   onAddToCart,
   onSelectProduct,
 }: ProductDetailPageProps) {
-  const { settings } = useCatalog();
+  const { settings, productById } = useCatalog();
+
+  /*
+   * ESTA PÁGINA RECEBE O GRUPO E MOSTRA A VARIAÇÃO.
+   *
+   * `base` é o que a vitrine entregou: um produto solto, ou o card de um grupo
+   * (com nome, foto e texto do grupo, e o menor preço entre as variações).
+   * `product`, logo abaixo, é a PEÇA EFETIVA: o mesmo objeto com preço,
+   * estoque, peso, SKU e foto trocados pelos da variação escolhida.
+   *
+   * A troca acontece num lugar só, de propósito. Daqui para baixo a página
+   * inteira — preço, parcelamento, Pix, frete, estoque, galeria — continua
+   * lendo `product` como sempre leu, sem saber que existe variação. Espalhar
+   * "se for grupo, use a variação" por trinta lugares garantiria que um deles
+   * ficasse para trás, e seria justamente o que mostra o preço errado.
+   *
+   * O que NÃO é trocado: nome, descrição e categoria. Eles são do grupo. É o
+   * ponto de agrupar — a página é uma só, com um texto só.
+   */
+  const grupo = base.group;
+  const variacoesOrdenadas = useMemo(
+    () => [...(grupo?.variants ?? [])].sort((a, b) => a.position - b.position),
+    [grupo],
+  );
+
+  /** A variação que casa com uma combinação de valores, se existir. */
+  const acharVariacao = useCallback((valores: Record<string, string>) => (
+    variacoesOrdenadas.find(
+      (v) => (grupo?.axes ?? []).every((e) => v.values[e.name] === valores[e.name]),
+    )
+  ), [variacoesOrdenadas, grupo]);
+
+  /*
+   * A pré-seleção é a primeira variação ATIVA E COM ESTOQUE.
+   *
+   * Abrir a página já esgotado, tendo tamanho disponível ao lado, faz o
+   * visitante ir embora achando que a peça acabou. Quando nenhuma tem estoque,
+   * cai para a primeira ativa: a página mostra a peça e diz que está
+   * indisponível, que é a informação verdadeira.
+   */
+  const valoresIniciais = useMemo(() => {
+    if (grupo === undefined) return {};
+    const viva = (v: typeof variacoesOrdenadas[number]) => {
+      const p = productById(v.productId);
+      return p !== undefined && p.active !== false;
+    };
+    const escolhida = variacoesOrdenadas.find(
+      (v) => viva(v) && (productById(v.productId)?.stock ?? 0) > 0,
+    ) ?? variacoesOrdenadas.find(viva) ?? variacoesOrdenadas[0];
+    return escolhida?.values ?? {};
+  }, [grupo, variacoesOrdenadas, productById]);
+
+  const [valores, setValores] = useState<Record<string, string>>(valoresIniciais);
+  useEffect(() => { setValores(valoresIniciais); }, [valoresIniciais]);
+
+  const variacao = grupo === undefined
+    ? undefined
+    : productById(acharVariacao(valores)?.productId ?? '');
+
+  const product = useMemo<Product>(() => {
+    if (variacao === undefined) return base;
+    const capa = variacao.image !== '' ? variacao.image : base.image;
+    return {
+      ...base,
+      price: variacao.price,
+      oldPrice: variacao.oldPrice,
+      stock: variacao.stock,
+      weight: variacao.weight,
+      weightLabel: variacao.weightLabel,
+      sku: variacao.sku,
+      image: capa,
+      /*
+       * A galeria é a da variação mais a capa do grupo.
+       *
+       * O contrato pede que a foto própria da variação apareça ao selecioná-la
+       * — é ela que mostra a diferença entre as opções. A capa do grupo fica
+       * logo atrás, e não some: é a foto de marketing da peça.
+       */
+      images: [
+        ...(variacao.images ?? []),
+        ...(base.image !== '' && base.image !== capa ? [base.image] : []),
+      ],
+    };
+  }, [base, variacao]);
+
+  /**
+   * Um grupo com UMA variação só é um produto simples.
+   *
+   * Seletor com uma opção não oferece escolha nenhuma: é um clique a mais e um
+   * campo a mais na tela para o visitante concluir que não tem o que decidir.
+   */
+  const mostrarSeletor = grupo !== undefined && variacoesOrdenadas.length > 1;
   const [quantity, setQuantity] = useState(1);
   const [successAnimation, setSuccessAnimation] = useState(false);
   const [activeTab, setActiveTab] = useState<'ficha' | 'garantias' | 'cuidados'>('ficha');
@@ -71,7 +162,34 @@ export default function ProductDetailPage({
     setCep('');
     setActiveTab('ficha');
     setIsFavorite(false);
-  }, [product]);
+  }, [base]);
+
+  /**
+   * A melhor variação para uma opção, e se ela dá para comprar agora.
+   *
+   * A escolha olha o eixo clicado primeiro e o resto depois: quem clica em
+   * "25cm" quer 25cm, e se a cor atual não existir nesse tamanho a página
+   * ajusta a cor em vez de travar. Desabilitar por combinação exata parece
+   * mais correto e na prática deixa o visitante preso — ele clica, nada
+   * acontece, e conclui que o site está quebrado.
+   */
+  const opcaoDoEixo = useCallback((eixo: string, valor: string) => {
+    const candidatas = variacoesOrdenadas.filter((v) => v.values[eixo] === valor);
+    const vivas = candidatas.filter((v) => productById(v.productId)?.active !== false);
+    const pontos = (v: typeof variacoesOrdenadas[number]) =>
+      Object.entries(valores).filter(([k, val]) => k !== eixo && v.values[k] === val).length;
+    const comEstoque = vivas
+      .filter((v) => (productById(v.productId)?.stock ?? 0) > 0)
+      .sort((a, b) => pontos(b) - pontos(a));
+    const quaisquer = [...vivas].sort((a, b) => pontos(b) - pontos(a));
+    return {
+      /** Existe no grupo e está ativa — aparece no seletor de qualquer forma. */
+      existe: vivas.length > 0,
+      /** Dá para comprar agora. Falso = esgotada, e o botão fica desabilitado. */
+      disponivel: comEstoque.length > 0,
+      alvo: comEstoque[0] ?? quaisquer[0],
+    };
+  }, [variacoesOrdenadas, productById, valores]);
 
   const handleDecrease = () => {
     if (quantity > 1) setQuantity(quantity - 1);
@@ -82,7 +200,17 @@ export default function ProductDetailPage({
   };
 
   const handleAddToCartClick = () => {
-    onAddToCart(product, quantity);
+    /*
+     * O carrinho recebe a VARIAÇÃO, nunca o grupo.
+     *
+     * É a regra dura do contrato com o ERP, e o motivo é um modo de falha
+     * silencioso: se o item do pedido carregasse o código do grupo e esse
+     * código por acaso existisse como produto no ERP, o pedido importaria o
+     * produto errado, baixaria o estoque errado e emitiria nota fiscal errada,
+     * sem alerta nenhum. `product` aqui tem o id do GRUPO — por isso a
+     * variação é passada explicitamente.
+     */
+    onAddToCart(variacao ?? base, quantity);
     setSuccessAnimation(true);
     setTimeout(() => {
       setSuccessAnimation(false);
@@ -180,7 +308,8 @@ export default function ProductDetailPage({
     setShippingError('');
     try {
       const quote = await api.post<ShippingEstimate>('/checkout/quote', {
-        items: [{ productId: product.id, quantity }],
+        // Frete da PEÇA escolhida: é o peso dela que vai na caixa.
+        items: [{ productId: (variacao ?? base).id, quantity }],
         cep,
         payment: 'card',
       });
@@ -438,6 +567,59 @@ export default function ProductDetailPage({
                   </span>
                 </div>
               </div>
+
+              {/* Seletores de variação — um por eixo, na ordem do painel. */}
+              {mostrarSeletor && (
+                <div className="space-y-4">
+                  {[...(grupo?.axes ?? [])].sort((a, b) => a.position - b.position).map((eixo) => (
+                    <div key={eixo.name}>
+                      <div className="flex items-baseline gap-2 mb-2">
+                        <span className="text-sm font-bold text-gray-800">{eixo.name}</span>
+                        <span className="text-sm text-gray-500">{valores[eixo.name] ?? ''}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {[...eixo.options].sort((a, b) => a.position - b.position).map((o) => {
+                          const { existe, disponivel, alvo } = opcaoDoEixo(eixo.name, o.value);
+                          const escolhida = valores[eixo.name] === o.value;
+                          /*
+                            A opção esgotada NÃO SOME do seletor.
+                            O comprador precisa ver que o tamanho existe e que
+                            está esgotado — sumir faz parecer que a loja nunca
+                            teve aquele tamanho, e ele procura em outro lugar.
+                          */
+                          return (
+                            <button
+                              key={o.value}
+                              type="button"
+                              disabled={!disponivel}
+                              title={
+                                !existe
+                                  ? 'Esta combinação não existe'
+                                  : !disponivel ? 'Esgotado no momento' : ''
+                              }
+                              onClick={() => { if (alvo) setValores(alvo.values); }}
+                              className={`px-4 py-2 rounded-xl border text-sm font-semibold transition-colors ${
+                                escolhida
+                                  ? 'border-primary-blue bg-primary-blue text-white'
+                                  : disponivel
+                                    ? 'border-gray-200 text-gray-700 hover:border-primary-blue'
+                                    : 'border-gray-100 text-gray-300 line-through cursor-not-allowed'
+                              }`}
+                            >
+                              {o.value}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  {/*
+                    O SKU da variação escolhida já aparece no alto da página, e
+                    muda junto com o seletor. Repeti-lo aqui era a mesma
+                    informação duas vezes na mesma dobra.
+                  */}
+                </div>
+              )}
 
               {/* Stock signal */}
               <div className="flex items-center gap-2 text-sm">

@@ -1120,6 +1120,371 @@ var init_erp_categorias = __esm({
   }
 });
 
+// server/src/variacoes.ts
+async function carregarGrupos(opcoes = {}) {
+  const { apenasAtivos = false, exec = q } = opcoes;
+  const where = apenasAtivos ? " WHERE active = 1" : "";
+  const grupos = await exec.all(
+    `SELECT * FROM product_groups${where} ORDER BY position ASC, name ASC`
+  );
+  if (grupos.length === 0) return [];
+  const ids = grupos.map((g) => String(g.id));
+  const eixos = await exec.all(
+    `SELECT * FROM product_group_axes WHERE group_id IN (${placeholders(ids.length)})
+      ORDER BY position ASC, id ASC`,
+    ids
+  );
+  const eixoIds = eixos.map((e) => String(e.id));
+  const opcoesDeEixo = eixoIds.length === 0 ? [] : await exec.all(
+    `SELECT * FROM product_group_options WHERE axis_id IN (${placeholders(eixoIds.length)})
+      ORDER BY position ASC, id ASC`,
+    eixoIds
+  );
+  const produtos = await exec.all(
+    `SELECT id, group_id, group_position FROM products
+      WHERE group_id IN (${placeholders(ids.length)})
+      ORDER BY group_position ASC, id ASC`,
+    ids
+  );
+  const valores = produtos.length === 0 ? [] : await exec.all(
+    `SELECT * FROM product_group_values WHERE product_id IN (${placeholders(produtos.length)})`,
+    produtos.map((p) => String(p.id))
+  );
+  const nomeDoEixo = new Map(eixos.map((e) => [String(e.id), String(e.name)]));
+  const valorDaOpcao = new Map(opcoesDeEixo.map((o) => [String(o.id), String(o.value)]));
+  const opcoesPorEixo = /* @__PURE__ */ new Map();
+  for (const o of opcoesDeEixo) {
+    const chave = String(o.axis_id);
+    const item = { value: String(o.value), position: Number(o.position) || 0 };
+    const lista = opcoesPorEixo.get(chave);
+    if (lista) lista.push(item);
+    else opcoesPorEixo.set(chave, [item]);
+  }
+  const eixosPorGrupo = /* @__PURE__ */ new Map();
+  for (const e of eixos) {
+    const chave = String(e.group_id);
+    const item = {
+      name: String(e.name),
+      position: Number(e.position) || 0,
+      options: opcoesPorEixo.get(String(e.id)) ?? []
+    };
+    const lista = eixosPorGrupo.get(chave);
+    if (lista) lista.push(item);
+    else eixosPorGrupo.set(chave, [item]);
+  }
+  const valoresPorProduto = /* @__PURE__ */ new Map();
+  for (const v of valores) {
+    const chave = String(v.product_id);
+    const mapa = valoresPorProduto.get(chave) ?? {};
+    mapa[nomeDoEixo.get(String(v.axis_id)) ?? ""] = valorDaOpcao.get(String(v.option_id)) ?? "";
+    valoresPorProduto.set(chave, mapa);
+  }
+  const variacoesPorGrupo = /* @__PURE__ */ new Map();
+  for (const p of produtos) {
+    const chave = String(p.group_id);
+    const item = {
+      productId: String(p.id),
+      position: Number(p.group_position) || 0,
+      values: valoresPorProduto.get(String(p.id)) ?? {}
+    };
+    const lista = variacoesPorGrupo.get(chave);
+    if (lista) lista.push(item);
+    else variacoesPorGrupo.set(chave, [item]);
+  }
+  return grupos.map((g) => grupoParaApi(
+    g,
+    eixosPorGrupo.get(String(g.id)) ?? [],
+    variacoesPorGrupo.get(String(g.id)) ?? []
+  ));
+}
+function grupoParaApi(g, axes, variants) {
+  return {
+    id: String(g.id),
+    /** Código estável para diagnóstico na API do ERP. NÃO é SKU e não compra. */
+    code: String(g.code),
+    name: String(g.name),
+    description: String(g.description ?? ""),
+    longDescription: String(g.long_description ?? ""),
+    image: String(g.image ?? ""),
+    category: String(g.category ?? ""),
+    subcategory: g.subcategory === null || g.subcategory === void 0 ? null : String(g.subcategory),
+    categoryLabel: String(g.category_label ?? ""),
+    tag: g.tag === null || g.tag === void 0 ? null : String(g.tag),
+    highlight: Boolean(g.highlight),
+    active: Boolean(g.active),
+    position: Number(g.position) || 0,
+    axes,
+    /*
+     * A variação carrega só o id e os valores dos eixos.
+     *
+     * Preço, estoque, SKU, peso e foto NÃO entram aqui: eles são do produto, e
+     * o produto já vai inteiro no mesmo catálogo. Repetir faria a vitrine ter
+     * duas fontes para o mesmo número — e no dia em que uma delas ficasse para
+     * trás, o preço do seletor discordaria do preço do carrinho.
+     */
+    variants
+  };
+}
+async function agrupamentoDeProdutos(ids, exec = q) {
+  const mapa = /* @__PURE__ */ new Map();
+  if (ids.length === 0) return mapa;
+  const linhas = await exec.all(
+    `SELECT v.product_id, g.code, g.name AS group_name,
+            a.name AS axis_name, a.position AS axis_position, o.value
+       FROM product_group_values v
+       JOIN product_group_axes a ON a.id = v.axis_id
+       JOIN product_group_options o ON o.id = v.option_id
+       JOIN products p ON p.id = v.product_id
+       JOIN product_groups g ON g.id = p.group_id
+      WHERE v.product_id IN (${placeholders(ids.length)})
+      ORDER BY a.position ASC, a.id ASC`,
+    ids
+  );
+  for (const l of linhas) {
+    const chave = String(l.product_id);
+    const atual = mapa.get(chave) ?? {
+      groupCode: String(l.code),
+      groupName: String(l.group_name),
+      options: []
+    };
+    atual.options.push({
+      name: String(l.axis_name),
+      value: String(l.value),
+      position: Number(l.axis_position) || 0
+    });
+    mapa.set(chave, atual);
+  }
+  return mapa;
+}
+function problemaNosEixos(eixos) {
+  if (eixos.length === 0) {
+    return 'O grupo precisa de pelo menos um eixo de varia\xE7\xE3o (ex.: "Tamanho").';
+  }
+  if (eixos.length > LIMITE_DE_EIXOS) {
+    return `M\xE1ximo de ${LIMITE_DE_EIXOS} eixos por grupo.`;
+  }
+  const nomes = /* @__PURE__ */ new Set();
+  for (const e of eixos) {
+    const nome = String(e.name ?? "").trim();
+    if (nome === "") return "Todo eixo precisa de um nome.";
+    if (nomes.has(nome.toLowerCase())) return `O eixo "${nome}" aparece duas vezes.`;
+    nomes.add(nome.toLowerCase());
+    const opcoes = (e.options ?? []).map((o) => String(o ?? "").trim()).filter((o) => o !== "");
+    if (opcoes.length === 0) return `O eixo "${nome}" precisa de pelo menos uma op\xE7\xE3o.`;
+    if (opcoes.length > LIMITE_DE_OPCOES) {
+      return `O eixo "${nome}" passou de ${LIMITE_DE_OPCOES} op\xE7\xF5es.`;
+    }
+    const vistas = /* @__PURE__ */ new Set();
+    for (const o of opcoes) {
+      if (vistas.has(o.toLowerCase())) return `A op\xE7\xE3o "${o}" aparece duas vezes em "${nome}".`;
+      vistas.add(o.toLowerCase());
+    }
+  }
+  return "";
+}
+async function problemaNasVariacoes(grupoId, eixos, variacoes, exec) {
+  if (variacoes.length > LIMITE_DE_VARIACOES) {
+    return `M\xE1ximo de ${LIMITE_DE_VARIACOES} varia\xE7\xF5es por grupo.`;
+  }
+  if (variacoes.length === 0) return "";
+  const ids = variacoes.map((v) => String(v.productId ?? "").trim());
+  if (ids.some((id) => id === "")) return "Toda varia\xE7\xE3o precisa apontar para um produto.";
+  if (new Set(ids).size !== ids.length) {
+    return "O mesmo produto foi adicionado duas vezes ao grupo.";
+  }
+  const existentes = await exec.all(
+    `SELECT id, name, group_id FROM products WHERE id IN (${placeholders(ids.length)})`,
+    ids
+  );
+  const porId = new Map(existentes.map((p) => [String(p.id), p]));
+  for (const id of ids) {
+    const p = porId.get(id);
+    if (p === void 0) return `O produto "${id}" n\xE3o existe no cat\xE1logo da loja.`;
+    const outro = p.group_id === null || p.group_id === void 0 ? "" : String(p.group_id);
+    if (outro !== "" && outro !== grupoId) {
+      return `O produto "${String(p.name)}" j\xE1 pertence ao grupo "${outro}". Um produto s\xF3 pode estar em um grupo.`;
+    }
+  }
+  const opcoesPorEixo = new Map(
+    eixos.map((e) => [
+      String(e.name).trim(),
+      new Set((e.options ?? []).map((o) => String(o).trim()))
+    ])
+  );
+  const combinacoes = /* @__PURE__ */ new Set();
+  for (const v of variacoes) {
+    const partes = [];
+    for (const e of eixos) {
+      const nome = String(e.name).trim();
+      const valor2 = String(v.values?.[nome] ?? "").trim();
+      if (valor2 === "") {
+        const p = porId.get(String(v.productId));
+        return `"${String(p?.name ?? v.productId)}" est\xE1 sem valor no eixo "${nome}".`;
+      }
+      if (!opcoesPorEixo.get(nome)?.has(valor2)) {
+        return `"${valor2}" n\xE3o \xE9 uma op\xE7\xE3o do eixo "${nome}".`;
+      }
+      partes.push(`${nome}=${valor2}`);
+    }
+    const combinacao = partes.join("|");
+    if (combinacoes.has(combinacao)) {
+      return `Duas varia\xE7\xF5es com a mesma combina\xE7\xE3o (${partes.join(", ")}).`;
+    }
+    combinacoes.add(combinacao);
+  }
+  return "";
+}
+async function slugLivre(nome, exceto, exec) {
+  const base2 = slugificar(nome).slice(0, 36) || "grupo";
+  for (let i = 0; i < 200; i++) {
+    const tentativa = i === 0 ? base2 : `${base2}-${i + 1}`;
+    const ocupado = await exec.one(
+      `SELECT 1 AS ok FROM product_groups WHERE id = ? AND id <> ?
+        UNION SELECT 1 FROM products WHERE id = ? LIMIT 1`,
+      [tentativa, exceto, tentativa]
+    );
+    if (ocupado === null) return tentativa;
+  }
+  return `${base2}-${Date.now()}`;
+}
+async function gravarGrupo(idPedido, pedido) {
+  const nome = String(pedido.name ?? "").trim().slice(0, 255);
+  if (nome === "") return { erro: "O grupo precisa de um nome.", id: "" };
+  const eixos = (pedido.axes ?? []).map((e) => ({
+    name: String(e.name ?? "").trim().slice(0, 60),
+    options: (e.options ?? []).map((o) => String(o ?? "").trim().slice(0, 80)).filter((o) => o !== "")
+  }));
+  const problemaEixo = problemaNosEixos(eixos);
+  if (problemaEixo !== "") return { erro: problemaEixo, id: "" };
+  return await transaction(async (tx) => {
+    const atual = idPedido === "" ? null : await tx.one("SELECT * FROM product_groups WHERE id = ?", [idPedido]);
+    if (idPedido !== "" && atual === null) {
+      return { erro: "Grupo n\xE3o encontrado.", id: "" };
+    }
+    const categoria = String(pedido.category ?? "").trim().slice(0, 100);
+    if (categoria === "") {
+      return { erro: "Escolha a categoria em que o grupo aparece na vitrine.", id: "" };
+    }
+    const cat = await tx.one("SELECT id, name FROM categories WHERE id = ?", [categoria]);
+    if (cat === null) return { erro: `A loja n\xE3o tem a categoria "${categoria}".`, id: "" };
+    const subPedida = String(pedido.subcategory ?? "").trim().slice(0, 100);
+    let sub = null;
+    if (subPedida !== "") {
+      sub = await tx.one("SELECT id, name FROM subcategories WHERE parent_id = ? AND id = ?", [
+        categoria,
+        subPedida
+      ]);
+      if (sub === null) {
+        return { erro: `A categoria "${String(cat.name)}" n\xE3o tem essa subcategoria.`, id: "" };
+      }
+    }
+    const id = atual === null ? await slugLivre(nome, "", tx) : String(atual.id);
+    const variacoes = (pedido.variants ?? []).map((v) => ({
+      productId: String(v.productId ?? "").trim(),
+      values: v.values ?? {}
+    }));
+    const problemaVariacao = await problemaNasVariacoes(id, eixos, variacoes, tx);
+    if (problemaVariacao !== "") return { erro: problemaVariacao, id: "" };
+    const campos = [
+      nome,
+      String(pedido.description ?? "").slice(0, 2e3),
+      String(pedido.longDescription ?? "").slice(0, 2e4),
+      String(pedido.image ?? "").slice(0, 500),
+      categoria,
+      sub === null ? null : String(sub.id),
+      String(sub?.name ?? cat.name).slice(0, 120),
+      String(pedido.tag ?? "").trim().slice(0, 40) || null,
+      pedido.highlight ? 1 : 0,
+      pedido.active === false ? 0 : 1
+    ];
+    if (atual === null) {
+      await tx.run(
+        `INSERT INTO product_groups
+           (id, code, name, description, long_description, image, category, subcategory,
+            category_label, tag, highlight, active)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [id, `GRP-${id.toUpperCase().slice(0, 55)}`, ...campos]
+      );
+    } else {
+      await tx.run(
+        `UPDATE product_groups
+            SET name = ?, description = ?, long_description = ?, image = ?, category = ?,
+                subcategory = ?, category_label = ?, tag = ?, highlight = ?, active = ?
+          WHERE id = ?`,
+        [...campos, id]
+      );
+    }
+    await tx.run("DELETE FROM product_group_axes WHERE group_id = ?", [id]);
+    const idDaOpcao = /* @__PURE__ */ new Map();
+    for (const [i, e] of eixos.entries()) {
+      await tx.run(
+        "INSERT INTO product_group_axes (group_id, name, position) VALUES (?,?,?)",
+        [id, e.name, i]
+      );
+      const axisId = tx.lastId();
+      for (const [j, valor2] of e.options.entries()) {
+        await tx.run(
+          "INSERT INTO product_group_options (axis_id, value, position) VALUES (?,?,?)",
+          [axisId, valor2, j]
+        );
+        idDaOpcao.set(`${e.name}|${valor2}`, tx.lastId());
+      }
+      idDaOpcao.set(`eixo:${e.name}`, axisId);
+    }
+    await tx.run(
+      "UPDATE products SET group_id = NULL, group_position = 0 WHERE group_id = ?",
+      [id]
+    );
+    for (const [i, v] of variacoes.entries()) {
+      await tx.run(
+        "UPDATE products SET group_id = ?, group_position = ?, pending_group = 0 WHERE id = ?",
+        [id, i, v.productId]
+      );
+      await tx.run("DELETE FROM product_group_values WHERE product_id = ?", [v.productId]);
+      for (const e of eixos) {
+        await tx.run(
+          "INSERT INTO product_group_values (product_id, axis_id, option_id) VALUES (?,?,?)",
+          [
+            v.productId,
+            idDaOpcao.get(`eixo:${e.name}`),
+            idDaOpcao.get(`${e.name}|${String(v.values[e.name]).trim()}`)
+          ]
+        );
+      }
+    }
+    return { erro: "", id };
+  });
+}
+async function apagarGrupo(id) {
+  return await transaction(async (tx) => {
+    const soltos = await tx.run(
+      "UPDATE products SET group_id = NULL, group_position = 0 WHERE group_id = ?",
+      [id]
+    );
+    await tx.run("DELETE FROM product_groups WHERE id = ?", [id]);
+    return soltos;
+  });
+}
+var LIMITE_DE_EIXOS, LIMITE_DE_OPCOES, LIMITE_DE_VARIACOES;
+var init_variacoes = __esm({
+  "server/src/variacoes.ts"() {
+    "use strict";
+    init_db();
+    init_erp_categorias();
+    LIMITE_DE_EIXOS = 4;
+    LIMITE_DE_OPCOES = 60;
+    LIMITE_DE_VARIACOES = 400;
+    __name(carregarGrupos, "carregarGrupos");
+    __name(grupoParaApi, "grupoParaApi");
+    __name(agrupamentoDeProdutos, "agrupamentoDeProdutos");
+    __name(problemaNosEixos, "problemaNosEixos");
+    __name(problemaNasVariacoes, "problemaNasVariacoes");
+    __name(slugLivre, "slugLivre");
+    __name(gravarGrupo, "gravarGrupo");
+    __name(apagarGrupo, "apagarGrupo");
+  }
+});
+
 // server/src/store.ts
 var store_exports = {};
 __export(store_exports, {
@@ -1232,7 +1597,16 @@ function productRowToApi(r, codigos, galeria) {
      */
     weight: Number(r.weight_kg) || 0,
     weightLabel: String(r.weight ?? ""),
-    active: Boolean(r.active)
+    active: Boolean(r.active),
+    /*
+     * Produto criado pelo ERP e RETIDO até a lojista conferir o agrupamento.
+     *
+     * Sai também na API do ERP, de propósito: sem isto, o integrador vê o
+     * produto na lista, não o encontra na vitrine, e não tem como saber se o
+     * problema é categoria, estoque ou conferência pendente. O campo responde
+     * essa pergunta sem ninguém precisar abrir o painel.
+     */
+    pendingReview: Boolean(r.pending_group)
   };
   if (r.subcategory) out.subcategory = r.subcategory;
   if (r.long_description) out.longDescription = r.long_description;
@@ -1266,15 +1640,33 @@ async function galeriasDe(ids, exec = q) {
   return mapa;
 }
 async function fetchProducts(opcoes = {}) {
-  const { onlyActive = true, exigirCategoria = false, comCodigos = false, exec = q } = opcoes;
+  const {
+    onlyActive = true,
+    exigirCategoria = false,
+    semRetidos = false,
+    comCodigos = false,
+    comAgrupamento = false,
+    exec = q
+  } = opcoes;
   const filtros = [];
   if (onlyActive) filtros.push("active = 1");
   if (exigirCategoria) filtros.push("category <> ''");
+  if (semRetidos) filtros.push("pending_group = 0");
   const where = filtros.length > 0 ? ` WHERE ${filtros.join(" AND ")}` : "";
   const codigos = comCodigos ? await mapaDeCodigos(exec) : void 0;
   const linhas = await exec.all(`SELECT * FROM products${where} ORDER BY position ASC, name ASC`);
   const galerias = await galeriasDe(linhas.map((r) => String(r.id)), exec);
-  return linhas.map((r) => productRowToApi(r, codigos, galerias.get(String(r.id))));
+  const agrupamento = comAgrupamento ? await agrupamentoDeProdutos(linhas.map((r) => String(r.id)), exec) : void 0;
+  return linhas.map((r) => {
+    const api = productRowToApi(r, codigos, galerias.get(String(r.id)));
+    if (agrupamento !== void 0) {
+      const g = agrupamento.get(String(r.id));
+      api.groupCode = g?.groupCode ?? null;
+      api.groupName = g?.groupName ?? null;
+      api.options = g?.options ?? [];
+    }
+    return api;
+  });
 }
 function montarMenu(categorias, subsPorCategoria) {
   const membros = /* @__PURE__ */ new Map();
@@ -1688,6 +2080,7 @@ var init_store = __esm({
     init_crypto();
     init_db();
     init_erp_categorias();
+    init_variacoes();
     init_http();
     init_notas();
     DEFAULT_SETTINGS = {
@@ -1698,6 +2091,7 @@ var init_store = __esm({
       pixDiscountPct: 5,
       // 0 mantém o comportamento de antes: desconto em qualquer valor.
       pixMinOrder: 0,
+      holdNewProducts: true,
       payments: { card: true, pix: true, boleto: true }
     };
     DEFAULT_SHIPPING = {
@@ -2777,6 +3171,23 @@ var init_schema = __esm({
         tabela: "categories",
         nome: "idx_cat_group",
         definicao: "KEY idx_cat_group (group_id)"
+      },
+      {
+        /*
+         * As duas colunas de variação nasceram num `CREATE TABLE` que nenhuma loja
+         * já instalada volta a executar. Sem esta lista, a vitrine passaria a
+         * filtrar por `group_id` e por `pending_group` varrendo a tabela de
+         * produtos inteira a cada carregamento — e o defeito só apareceria como
+         * "a loja ficou lenta", meses depois, sem ninguém ligar uma coisa à outra.
+         */
+        tabela: "products",
+        nome: "idx_prod_group",
+        definicao: "KEY idx_prod_group (group_id)"
+      },
+      {
+        tabela: "products",
+        nome: "idx_prod_pending_group",
+        definicao: "KEY idx_prod_pending_group (pending_group)"
       }
     ];
     __name(addMissingIndexes, "addMissingIndexes");
@@ -3784,6 +4195,7 @@ async function quoteCart(rawItems, ufIn, cep, couponCode, payment, exec = q, opc
 __name(quoteCart, "quoteCart");
 
 // server/src/erp-produtos.ts
+init_store();
 var CAMPOS = {
   sku: "sku",
   name: "name",
@@ -4009,6 +4421,14 @@ async function gravarProdutoDoErp(id, dto, exec = q) {
     return resultado;
   }
   if (criando) {
+    const reter = (await getSettings(exec)).holdNewProducts !== false;
+    if (reter) {
+      colunas.push("pending_group");
+      valores.push(1);
+      resultado.warnings.push(
+        "Produto criado e RETIDO para confer\xEAncia: ele n\xE3o aparece na vitrine at\xE9 algu\xE9m liber\xE1-lo em Painel \u2192 Varia\xE7\xF5es, onde d\xE1 para public\xE1-lo solto ou anex\xE1-lo a um grupo. Isso evita que uma varia\xE7\xE3o nova apare\xE7a como card duplicado ao lado do grupo. A reten\xE7\xE3o \xE9 deslig\xE1vel em Painel \u2192 Configura\xE7\xF5es."
+      );
+    }
     await exec.run(
       `INSERT INTO products (id, ${colunas.join(", ")}) VALUES (?${", ?".repeat(colunas.length)})`,
       [id, ...valores]
@@ -4064,6 +4484,7 @@ __name(destravarCampos, "destravarCampos");
 
 // server/src/routes/admin.ts
 init_http();
+init_variacoes();
 init_providers();
 init_store();
 
@@ -4288,7 +4709,17 @@ adminRoutes.get("/state", h(async (req, res) => {
     users: await listaDeUsuarios(eu.id),
     // Categorias que o ERP mandou, com o estado da amarração.
     erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
-    productsWithoutCategory: await produtosSemCategoria()
+    productsWithoutCategory: await produtosSemCategoria(),
+    /*
+     * Os grupos de variação, com eixos, opções e variações.
+     *
+     * Vão no estado porque a tela de Produtos também precisa deles: sem saber
+     * quem está agrupado, o painel mostraria "Pirâmide 15cm" como produto
+     * solto na mesma lista em que a lojista acabou de agrupá-la.
+     */
+    productGroups: await carregarGrupos(),
+    /** Produtos criados pelo ERP e retidos até a conferência de agrupamento. */
+    productsPendingGroup: await produtosRetidos()
   });
 }));
 adminRoutes.put("/erp-categories/:code", h(async (req, res) => {
@@ -4307,6 +4738,66 @@ adminRoutes.put("/erp-categories/:code", h(async (req, res) => {
     erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria()
   });
+}));
+adminRoutes.put("/product-groups/:id", h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await gravarGrupo(String(req.params.id ?? ""), grupoDoCorpo(body(req)));
+  if (r.erro !== "") fail(r.erro, 422, "invalid_group");
+  jsonOk(res, { ok: true, id: r.id, ...await estadoDeVariacoes() });
+}));
+adminRoutes.post("/product-groups", h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await gravarGrupo("", grupoDoCorpo(body(req)));
+  if (r.erro !== "") fail(r.erro, 422, "invalid_group");
+  jsonOk(res, { ok: true, id: r.id, ...await estadoDeVariacoes() }, 201);
+}));
+adminRoutes.delete("/product-groups/:id", h(async (req, res) => {
+  await requireAdmin(req);
+  const soltos = await apagarGrupo(String(req.params.id ?? ""));
+  jsonOk(res, { ok: true, released: soltos, ...await estadoDeVariacoes() });
+}));
+function grupoDoCorpo(b) {
+  return {
+    name: bodyStr(b, "name", "", 255),
+    description: bodyStr(b, "description", "", 2e3),
+    longDescription: bodyStr(b, "longDescription", "", 2e4),
+    image: bodyStr(b, "image", "", 500),
+    category: bodyStr(b, "category", "", 100),
+    subcategory: bodyStr(b, "subcategory", "", 100),
+    tag: bodyStr(b, "tag", "", 40),
+    highlight: bodyBool(b, "highlight", false),
+    active: bodyBool(b, "active", true),
+    axes: Array.isArray(b.axes) ? b.axes : [],
+    variants: Array.isArray(b.variants) ? b.variants : []
+  };
+}
+__name(grupoDoCorpo, "grupoDoCorpo");
+async function estadoDeVariacoes() {
+  return {
+    productGroups: await carregarGrupos(),
+    products: await fetchProducts({ onlyActive: false }),
+    productsPendingGroup: await produtosRetidos()
+  };
+}
+__name(estadoDeVariacoes, "estadoDeVariacoes");
+async function produtosRetidos() {
+  const r = await q.one("SELECT COUNT(*) AS n FROM products WHERE pending_group = 1");
+  return Number(r?.n ?? 0);
+}
+__name(produtosRetidos, "produtosRetidos");
+adminRoutes.post("/products/publicar", h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+  const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map((x) => String(x ?? "").trim()).filter((x) => x !== ""))] : [];
+  if (ids.length === 0) fail("Selecione ao menos um produto.", 422, "invalid_batch");
+  if (ids.length > LOTE_DE_CATEGORIA) {
+    fail(`M\xE1ximo de ${LOTE_DE_CATEGORIA} produtos por vez.`, 422, "batch_too_large");
+  }
+  const liberados = await q.run(
+    `UPDATE products SET pending_group = 0 WHERE id IN (${placeholders(ids.length)})`,
+    ids
+  );
+  jsonOk(res, { ok: true, released: liberados, ...await estadoDeVariacoes() });
 }));
 adminRoutes.get("/erp-categories/parados", h(async (req, res) => {
   await requireAdmin(req);
@@ -5300,6 +5791,7 @@ __name(cancelarSemCobranca, "cancelarSemCobranca");
 // server/src/routes/public.ts
 init_providers();
 init_store();
+init_variacoes();
 var publicRoutes = (0, import_express3.Router)();
 publicRoutes.get("/session", h(async (req, res) => {
   const admin = await currentAdmin(req);
@@ -5335,7 +5827,24 @@ publicRoutes.get("/catalog", h(async (_req, res) => {
     else children.set(key, [entry]);
   }
   jsonOk(res, {
-    products: await fetchProducts({ exigirCategoria: true }),
+    /*
+     * Os produtos saem TODOS, inclusive os que pertencem a um grupo.
+     *
+     * Quem decide não mostrar o card solto de uma variação é a vitrine, não
+     * esta consulta: a página do grupo precisa do preço, do estoque, do peso e
+     * da foto de cada variação para montar os seletores, e ela lê daqui. Tirar
+     * os agrupados da lista obrigaria uma segunda chamada para trazer de volta
+     * exatamente os mesmos produtos.
+     *
+     * `semRetidos` tira os que esperam conferência de agrupamento — esses não
+     * podem aparecer em lugar nenhum da loja ainda.
+     */
+    products: await fetchProducts({ exigirCategoria: true, semRetidos: true }),
+    /*
+     * Os grupos de variação. Cada um substitui, na listagem, os cards das suas
+     * variações — um card por grupo, nunca N cards da mesma peça.
+     */
+    groups: await carregarGrupos({ apenasAtivos: true }),
     categories: parents.map((c) => ({ id: c.id, name: c.name, description: c.description })),
     /*
      * O menu sai de `montarMenu`, que é o mesmo código que o painel usa.
@@ -5943,6 +6452,7 @@ __name(lerMultipart, "lerMultipart");
 init_notas();
 init_providers();
 init_store();
+init_variacoes();
 var v1Routes = (0, import_express4.Router)();
 var STATUS_PEDIDO2 = ["pending", "paid", "shipped", "delivered", "canceled"];
 var LOTE_CATEGORIAS = 2e3;
@@ -6064,13 +6574,18 @@ v1Routes.put("/categories/:code/link", h(async (req, res) => {
 }));
 v1Routes.get("/products", h(async (req, res) => {
   await requireApiKey(req);
-  jsonOk(res, { products: await fetchProducts({ comCodigos: true }) });
+  jsonOk(res, { products: await fetchProducts({ comCodigos: true, comAgrupamento: true }) });
 }));
 v1Routes.get("/products/:id", h(async (req, res) => {
   await requireApiKey(req);
   const row = await q.one("SELECT * FROM products WHERE id = ?", [req.params.id]);
   if (row === null) fail("Produto n\xE3o encontrado.", 404, "not_found");
-  jsonOk(res, { product: productRowToApi(row, await mapaDeCodigos()) });
+  const produto = productRowToApi(row, await mapaDeCodigos());
+  const g = (await agrupamentoDeProdutos([String(row.id)])).get(String(row.id));
+  produto.groupCode = g?.groupCode ?? null;
+  produto.groupName = g?.groupName ?? null;
+  produto.options = g?.options ?? [];
+  jsonOk(res, { product: produto });
 }));
 v1Routes.put("/products/:id", h(async (req, res) => {
   await requireApiKey(req);
