@@ -6,7 +6,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   Plus, Search, Pencil, Trash2, X, ImagePlus, EyeOff, RotateCcw,
-  ChevronLeft, ChevronRight, Star,
+  ChevronLeft, ChevronRight, Star, FolderX,
 } from 'lucide-react';
 import { MenuCategory, Product } from '../../types';
 import { useAdmin } from '../AdminContext';
@@ -28,7 +28,19 @@ const blank = (): Product => ({
   sku: '',
 });
 
-export default function ProductsAdmin() {
+interface ProductsAdminProps {
+  /**
+   * Abre a tela já mostrando só os produtos sem categoria.
+   *
+   * Quem liga isto é o aviso em Categorias do ERP, para o caso que nenhuma
+   * amarração resolve: produto que chegou sem `categoryCode`. Mandar a pessoa
+   * "procurar em Produtos" não funcionaria — a busca daqui é por nome, e os
+   * nomes são justamente o que ela não sabe.
+   */
+  apenasSemCategoria?: boolean;
+}
+
+export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAdminProps) {
   const { state, upsertProduct, deleteProduct } = useAdmin();
   const [confirming, setConfirming] = useState<Product | null>(null);
   const [apagando, setApagando] = useState<Product | null>(null);
@@ -43,13 +55,26 @@ export default function ProductsAdmin() {
   );
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Product | null>(null);
+  const [soSemCategoria, setSoSemCategoria] = useState(apenasSemCategoria);
+
+  /*
+   * Produto sem categoria é invisível na loja, e era invisível TAMBÉM aqui:
+   * a única ferramenta desta tela era a busca por nome, e quem precisa achar
+   * esses produtos não conhece o nome de nenhum deles — foi o ERP que os
+   * mandou. O filtro é o que torna a lista alcançável.
+   */
+  const semCategoria = useMemo(
+    () => state.products.filter((p) => String(p.category ?? '') === ''),
+    [state.products],
+  );
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
-    return state.products.filter(
+    const base = soSemCategoria ? semCategoria : state.products;
+    return base.filter(
       (p) => p.name.toLowerCase().includes(q) || p.categoryLabel.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
     );
-  }, [state.products, query]);
+  }, [state.products, semCategoria, soSemCategoria, query]);
 
   const save = (p: Product) => {
     const toSave: Product = {
@@ -72,8 +97,32 @@ export default function ProductsAdmin() {
             className={`${inputCls} pl-9`}
           />
         </div>
+        {/*
+          O botão só aparece quando existe o que mostrar. Um filtro permanente
+          marcando "0 sem categoria" é ruído; quando ele aparece, é porque há
+          produto fora da vitrine, e aí o número já é a informação.
+        */}
+        {semCategoria.length > 0 && (
+          <Btn
+            variant={soSemCategoria ? 'primary' : 'ghost'}
+            onClick={() => setSoSemCategoria((v) => !v)}
+          >
+            <FolderX size={16} />
+            {soSemCategoria
+              ? `Mostrando ${semCategoria.length} sem categoria`
+              : `${semCategoria.length} sem categoria`}
+          </Btn>
+        )}
         <Btn onClick={() => setEditing(blank())}><Plus size={16} /> Novo produto</Btn>
       </div>
+
+      {soSemCategoria && (
+        <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 leading-relaxed">
+          <b>Estes produtos não aparecem na vitrine.</b> Abra cada um e escolha a categoria — ou,
+          se eles vieram do ERP com um código de categoria, resolva de uma vez em
+          <b> Categorias do ERP</b>, que amarra o código e libera todos juntos.
+        </div>
+      )}
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">

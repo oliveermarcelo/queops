@@ -18,6 +18,7 @@ import { Product } from '../types';
 import {
   AdminState, Order, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
   IntegrationId, AbandonedStatus, RecoveryConfig, Webhook, ShippingConfig, PanelUser,
+  ProdutosParados,
 } from './types';
 import * as store from './store';
 
@@ -79,6 +80,25 @@ interface AdminContextValue {
   linkErpCategory: (
     code: string, category: string | null, subcategory: string | null,
   ) => Promise<number>;
+
+  /**
+   * Quais produtos estão fora da vitrine, agrupados pelo motivo. Sob demanda:
+   * a contagem cabe no estado do painel, a lista não.
+   */
+  fetchProdutosParados: () => Promise<ProdutosParados>;
+
+  /**
+   * Aplica agora a categoria de um código que já está amarrado, para os
+   * produtos que ficaram para trás. Devolve quantos entraram na vitrine.
+   */
+  reaplicarCodigoDoErp: (code: string) => Promise<number>;
+
+  /**
+   * Registra um código que veio em produto e nunca veio como categoria, para
+   * ele poder ser amarrado. Devolve quantos produtos passam a depender só da
+   * amarração.
+   */
+  registrarCodigoDoErp: (code: string, name: string) => Promise<number>;
 
   /**
    * Substitui a árvore da loja por uma cópia da do ERP. Destrutivo — a tela
@@ -403,6 +423,38 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         }
         // Quantos produtos entraram na vitrine com este clique — a tela avisa.
         return r.released;
+      },
+
+      fetchProdutosParados: () => store.fetchProdutosParados(),
+
+      reaplicarCodigoDoErp: async (code) => {
+        const r = await store.reaplicarCodigoDoErp(code);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            erpCategories: r.erpCategories,
+            productsWithoutCategory: r.productsWithoutCategory,
+          }));
+        }
+        /*
+         * O produto mudou de categoria no banco, e `state.products` ficou
+         * velho. Recarregar o estado inteiro aqui atrapalharia a leitura da
+         * própria lista que a pessoa está olhando; a tela de Produtos busca o
+         * estado ao ser aberta, então a divergência não sobrevive a um clique.
+         */
+        return r.released;
+      },
+
+      registrarCodigoDoErp: async (code, name) => {
+        const r = await store.registrarCodigoDoErp(code, name);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            erpCategories: r.erpCategories,
+            productsWithoutCategory: r.productsWithoutCategory,
+          }));
+        }
+        return r.waiting;
       },
 
       espelharCategoriasDoErp: async () => {

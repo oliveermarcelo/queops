@@ -51,6 +51,24 @@ export default function AdminApp() {
   const [checking, setChecking] = useState(true);
   const [active, setActive] = useState<ModuleId>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
+  /*
+   * Um pedido de filtro que atravessa a navegação.
+   *
+   * A tela de Categorias do ERP sabe que existem produtos sem categoria que
+   * nenhuma amarração resolve — eles vieram sem código, e só se arrumam um a
+   * um em Produtos. Mandar a pessoa "ir em Produtos e procurar" não funciona:
+   * a busca de lá é por nome, e justamente os nomes ela não conhece. Então o
+   * botão leva para Produtos JÁ com o filtro ligado.
+   *
+   * Zerado em toda navegação normal pela lateral: o filtro é consequência
+   * daquele clique, não um estado que a pessoa tenha de desfazer depois.
+   */
+  const [filtrarSemCategoria, setFiltrarSemCategoria] = useState(false);
+
+  const navegar = (id: ModuleId) => {
+    setFiltrarSemCategoria(false);
+    setActive(id);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -77,15 +95,22 @@ export default function AdminApp() {
 
   const renderModule = () => {
     switch (active) {
-      case 'dashboard': return <Dashboard goTo={setActive} />;
-      case 'products': return <ProductsAdmin />;
+      case 'dashboard': return <Dashboard goTo={navegar} />;
+      case 'products': return <ProductsAdmin apenasSemCategoria={filtrarSemCategoria} />;
       case 'orders': return <OrdersAdmin />;
       case 'abandoned': return <AbandonedCartsAdmin />;
       case 'customers': return <CustomersAdmin />;
       case 'coupons': return <CouponsAdmin />;
       case 'shipping': return <ShippingAdmin />;
       case 'integrations': return <IntegrationsAdmin />;
-      case 'categories': return <CategoriesAdmin />;
+      case 'categories': return (
+        <CategoriesAdmin
+          verProdutosSemCategoria={() => {
+            setFiltrarSemCategoria(true);
+            setActive('products');
+          }}
+        />
+      );
       case 'vitrine': return <VitrineCategoriasAdmin />;
       case 'users': return <UsersAdmin />;
       case 'settings': return <SettingsAdmin />;
@@ -109,7 +134,7 @@ export default function AdminApp() {
           return (
             <button
               key={item.id}
-              onClick={() => { setActive(item.id); setMobileOpen(false); }}
+              onClick={() => { navegar(item.id); setMobileOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
               }`}

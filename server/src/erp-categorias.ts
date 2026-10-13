@@ -642,3 +642,215 @@ export async function produtosSemCategoria(exec: Q = q): Promise<number> {
   const r = await exec.one("SELECT COUNT(*) AS n FROM products WHERE category = ''");
   return Number(r?.n ?? 0);
 }
+
+// ------------------------------------------- quais produtos, e por quê ----
+
+/** Um produto que está fora da vitrine por não ter categoria. */
+export interface ProdutoParado {
+  id: string;
+  sku: string;
+  name: string;
+  active: boolean;
+  updatedAt: unknown;
+}
+
+/**
+ * Por que um grupo de produtos está parado. A distinção é o ponto desta tela:
+ * cada motivo se resolve num lugar diferente, e três deles NÃO se resolvem
+ * amarrando uma categoria pendente — que era a única coisa que o aviso antigo
+ * mandava fazer.
+ */
+export type MotivoDeParada = 'amarrado' | 'pendente' | 'orfao' | 'sem_codigo';
+
+export interface GrupoParado {
+  /** Código que os produtos estão esperando. Vazio em `sem_codigo`. */
+  code: string;
+  /** Nome da categoria no ERP, quando ele já mandou o cadastro dela. */
+  name: string;
+  motivo: MotivoDeParada;
+  total: number;
+  /** Amostra dos produtos — cortada em AMOSTRA_DE_PARADOS por grupo. */
+  produtos: ProdutoParado[];
+}
+
+export interface ProdutosParados {
+  total: number;
+  grupos: GrupoParado[];
+}
+
+/**
+ * Teto de produtos examinados, e de produtos mostrados por grupo.
+ *
+ * A tela existe para a pessoa reconhecer o que está parado e decidir — não
+ * para ela rolar mil linhas. O que importa é o motivo e a contagem; a amostra
+ * é só para dar nome aos bois. Com um catálogo de ~1.400 itens, o teto de
+ * leitura nunca é atingido na prática, e existe para o dia em que uma carga
+ * errada do ERP deixar tudo sem categoria de uma vez.
+ */
+const TETO_DE_LEITURA = 3000;
+const AMOSTRA_DE_PARADOS = 50;
+
+/**
+ * Quais produtos estão fora da vitrine, agrupados pelo MOTIVO de cada um.
+ *
+ * O aviso do painel sabia dizer "51 produtos estão sem categoria" e mandava
+ * amarrar a categoria correspondente logo abaixo. Isso só era verdade num dos
+ * quatro casos possíveis — e no dia em que a loja tinha 41 categorias do ERP,
+ * todas amarradas, e ainda assim 51 produtos parados, o aviso estava mandando
+ * fazer algo que não existia para ser feito. Contar sem dizer qual é o motivo
+ * transforma um problema resolvível num beco sem saída.
+ *
+ * Os quatro casos, e onde cada um se resolve:
+ *
+ *   amarrado    o código JÁ está amarrado e mesmo assim o produto ficou fora.
+ *               Acontece quando alguém troca a categoria do produto para
+ *               "— sem categoria —" no painel: a amarração só libera quem está
+ *               esperando no instante do clique, então ninguém volta a olhar
+ *               para esse produto. Um botão reaplica a categoria.
+ *   pendente    o ERP mandou a categoria, falta amarrar aqui. É o caso que o
+ *               aviso antigo descrevia, e se resolve na lista abaixo dele.
+ *   orfao       o produto veio com um código que NUNCA chegou como categoria.
+ *               A loja não consegue amarrar o que não conhece; é preciso
+ *               registrar o código primeiro (ou pedir a carga ao ERP).
+ *   sem_codigo  o produto veio sem código nenhum, ou nasceu no painel. Só se
+ *               resolve escolhendo a categoria em Painel → Produtos.
+ */
+export async function detalheDeProdutosSemCategoria(exec: Q = q): Promise<ProdutosParados> {
+  const linhas = await exec.all(
+    `SELECT p.id, p.sku, p.name, p.active, p.updated_at, p.pending_category_code,
+            e.code AS erp_code, e.name AS erp_name, e.category_id
+       FROM products p
+       LEFT JOIN erp_categories e ON e.code = p.pending_category_code
+      WHERE p.category = ''
+      ORDER BY p.pending_category_code ASC, p.name ASC
+      LIMIT ${TETO_DE_LEITURA}`,
+  );
+
+  const porChave = new Map<string, GrupoParado>();
+
+  for (const l of linhas) {
+    const code = String(l.pending_category_code ?? '');
+    const motivo: MotivoDeParada = code === ''
+      ? 'sem_codigo'
+      : l.erp_code === null || l.erp_code === undefined
+        ? 'orfao'
+        : l.category_id === null || l.category_id === undefined
+          ? 'pendente'
+          : 'amarrado';
+
+    const chave = `${motivo}:${code}`;
+    let grupo = porChave.get(chave);
+    if (grupo === undefined) {
+      grupo = { code, name: String(l.erp_name ?? ''), motivo, total: 0, produtos: [] };
+      porChave.set(chave, grupo);
+    }
+    grupo.total++;
+    if (grupo.produtos.length < AMOSTRA_DE_PARADOS) {
+      grupo.produtos.push({
+        id: String(l.id),
+        sku: String(l.sku ?? ''),
+        name: String(l.name ?? ''),
+        active: Boolean(l.active),
+        updatedAt: l.updated_at,
+      });
+    }
+  }
+
+  /*
+   * A ordem é a do esforço: primeiro o que se resolve com um clique, por
+   * último o que exige o ERP ou trabalho manual item a item. Quem abre a lista
+   * deve ver primeiro o que consegue fazer agora.
+   */
+  const ordem: Record<MotivoDeParada, number> = {
+    amarrado: 0, pendente: 1, orfao: 2, sem_codigo: 3,
+  };
+  const grupos = [...porChave.values()].sort(
+    (a, b) => ordem[a.motivo] - ordem[b.motivo] || b.total - a.total,
+  );
+
+  return { total: await produtosSemCategoria(exec), grupos };
+}
+
+/**
+ * Aplica, agora, a categoria de um código que já está amarrado.
+ *
+ * É a mesma atualização que a amarração faz — e existe separada porque a
+ * amarração acontece UMA vez, e produto que ficou sem categoria depois dela
+ * (porque alguém o editou no painel, ou porque uma carga do ERP o pegou no meio
+ * do caminho) não é alcançado por nada. Sem este botão, o único jeito seria
+ * desamarrar e amarrar de novo o código — que é uma manobra que ninguém
+ * descobre sozinho, e que tira da vitrine todos os outros produtos no intervalo.
+ */
+export async function reaplicarCodigo(code: string, exec: Q = q): Promise<ResultadoDaAmarracao> {
+  const c = normalizarCodigo(code);
+  const { destino, conhecido } = await traduzirCodigo(c, exec);
+  if (!conhecido) return { erro: 'Este código não veio em nenhuma carga do ERP.', liberados: 0 };
+  if (destino === null) {
+    return { erro: 'Este código ainda não está amarrado a uma categoria da loja.', liberados: 0 };
+  }
+
+  const liberados = await exec.run(
+    `UPDATE products
+        SET category = ?, subcategory = ?, pending_category_code = ''
+      WHERE pending_category_code = ? AND category = ''`,
+    [destino.category, destino.subcategory, c],
+  );
+  return { erro: '', liberados };
+}
+
+/**
+ * Registra, à mão, um código que apareceu em produto mas nunca veio como
+ * categoria.
+ *
+ * A regra da casa é que categoria é assunto do ERP, e ela continua valendo:
+ * esta entrada é um PLACEHOLDER para destravar os produtos. O nome nasce sendo
+ * o próprio código, e no instante em que o ERP mandar a categoria de verdade a
+ * carga sobrescreve o nome — sem tocar na amarração, que é o que `carregarCategorias`
+ * nunca mexe. Ou seja: o registro manual se corrige sozinho e não atrapalha o
+ * dia em que o outro lado arrumar o cadastro dele.
+ *
+ * A alternativa era esperar o ERP. Em tese é o certo; na prática são 51
+ * produtos invisíveis na loja enquanto o chamado anda do outro lado, e um
+ * painel que só sabe dizer "peça para eles".
+ */
+export async function registrarCodigoOrfao(
+  code: string,
+  nome: string,
+  exec: Q = q,
+): Promise<{ erro: string; code: string; aguardando: number }> {
+  const c = normalizarCodigo(code);
+  if (c === '') return { erro: 'Informe o código.', code: '', aguardando: 0 };
+
+  const jaExiste = await exec.one('SELECT code FROM erp_categories WHERE code = ?', [c]);
+  if (jaExiste !== null) {
+    return { erro: 'Este código já está na lista de categorias do ERP.', code: c, aguardando: 0 };
+  }
+
+  /*
+   * Só registra código que ALGUM produto está mesmo esperando.
+   *
+   * Sem esta condição, a tela viraria um cadastro livre de categorias do ERP —
+   * e aí sim a loja passaria a inventar códigos que o outro lado não conhece,
+   * que é exatamente o que a amarração manual existe para evitar.
+   */
+  const esperando = Number(
+    (await exec.one(
+      "SELECT COUNT(*) AS n FROM products WHERE pending_category_code = ? AND category = ''",
+      [c],
+    ))?.n ?? 0,
+  );
+  if (esperando === 0) {
+    return {
+      erro: 'Nenhum produto está esperando este código. Códigos novos vêm do ERP.',
+      code: c,
+      aguardando: 0,
+    };
+  }
+
+  await exec.run(
+    'INSERT INTO erp_categories (code, name, parent_code, active) VALUES (?,?,NULL,1)',
+    [c, String(nome ?? '').trim().slice(0, 160) || c],
+  );
+
+  return { erro: '', code: c, aguardando: esperando };
+}

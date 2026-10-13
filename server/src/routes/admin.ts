@@ -16,7 +16,8 @@ import { encryptPayload } from '../crypto.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
 import {
-  amarrarCategoria, erpCategoriaParaApi, espelharArvoreDoErp, produtosSemCategoria,
+  amarrarCategoria, detalheDeProdutosSemCategoria, erpCategoriaParaApi, espelharArvoreDoErp,
+  produtosSemCategoria, reaplicarCodigo, registrarCodigoOrfao,
 } from '../erp-categorias.ts';
 import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
 import {
@@ -244,6 +245,75 @@ adminRoutes.put('/erp-categories/:code', h(async (req, res) => {
     // mostra o número: é o resultado concreto de uma ação que, sem ele,
     // pareceria não ter feito nada.
     released: liberados,
+    erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
+      .map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria(),
+  });
+}));
+
+/**
+ * GET /api/admin/erp-categories/parados — QUAIS produtos estão fora da vitrine.
+ *
+ * Sob demanda, e não dentro do estado do painel: a contagem cabe no estado
+ * (é um número), a lista não — ela pode ter milhares de linhas no dia de uma
+ * carga errada, e ninguém deveria pagar por isso ao abrir o painel para
+ * qualquer outra coisa.
+ *
+ * O valor da resposta não está na lista, e sim no MOTIVO de cada grupo: é ele
+ * que diz onde a pessoa resolve aquilo. Ver o comentário em
+ * `detalheDeProdutosSemCategoria`.
+ */
+adminRoutes.get('/erp-categories/parados', h(async (req, res) => {
+  await requireAdmin(req);
+  jsonOk(res, await detalheDeProdutosSemCategoria());
+}));
+
+/**
+ * POST /api/admin/erp-categories/:code/reaplicar — o código já está amarrado,
+ * mas sobraram produtos fora da vitrine.
+ *
+ * Separado da amarração porque amarrar é um evento, e estes produtos ficaram
+ * sem categoria DEPOIS dele. Sem esta rota, a única saída seria desamarrar e
+ * amarrar de novo — manobra que ninguém descobre sozinho e que, no intervalo,
+ * tira da vitrine todos os outros produtos daquele código.
+ */
+adminRoutes.post('/erp-categories/:code/reaplicar', h(async (req, res) => {
+  await requireAdmin(req);
+  const { erro, liberados } = await reaplicarCodigo(String(req.params.code ?? ''));
+  if (erro !== '') fail(erro, 422, 'invalid_link');
+
+  jsonOk(res, {
+    ok: true,
+    released: liberados,
+    erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
+      .map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria(),
+  });
+}));
+
+/**
+ * POST /api/admin/erp-categories — registra um código órfão.
+ *
+ * Órfão é o código que apareceu em PRODUTO e nunca chegou como CATEGORIA. A
+ * loja não consegue amarrar o que não conhece, então sem isto o painel só
+ * saberia dizer "peça ao ERP" — e os produtos ficariam invisíveis enquanto o
+ * chamado anda do outro lado.
+ *
+ * Só aceita código que algum produto esteja de fato esperando: isso é o que
+ * impede a tela de virar um cadastro livre de categorias do ERP, que
+ * desmontaria a razão de a amarração ser manual.
+ */
+adminRoutes.post('/erp-categories', h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+  const r = await registrarCodigoOrfao(bodyStr(b, 'code', '', 60), bodyStr(b, 'name', '', 160));
+  if (r.erro !== '') fail(r.erro, 422, 'invalid_code');
+
+  jsonOk(res, {
+    ok: true,
+    code: r.code,
+    /** Quantos produtos passam a depender só da amarração deste código. */
+    waiting: r.aguardando,
     erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
       .map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria(),

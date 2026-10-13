@@ -101,6 +101,7 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 | `npm run teste:pagamento` | Travas de pagamento contra um MySQL de verdade |
 | `npm run teste:cobranca` | Checkout pela HTTP: nenhum pedido sem cobrança |
 | `npm run teste:notas` | Notas fiscais (NF-e): upload do ERP e acesso do cliente |
+| `npm run teste:parados` | Produtos fora da vitrine: por que cada um está parado |
 | `npm run teste:e2e` | Testes de ponta a ponta no navegador (Playwright) |
 
 ---

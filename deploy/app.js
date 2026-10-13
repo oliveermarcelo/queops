@@ -1010,7 +1010,90 @@ async function produtosSemCategoria(exec = q) {
   const r = await exec.one("SELECT COUNT(*) AS n FROM products WHERE category = ''");
   return Number(r?.n ?? 0);
 }
-var SEPARADOR, chaveDoDestino;
+async function detalheDeProdutosSemCategoria(exec = q) {
+  const linhas = await exec.all(
+    `SELECT p.id, p.sku, p.name, p.active, p.updated_at, p.pending_category_code,
+            e.code AS erp_code, e.name AS erp_name, e.category_id
+       FROM products p
+       LEFT JOIN erp_categories e ON e.code = p.pending_category_code
+      WHERE p.category = ''
+      ORDER BY p.pending_category_code ASC, p.name ASC
+      LIMIT ${TETO_DE_LEITURA}`
+  );
+  const porChave = /* @__PURE__ */ new Map();
+  for (const l of linhas) {
+    const code = String(l.pending_category_code ?? "");
+    const motivo = code === "" ? "sem_codigo" : l.erp_code === null || l.erp_code === void 0 ? "orfao" : l.category_id === null || l.category_id === void 0 ? "pendente" : "amarrado";
+    const chave = `${motivo}:${code}`;
+    let grupo = porChave.get(chave);
+    if (grupo === void 0) {
+      grupo = { code, name: String(l.erp_name ?? ""), motivo, total: 0, produtos: [] };
+      porChave.set(chave, grupo);
+    }
+    grupo.total++;
+    if (grupo.produtos.length < AMOSTRA_DE_PARADOS) {
+      grupo.produtos.push({
+        id: String(l.id),
+        sku: String(l.sku ?? ""),
+        name: String(l.name ?? ""),
+        active: Boolean(l.active),
+        updatedAt: l.updated_at
+      });
+    }
+  }
+  const ordem = {
+    amarrado: 0,
+    pendente: 1,
+    orfao: 2,
+    sem_codigo: 3
+  };
+  const grupos = [...porChave.values()].sort(
+    (a, b) => ordem[a.motivo] - ordem[b.motivo] || b.total - a.total
+  );
+  return { total: await produtosSemCategoria(exec), grupos };
+}
+async function reaplicarCodigo(code, exec = q) {
+  const c = normalizarCodigo(code);
+  const { destino, conhecido } = await traduzirCodigo(c, exec);
+  if (!conhecido) return { erro: "Este c\xF3digo n\xE3o veio em nenhuma carga do ERP.", liberados: 0 };
+  if (destino === null) {
+    return { erro: "Este c\xF3digo ainda n\xE3o est\xE1 amarrado a uma categoria da loja.", liberados: 0 };
+  }
+  const liberados = await exec.run(
+    `UPDATE products
+        SET category = ?, subcategory = ?, pending_category_code = ''
+      WHERE pending_category_code = ? AND category = ''`,
+    [destino.category, destino.subcategory, c]
+  );
+  return { erro: "", liberados };
+}
+async function registrarCodigoOrfao(code, nome, exec = q) {
+  const c = normalizarCodigo(code);
+  if (c === "") return { erro: "Informe o c\xF3digo.", code: "", aguardando: 0 };
+  const jaExiste = await exec.one("SELECT code FROM erp_categories WHERE code = ?", [c]);
+  if (jaExiste !== null) {
+    return { erro: "Este c\xF3digo j\xE1 est\xE1 na lista de categorias do ERP.", code: c, aguardando: 0 };
+  }
+  const esperando = Number(
+    (await exec.one(
+      "SELECT COUNT(*) AS n FROM products WHERE pending_category_code = ? AND category = ''",
+      [c]
+    ))?.n ?? 0
+  );
+  if (esperando === 0) {
+    return {
+      erro: "Nenhum produto est\xE1 esperando este c\xF3digo. C\xF3digos novos v\xEAm do ERP.",
+      code: c,
+      aguardando: 0
+    };
+  }
+  await exec.run(
+    "INSERT INTO erp_categories (code, name, parent_code, active) VALUES (?,?,NULL,1)",
+    [c, String(nome ?? "").trim().slice(0, 160) || c]
+  );
+  return { erro: "", code: c, aguardando: esperando };
+}
+var SEPARADOR, chaveDoDestino, TETO_DE_LEITURA, AMOSTRA_DE_PARADOS;
 var init_erp_categorias = __esm({
   "server/src/erp-categorias.ts"() {
     "use strict";
@@ -1029,6 +1112,11 @@ var init_erp_categorias = __esm({
     __name(slugUnico, "slugUnico");
     __name(espelharArvoreDoErp, "espelharArvoreDoErp");
     __name(produtosSemCategoria, "produtosSemCategoria");
+    TETO_DE_LEITURA = 3e3;
+    AMOSTRA_DE_PARADOS = 50;
+    __name(detalheDeProdutosSemCategoria, "detalheDeProdutosSemCategoria");
+    __name(reaplicarCodigo, "reaplicarCodigo");
+    __name(registrarCodigoOrfao, "registrarCodigoOrfao");
   }
 });
 
@@ -4216,6 +4304,35 @@ adminRoutes.put("/erp-categories/:code", h(async (req, res) => {
     // mostra o número: é o resultado concreto de uma ação que, sem ele,
     // pareceria não ter feito nada.
     released: liberados,
+    erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria()
+  });
+}));
+adminRoutes.get("/erp-categories/parados", h(async (req, res) => {
+  await requireAdmin(req);
+  jsonOk(res, await detalheDeProdutosSemCategoria());
+}));
+adminRoutes.post("/erp-categories/:code/reaplicar", h(async (req, res) => {
+  await requireAdmin(req);
+  const { erro, liberados } = await reaplicarCodigo(String(req.params.code ?? ""));
+  if (erro !== "") fail(erro, 422, "invalid_link");
+  jsonOk(res, {
+    ok: true,
+    released: liberados,
+    erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria()
+  });
+}));
+adminRoutes.post("/erp-categories", h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+  const r = await registrarCodigoOrfao(bodyStr(b, "code", "", 60), bodyStr(b, "name", "", 160));
+  if (r.erro !== "") fail(r.erro, 422, "invalid_code");
+  jsonOk(res, {
+    ok: true,
+    code: r.code,
+    /** Quantos produtos passam a depender só da amarração deste código. */
+    waiting: r.aguardando,
     erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria()
   });

@@ -152,6 +152,34 @@ Cobre também cada linha da tabela de erros do contrato (404, 422, 413, 415,
 409) e, em especial, o XML com `<!DOCTYPE>`/`<!ENTITY>` — a porta de entrada do
 XXE, recusada com 415.
 
+## Produtos fora da vitrine — por que cada um está parado
+
+Precisa da loja no ar.
+
+```bash
+npm run teste:parados     # 20 verificações pela HTTP
+```
+
+O painel sabia contar ("51 produtos estão sem categoria") e mandava amarrar a
+categoria correspondente na lista abaixo. Isso é verdade em **um** dos quatro
+casos possíveis. Numa loja com 41 categorias do ERP, todas já amarradas, e 51
+produtos parados, o aviso mandava fazer algo que não existia para ser feito — e
+não havia como descobrir nem quais produtos eram.
+
+`produtos-parados.mjs` monta os quatro casos lado a lado e cobra a distinção,
+porque é ela que decide onde a pessoa resolve cada um:
+
+| motivo | o que aconteceu | onde se resolve |
+|---|---|---|
+| `amarrado` | o código já aponta para uma categoria, e sobraram produtos fora | um clique, ali mesmo |
+| `pendente` | o ERP mandou a categoria, falta amarrar | na lista de códigos |
+| `orfao` | o código veio no produto e **nunca** veio como categoria | registrar o código, ou pedir a carga ao ERP |
+| `sem_codigo` | o produto chegou sem `categoryCode` | um a um, em Produtos |
+
+Verifica também que registrar um código é restrito ao que algum produto está de
+fato esperando — sem isso a tela viraria um cadastro livre de categorias do ERP,
+e a amarração manual deixaria de ter sentido.
+
 ## Ponta a ponta (Playwright)
 
 Precisam da loja no ar. Com o build pronto:

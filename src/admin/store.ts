@@ -15,7 +15,7 @@ import { Product } from '../types';
 import {
   AdminState, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
   IntegrationId, AbandonedStatus, RecoveryConfig, ShippingConfig, TrackingEvent, Webhook,
-  PanelUser, ErpCategory,
+  PanelUser, ErpCategory, ProdutosParados,
 } from './types';
 
 /** Estado completo do painel numa requisição só. */
@@ -208,6 +208,49 @@ export function linkErpCategory(
   subcategory: string | null,
 ): Promise<{ erpCategories: ErpCategory[]; productsWithoutCategory: number; released: number }> {
   return api.put(`/admin/erp-categories/${encodeURIComponent(code)}`, { category, subcategory });
+}
+
+/**
+ * Quais produtos estão fora da vitrine, e por quê.
+ *
+ * Carregado sob demanda, quando a pessoa pede para ver — e não junto do estado
+ * do painel. A contagem é um número e cabe no estado; a lista pode ter
+ * milhares de linhas no dia de uma carga errada do ERP, e ninguém deveria
+ * pagar por isso ao abrir o painel para outra coisa.
+ */
+export function fetchProdutosParados(): Promise<ProdutosParados> {
+  return api.get('/admin/erp-categories/parados');
+}
+
+/**
+ * Aplica agora a categoria de um código que JÁ está amarrado.
+ *
+ * Existe porque amarrar é um evento: produto que ficou sem categoria depois da
+ * amarração não é alcançado por ela, e o único contorno seria desamarrar e
+ * amarrar de novo — tirando da vitrine, no intervalo, todos os outros produtos
+ * daquele código.
+ */
+export function reaplicarCodigoDoErp(
+  code: string,
+): Promise<{ erpCategories: ErpCategory[]; productsWithoutCategory: number; released: number }> {
+  return api.post(`/admin/erp-categories/${encodeURIComponent(code)}/reaplicar`, {});
+}
+
+/**
+ * Registra um código que veio em produto e nunca veio como categoria.
+ *
+ * O nome nasce sendo o próprio código: é um lugar para amarrar, não um
+ * cadastro. Quando o ERP mandar a categoria de verdade, a carga corrige o nome
+ * e mantém a amarração.
+ */
+export function registrarCodigoDoErp(
+  code: string,
+  name: string,
+): Promise<{
+  code: string; waiting: number;
+  erpCategories: ErpCategory[]; productsWithoutCategory: number;
+}> {
+  return api.post('/admin/erp-categories', { code, name });
 }
 
 /**

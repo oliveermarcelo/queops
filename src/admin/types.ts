@@ -245,6 +245,41 @@ export interface ErpCategory {
   linked: boolean;
 }
 
+/** Um produto que está fora da vitrine por não ter categoria. */
+export interface ProdutoParado {
+  id: string;
+  sku: string;
+  name: string;
+  active: boolean;
+  updatedAt: string | null;
+}
+
+/**
+ * Por que um grupo de produtos está parado — e, por consequência, onde a
+ * pessoa resolve aquilo:
+ *
+ *   amarrado    o código já está amarrado e mesmo assim sobraram produtos
+ *               fora; um clique reaplica a categoria.
+ *   pendente    o ERP mandou a categoria, falta amarrar na lista abaixo.
+ *   orfao       o código nunca chegou como categoria; registre-o primeiro.
+ *   sem_codigo  veio sem código, ou nasceu no painel; resolve em Produtos.
+ */
+export type MotivoDeParada = 'amarrado' | 'pendente' | 'orfao' | 'sem_codigo';
+
+export interface GrupoParado {
+  code: string;
+  name: string;
+  motivo: MotivoDeParada;
+  total: number;
+  /** Amostra: a lista é cortada por grupo, e `total` é o número de verdade. */
+  produtos: ProdutoParado[];
+}
+
+export interface ProdutosParados {
+  total: number;
+  grupos: GrupoParado[];
+}
+
 export interface AdminState {
   /** Taxonomia de categorias, para os seletores do painel. */
   menu: MenuCategory[];

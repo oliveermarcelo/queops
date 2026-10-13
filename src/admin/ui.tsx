@@ -16,9 +16,12 @@ export const fmtDate = (iso: string | null | undefined) =>
     ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
     : '—';
 
-export function Card({ children, className = '' }: { children: React.ReactNode; className?: string; key?: React.Key }) {
+export function Card(
+  { children, className = '', id }:
+  { children: React.ReactNode; className?: string; id?: string; key?: React.Key },
+) {
   return (
-    <div className={`bg-white rounded-xl border border-gray-200 shadow-sm ${className}`}>
+    <div id={id} className={`bg-white rounded-xl border border-gray-200 shadow-sm ${className}`}>
       {children}
     </div>
   );

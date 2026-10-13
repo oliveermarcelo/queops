@@ -16,7 +16,7 @@ import {
   FolderTree, Link2, Link2Off, AlertTriangle, Search, Check, RefreshCw,
 } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
-import { ErpCategory } from '../types';
+import { ErpCategory, GrupoParado, MotivoDeParada, ProdutosParados } from '../types';
 import { Card, Btn, ConfirmDialog, inputCls } from '../ui';
 
 const msgDoErro = (e: unknown) =>
@@ -220,7 +220,259 @@ function EspelharDoErp() {
   );
 }
 
-export default function CategoriesAdmin() {
+/** Como cada motivo se apresenta e o que ele promete. */
+const MOTIVO: Record<MotivoDeParada, { rotulo: string; cor: string }> = {
+  amarrado: { rotulo: 'já amarrado — ficaram para trás', cor: 'bg-emerald-100 text-emerald-800' },
+  pendente: { rotulo: 'falta amarrar aqui', cor: 'bg-amber-100 text-amber-800' },
+  orfao: { rotulo: 'o ERP nunca mandou esta categoria', cor: 'bg-red-100 text-red-800' },
+  sem_codigo: { rotulo: 'vieram sem código', cor: 'bg-gray-200 text-gray-700' },
+};
+
+/**
+ * Um grupo de produtos parados, com a ação que resolve AQUELE caso.
+ *
+ * O botão muda com o motivo porque o caminho muda com o motivo — e era isso
+ * que faltava. O aviso antigo tinha um texto só, "amarre a categoria
+ * correspondente abaixo", que valia para um dos quatro casos. Nos outros três
+ * ele mandava fazer algo que não existia para ser feito, e a pessoa ficava
+ * olhando uma lista onde não havia nada pendente.
+ */
+function GrupoDeParados({ g, onProcurar, onVerProdutos, onMudou }: {
+  g: GrupoParado;
+  onProcurar: (code: string) => void;
+  onVerProdutos: () => void;
+  onMudou: () => void;
+  key?: React.Key;
+}) {
+  const { reaplicarCodigoDoErp, registrarCodigoDoErp } = useAdmin();
+  const [abertos, setAbertos] = useState(false);
+  const [rodando, setRodando] = useState(false);
+  const [erro, setErro] = useState('');
+  const [feito, setFeito] = useState('');
+
+  const agir = async (fn: () => Promise<string>) => {
+    setErro('');
+    setFeito('');
+    setRodando(true);
+    try {
+      setFeito(await fn());
+      onMudou();
+    } catch (e) {
+      setErro(msgDoErro(e));
+    } finally {
+      setRodando(false);
+    }
+  };
+
+  const m = MOTIVO[g.motivo];
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-sm text-gray-800">
+              {g.code === '' ? 'Sem código de categoria' : `Código ${g.code}`}
+            </span>
+            {g.name !== '' && g.name !== g.code && (
+              <span className="text-sm text-gray-500">· {g.name}</span>
+            )}
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${m.cor}`}>
+              {m.rotulo}
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1.5 leading-relaxed max-w-2xl">
+            {g.motivo === 'amarrado' && (
+              <>
+                Este código já aponta para uma categoria da loja, e mesmo assim estes{' '}
+                <b>{g.total} produto(s)</b> ficaram de fora. A amarração só liberou quem estava
+                esperando no instante do clique — quem perdeu a categoria depois (porque alguém a
+                trocou para "— sem categoria —" no painel, por exemplo) não é alcançado por ela.
+              </>
+            )}
+            {g.motivo === 'pendente' && (
+              <>
+                O ERP mandou esta categoria, mas ela ainda não tem destino na loja.{' '}
+                <b>{g.total} produto(s)</b> entram na vitrine no instante em que você amarrar.
+              </>
+            )}
+            {g.motivo === 'orfao' && (
+              <>
+                O ERP mandou <b>{g.total} produto(s)</b> com este código, mas nunca mandou a
+                categoria dele. A loja não consegue amarrar um código que não conhece. Peça ao ERP
+                a carga desta categoria — ou registre o código aqui e escolha você mesma a
+                categoria da loja; quando o cadastro de verdade chegar, o nome se corrige sozinho e
+                a amarração continua valendo.
+              </>
+            )}
+            {g.motivo === 'sem_codigo' && (
+              <>
+                Estes <b>{g.total} produto(s)</b> não trazem código de categoria nenhum — ou
+                nasceram aqui no painel. Nenhuma amarração resolve: é escolher a categoria de cada
+                um em Produtos.
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="shrink-0">
+          {g.motivo === 'amarrado' && (
+            <Btn
+              disabled={rodando}
+              onClick={() => agir(async () => {
+                const n = await reaplicarCodigoDoErp(g.code);
+                return `${n} produto(s) entraram na vitrine.`;
+              })}
+            >
+              {rodando ? 'Aplicando…' : 'Colocar na vitrine agora'}
+            </Btn>
+          )}
+          {g.motivo === 'pendente' && (
+            <Btn variant="ghost" onClick={() => onProcurar(g.code)}>Ir para a amarração</Btn>
+          )}
+          {g.motivo === 'orfao' && (
+            <Btn
+              disabled={rodando}
+              onClick={() => agir(async () => {
+                const n = await registrarCodigoDoErp(g.code, g.code);
+                return `Código registrado. Agora ele aparece na lista abaixo: escolha a categoria `
+                  + `da loja e ${n} produto(s) entram na vitrine.`;
+              })}
+            >
+              {rodando ? 'Registrando…' : 'Registrar este código'}
+            </Btn>
+          )}
+          {g.motivo === 'sem_codigo' && (
+            <Btn variant="ghost" onClick={onVerProdutos}>Abrir em Produtos</Btn>
+          )}
+        </div>
+      </div>
+
+      {erro !== '' && (
+        <p className="mt-3 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {erro}
+        </p>
+      )}
+      {feito !== '' && (
+        <p className="mt-3 text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+          {feito}
+        </p>
+      )}
+
+      <button
+        onClick={() => setAbertos((v) => !v)}
+        className="mt-3 text-[11px] font-semibold text-primary-blue hover:underline"
+      >
+        {abertos ? 'Esconder os produtos' : `Ver os produtos (${g.total})`}
+      </button>
+
+      {abertos && (
+        <ul className="mt-2 space-y-1 max-h-72 overflow-y-auto pr-1">
+          {g.produtos.map((p) => (
+            <li key={p.id} className="flex items-baseline gap-2 text-xs">
+              <span className="font-mono text-[10px] text-gray-400 shrink-0">
+                {p.sku !== '' ? p.sku : p.id}
+              </span>
+              <span className="text-gray-700 truncate">{p.name}</span>
+              {!p.active && (
+                <span className="text-[10px] text-gray-400 shrink-0">(inativo)</span>
+              )}
+            </li>
+          ))}
+          {g.total > g.produtos.length && (
+            <li className="text-[11px] text-gray-400 pt-1">
+              … e mais {g.total - g.produtos.length}. A lista mostra uma amostra; a ação acima vale
+              para todos.
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * O aviso dos produtos fora da vitrine.
+ *
+ * O número sozinho era um beco sem saída: ele dizia quantos, mandava amarrar a
+ * categoria correspondente abaixo, e não dizia QUAIS nem o que fazer quando
+ * não havia nada pendente para amarrar — que foi exatamente o que aconteceu
+ * numa loja com 41 categorias do ERP, todas amarradas, e 51 produtos parados.
+ *
+ * A lista é carregada só quando se pede. A contagem é um número e já vem no
+ * estado do painel; a lista pode ter milhares de linhas no dia de uma carga
+ * errada, e ninguém deveria pagar por isso ao abrir o painel para outra coisa.
+ */
+function AvisoDeProdutosParados({ total, onProcurar, onVerProdutos }: {
+  total: number;
+  onProcurar: (code: string) => void;
+  onVerProdutos: () => void;
+}) {
+  const { fetchProdutosParados } = useAdmin();
+  const [dados, setDados] = useState<ProdutosParados | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  const carregar = async () => {
+    setCarregando(true);
+    setErro('');
+    try {
+      setDados(await fetchProdutosParados());
+    } catch (e) {
+      setErro(msgDoErro(e));
+    } finally {
+      setCarregando(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl bg-amber-50 border border-amber-200 overflow-hidden">
+      <div className="flex gap-3 p-4">
+        <AlertTriangle size={18} className="text-amber-700 shrink-0 mt-0.5" />
+        <div className="text-xs text-amber-900 leading-relaxed flex-1">
+          <b>{total} produto(s) estão sem categoria e não aparecem na vitrine.</b>{' '}
+          Eles chegaram do ERP sem um destino aqui. O motivo não é o mesmo para todos — e cada
+          motivo se resolve num lugar diferente.
+          <div className="mt-2.5">
+            <Btn variant="ghost" onClick={() => void carregar()} disabled={carregando}>
+              {carregando
+                ? 'Carregando…'
+                : dados === null ? 'Ver quais produtos' : 'Atualizar a lista'}
+            </Btn>
+          </div>
+          {erro !== '' && <p className="mt-2 font-medium text-red-700">{erro}</p>}
+        </div>
+      </div>
+
+      {dados !== null && (
+        <div className="border-t border-amber-200 bg-white/70 p-4 space-y-3">
+          {dados.grupos.length === 0 ? (
+            <p className="text-xs text-gray-500">
+              Nenhum produto parado agora. Se o número acima ainda mostra algum, atualize a lista.
+            </p>
+          ) : (
+            dados.grupos.map((g) => (
+              <GrupoDeParados
+                key={`${g.motivo}:${g.code}`}
+                g={g}
+                onProcurar={onProcurar}
+                onVerProdutos={onVerProdutos}
+                onMudou={() => void carregar()}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface CategoriesAdminProps {
+  /** Leva para Produtos já com o filtro "sem categoria" ligado. */
+  verProdutosSemCategoria: () => void;
+}
+
+export default function CategoriesAdmin({ verProdutosSemCategoria }: CategoriesAdminProps) {
   const { state } = useAdmin();
   const [busca, setBusca] = useState('');
   const [soPendentes, setSoPendentes] = useState(false);
@@ -274,18 +526,25 @@ export default function CategoriesAdmin() {
             sem log que o dono leia. Aqui ele fica visível.
           */}
           {semCategoria > 0 && (
-            <div className="flex gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
-              <AlertTriangle size={18} className="text-amber-700 shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-900 leading-relaxed">
-                <b>{semCategoria} produto(s) estão sem categoria e não aparecem na vitrine.</b>{' '}
-                Eles chegaram do ERP com um código que ainda não tem destino aqui. Amarre a
-                categoria correspondente abaixo e eles entram na loja no mesmo instante — não é
-                preciso o ERP reenviar.
-              </div>
-            </div>
+            <AvisoDeProdutosParados
+              total={semCategoria}
+              onProcurar={(code) => {
+                /*
+                 * O código vai para a busca da lista abaixo, em vez de só
+                 * dizer "procure ali". Com 41 categorias na tela, "procure o
+                 * código 0317" é mais um passo para errar.
+                 */
+                setSoPendentes(false);
+                setBusca(code);
+                document.getElementById('lista-de-codigos')?.scrollIntoView({
+                  behavior: 'smooth', block: 'start',
+                });
+              }}
+              onVerProdutos={verProdutosSemCategoria}
+            />
           )}
 
-          <Card className="p-5 space-y-4">
+          <Card className="p-5 space-y-4" id="lista-de-codigos">
             <div className="flex gap-2 flex-wrap items-center">
               <div className="relative flex-1 min-w-[200px]">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
