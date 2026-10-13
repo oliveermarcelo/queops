@@ -193,6 +193,79 @@ const semSessao = await fetch(`${BASE}/api/admin/erp-categories/parados`);
 ok(semSessao.status === 401,
   '5 · a lista é do painel: sem sessão, não sai', String(semSessao.status));
 
+// ------------------------------------------ 6. atribuição em massa ----
+
+/*
+ * O caso que nenhuma amarração resolve: produto que chegou sem código. Abrir
+ * um por um, cinquenta e uma vezes, é trabalho que ninguém termina — e a loja
+ * fica com produto invisível por semanas.
+ */
+const emLote = [produtos.semCodigo, produtos.pendente];
+const movidos = await painel.chamar('POST', '/api/admin/products/categoria', {
+  ids: emLote, category: DESTINO, subcategory: null,
+});
+ok(movidos.status === 200 && Number(movidos.json?.updated) === 2,
+  '6 · dois produtos mudam de categoria numa chamada só',
+  `${movidos.status} ${JSON.stringify(movidos.json?.updated)}`);
+
+const depoisDoLote = await q.all(
+  'SELECT id, category, category_label, pending_category_code, locked_fields FROM products WHERE id IN (?, ?)',
+  emLote,
+);
+ok(depoisDoLote.every((p) => String(p.category) === DESTINO),
+  '6 · os dois ficaram na categoria escolhida');
+ok(depoisDoLote.every((p) => String(p.category_label ?? '') !== ''),
+  '6 · com o rótulo da categoria preenchido pelo servidor',
+  JSON.stringify(depoisDoLote.map((p) => p.category_label)));
+ok(depoisDoLote.every((p) => String(p.pending_category_code) === ''),
+  '6 · e deixaram de constar como "esperando um código"');
+
+/*
+ * A decisão explícita do dono da loja: a arrumação em massa NÃO trava o campo.
+ * É um desempate provisório — no dia em que o ERP mandar o código certo, ele
+ * deve valer. Travar faria essa correção nunca chegar, e ninguém lembraria por
+ * quê meses depois.
+ */
+ok(depoisDoLote.every((p) => !String(p.locked_fields ?? '').includes('category')),
+  '6 · e a categoria NÃO fica travada: o ERP ainda pode corrigir depois',
+  JSON.stringify(depoisDoLote.map((p) => p.locked_fields)));
+
+const comFantasma = await painel.chamar('POST', '/api/admin/products/categoria', {
+  ids: [produtos.orfao, `nao-existe-${marca}`], category: DESTINO,
+});
+ok(comFantasma.status === 200
+  && Number(comFantasma.json?.updated) === 1
+  && Number(comFantasma.json?.ignored) === 1,
+  '6 · id que não existe no meio do lote não derruba os outros, e é contado à parte',
+  JSON.stringify(comFantasma.json));
+
+const categoriaInventada = await painel.chamar('POST', '/api/admin/products/categoria', {
+  ids: [produtos.orfao], category: `nao-existe-${marca}`,
+});
+ok(categoriaInventada.status === 422,
+  '6 · categoria que a loja não tem é recusada — não grava produto apontando para o nada',
+  String(categoriaInventada.status));
+
+const subErrada = await painel.chamar('POST', '/api/admin/products/categoria', {
+  ids: [produtos.orfao], category: DESTINO, subcategory: `sub-inventada-${marca}`,
+});
+ok(subErrada.status === 422,
+  '6 · subcategoria de outra categoria é recusada, e não ignorada em silêncio',
+  String(subErrada.status));
+
+const semIds = await painel.chamar('POST', '/api/admin/products/categoria', {
+  ids: [], category: DESTINO,
+});
+ok(semIds.status === 422, '6 · lista vazia é recusada', String(semIds.status));
+
+const loteSemSessao = await fetch(`${BASE}/api/admin/products/categoria`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ids: [produtos.orfao], category: DESTINO }),
+});
+ok(loteSemSessao.status === 401 || loteSemSessao.status === 419,
+  '6 · e sem sessão de painel ninguém move catálogo', String(loteSemSessao.status));
+
 // ------------------------------------------------------------ limpeza ----
 
 await q.run('DELETE FROM products WHERE id IN (?, ?, ?, ?)', [

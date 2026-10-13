@@ -211,6 +211,23 @@ export function linkErpCategory(
 }
 
 /**
+ * Move vários produtos para uma categoria de uma vez.
+ *
+ * NÃO trava a categoria contra o ERP, ao contrário do que o salvamento
+ * produto a produto faz. É decisão do dono da loja, e ela tem lógica: a
+ * arrumação em massa é um desempate provisório, feito porque o cadastro do
+ * outro lado ainda não resolveu. No dia em que o ERP mandar o código certo,
+ * ele deve valer.
+ */
+export function moverProdutosParaCategoria(
+  ids: string[],
+  category: string,
+  subcategory: string | null,
+): Promise<{ updated: number; ignored: number; products: Product[] }> {
+  return api.post('/admin/products/categoria', { ids, category, subcategory });
+}
+
+/**
  * Quais produtos estão fora da vitrine, e por quê.
  *
  * Carregado sob demanda, quando a pessoa pede para ver — e não junto do estado

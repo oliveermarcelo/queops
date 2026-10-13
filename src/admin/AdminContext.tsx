@@ -82,6 +82,14 @@ interface AdminContextValue {
   ) => Promise<number>;
 
   /**
+   * Move vários produtos para uma categoria de uma vez. Devolve quantos foram
+   * alterados. Não trava a categoria contra o ERP — ver o comentário na rota.
+   */
+  moverProdutosParaCategoria: (
+    ids: string[], category: string, subcategory: string | null,
+  ) => Promise<number>;
+
+  /**
    * Quais produtos estão fora da vitrine, agrupados pelo motivo. Sob demanda:
    * a contagem cabe no estado do painel, a lista não.
    */
@@ -423,6 +431,12 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         }
         // Quantos produtos entraram na vitrine com este clique — a tela avisa.
         return r.released;
+      },
+
+      moverProdutosParaCategoria: async (ids, category, subcategory) => {
+        const r = await store.moverProdutosParaCategoria(ids, category, subcategory);
+        if (alive.current) setState((s) => ({ ...s, products: r.products }));
+        return r.updated;
       },
 
       fetchProdutosParados: () => store.fetchProdutosParados(),

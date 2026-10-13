@@ -157,7 +157,7 @@ XXE, recusada com 415.
 Precisa da loja no ar.
 
 ```bash
-npm run teste:parados     # 20 verificações pela HTTP
+npm run teste:parados     # 30 verificações pela HTTP
 ```
 
 O painel sabia contar ("51 produtos estão sem categoria") e mandava amarrar a
@@ -179,6 +179,16 @@ porque é ela que decide onde a pessoa resolve cada um:
 Verifica também que registrar um código é restrito ao que algum produto está de
 fato esperando — sem isso a tela viraria um cadastro livre de categorias do ERP,
 e a amarração manual deixaria de ter sentido.
+
+A última parte cobre a **atribuição em massa** (`POST /admin/products/categoria`),
+que é o caminho para o caso `sem_codigo`: abrir produto por produto, cinquenta e
+uma vezes, é trabalho que ninguém termina. O teste cobra três coisas que só
+aparecem quando dá errado — categoria inexistente e subcategoria de outra
+categoria são **recusadas** (e não ignoradas em silêncio, o que colocaria dezenas
+de produtos num lugar que ninguém pediu), id inexistente no meio do lote não
+derruba os outros, e a categoria gravada **não fica travada** contra o ERP: a
+arrumação em massa é um desempate provisório, e no dia em que o `categoryCode`
+certo chegar ele deve valer.
 
 ## Ponta a ponta (Playwright)
 

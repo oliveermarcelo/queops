@@ -447,6 +447,86 @@ adminRoutes.post('/products', h(async (req, res) => {
  * depois. `?fields=price,stock` solta só os informados; sem parâmetro, solta
  * todos.
  */
+/**
+ * POST /api/admin/products/categoria — move vários produtos de uma vez.
+ *
+ * Nasceu de um caso concreto: 51 produtos chegaram do ERP sem destino e a
+ * única saída era abrir um por um. Cinquenta e uma vezes abrir, escolher,
+ * salvar, fechar — o tipo de trabalho que ninguém termina, e que por isso
+ * deixa a loja com produto invisível por semanas.
+ *
+ * Decisão explícita do dono da loja: esta gravação NÃO trava a categoria
+ * contra o ERP. O painel já trava o que é editado produto a produto (ver o
+ * comentário em POST /products), e aqui seria o contrário do que se quer — a
+ * arrumação em massa é um desempate provisório, feito porque o cadastro do
+ * outro lado ainda não resolveu. No dia em que o ERP mandar o `categoryCode`
+ * certo, ele deve valer. Travar faria essa correção nunca chegar, e ninguém
+ * lembraria por quê meses depois.
+ */
+adminRoutes.post('/products/categoria', h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+
+  const ids = Array.isArray(b.ids)
+    ? [...new Set(b.ids.map((x: unknown) => String(x ?? '').trim()).filter((x: string) => x !== ''))]
+    : [];
+  if (ids.length === 0) fail('Selecione ao menos um produto.', 422, 'invalid_batch');
+  if (ids.length > LOTE_DE_CATEGORIA) {
+    fail(`Máximo de ${LOTE_DE_CATEGORIA} produtos por vez.`, 422, 'batch_too_large');
+  }
+
+  const categoria = bodyStr(b, 'category', '', 100);
+  if (categoria === '') fail('Escolha a categoria de destino.', 422, 'invalid_category');
+  const cat = await q.one('SELECT id, name FROM categories WHERE id = ?', [categoria]);
+  if (cat === null) fail(`A loja não tem a categoria "${categoria}".`, 422, 'invalid_category');
+
+  const subPedida = bodyStr(b, 'subcategory', '', 100);
+  let sub: Row | null = null;
+  if (subPedida !== '') {
+    sub = await q.one('SELECT id, name FROM subcategories WHERE parent_id = ? AND id = ?', [
+      categoria, subPedida,
+    ]);
+    /*
+     * Subcategoria que não pertence à categoria é recusada, e não ignorada em
+     * silêncio. Gravar só a mãe "porque a filha não existe" deixaria dezenas
+     * de produtos num lugar que ninguém pediu, e a tela diria que deu certo.
+     */
+    if (sub === null) {
+      fail(`A categoria "${cat.name}" não tem essa subcategoria.`, 422, 'invalid_category');
+    }
+  }
+
+  /*
+   * `pending_category_code` é zerado: o produto deixou de estar esperando.
+   *
+   * Sem isso ele continuaria contando como "produto aguardando o código X" na
+   * resposta da API v1 — e o ERP leria que a loja ainda depende de uma
+   * amarração que já não faz diferença nenhuma para ele.
+   */
+  const alterados = await q.run(
+    `UPDATE products
+        SET category = ?, subcategory = ?, category_label = ?, pending_category_code = ''
+      WHERE id IN (${placeholders(ids.length)})`,
+    [categoria, sub === null ? null : String(sub.id), String(sub?.name ?? cat.name), ...ids],
+  );
+
+  jsonOk(res, {
+    ok: true,
+    updated: alterados,
+    /** Pedidos que não existiam: a tela avisa em vez de somar errado. */
+    ignored: ids.length - alterados,
+    // Inativo entra: a tela do painel lista os dois, e sumir com metade da
+    // seleção depois de aplicar pareceria que a gravação falhou.
+    products: await fetchProducts({ onlyActive: false }),
+  });
+}));
+
+/**
+ * Teto por chamada. Alto o bastante para o catálogo inteiro da loja caber numa
+ * tacada, baixo o bastante para a consulta não virar um `IN (...)` sem fim.
+ */
+const LOTE_DE_CATEGORIA = 2000;
+
 adminRoutes.delete('/products/:id/locks', h(async (req, res) => {
   await requireAdmin(req);
   const pedidos = queryStr(req, 'fields', '', 255)

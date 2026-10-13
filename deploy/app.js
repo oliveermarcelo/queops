@@ -4409,6 +4409,46 @@ adminRoutes.post("/products", h(async (req, res) => {
   const galeria = (await galeriasDe([id])).get(id);
   jsonOk(res, { product: productRowToApi(row, void 0, galeria), lockedFields: travados });
 }));
+adminRoutes.post("/products/categoria", h(async (req, res) => {
+  await requireAdmin(req);
+  const b = body(req);
+  const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map((x) => String(x ?? "").trim()).filter((x) => x !== ""))] : [];
+  if (ids.length === 0) fail("Selecione ao menos um produto.", 422, "invalid_batch");
+  if (ids.length > LOTE_DE_CATEGORIA) {
+    fail(`M\xE1ximo de ${LOTE_DE_CATEGORIA} produtos por vez.`, 422, "batch_too_large");
+  }
+  const categoria = bodyStr(b, "category", "", 100);
+  if (categoria === "") fail("Escolha a categoria de destino.", 422, "invalid_category");
+  const cat = await q.one("SELECT id, name FROM categories WHERE id = ?", [categoria]);
+  if (cat === null) fail(`A loja n\xE3o tem a categoria "${categoria}".`, 422, "invalid_category");
+  const subPedida = bodyStr(b, "subcategory", "", 100);
+  let sub = null;
+  if (subPedida !== "") {
+    sub = await q.one("SELECT id, name FROM subcategories WHERE parent_id = ? AND id = ?", [
+      categoria,
+      subPedida
+    ]);
+    if (sub === null) {
+      fail(`A categoria "${cat.name}" n\xE3o tem essa subcategoria.`, 422, "invalid_category");
+    }
+  }
+  const alterados = await q.run(
+    `UPDATE products
+        SET category = ?, subcategory = ?, category_label = ?, pending_category_code = ''
+      WHERE id IN (${placeholders(ids.length)})`,
+    [categoria, sub === null ? null : String(sub.id), String(sub?.name ?? cat.name), ...ids]
+  );
+  jsonOk(res, {
+    ok: true,
+    updated: alterados,
+    /** Pedidos que não existiam: a tela avisa em vez de somar errado. */
+    ignored: ids.length - alterados,
+    // Inativo entra: a tela do painel lista os dois, e sumir com metade da
+    // seleção depois de aplicar pareceria que a gravação falhou.
+    products: await fetchProducts({ onlyActive: false })
+  });
+}));
+var LOTE_DE_CATEGORIA = 2e3;
 adminRoutes.delete("/products/:id/locks", h(async (req, res) => {
   await requireAdmin(req);
   const pedidos = queryStr(req, "fields", "", 255).split(",").map((x) => x.trim()).filter((x) => x !== "");

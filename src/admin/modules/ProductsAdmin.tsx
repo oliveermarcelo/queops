@@ -6,7 +6,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   Plus, Search, Pencil, Trash2, X, ImagePlus, EyeOff, RotateCcw,
-  ChevronLeft, ChevronRight, Star, FolderX,
+  ChevronLeft, ChevronRight, Star, FolderX, FolderInput,
 } from 'lucide-react';
 import { MenuCategory, Product } from '../../types';
 import { useAdmin } from '../AdminContext';
@@ -41,7 +41,7 @@ interface ProductsAdminProps {
 }
 
 export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAdminProps) {
-  const { state, upsertProduct, deleteProduct } = useAdmin();
+  const { state, upsertProduct, deleteProduct, moverProdutosParaCategoria } = useAdmin();
   const [confirming, setConfirming] = useState<Product | null>(null);
   const [apagando, setApagando] = useState<Product | null>(null);
   /*
@@ -56,6 +56,16 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Product | null>(null);
   const [soSemCategoria, setSoSemCategoria] = useState(apenasSemCategoria);
+  const [marcados, setMarcados] = useState<string[]>([]);
+  /*
+   * O resultado do lote vive AQUI, e não dentro da barra.
+   *
+   * A barra some quando a seleção é limpa — que é exatamente o que acontece
+   * depois de aplicar. Com a mensagem dentro dela, mover nove produtos
+   * esvaziava a tela sem dizer nada, e o que a pessoa via era uma lista vazia
+   * logo depois de clicar: a leitura natural é que algo quebrou.
+   */
+  const [aviso, setAviso] = useState('');
 
   /*
    * Produto sem categoria é invisível na loja, e era invisível TAMBÉM aqui:
@@ -75,6 +85,30 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
       (p) => p.name.toLowerCase().includes(q) || p.categoryLabel.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
     );
   }, [state.products, semCategoria, soSemCategoria, query]);
+
+  /*
+   * A seleção guarda IDS, e não produtos.
+   *
+   * Depois de mover um lote, a lista inteira é substituída pela resposta do
+   * servidor: objetos novos, com as categorias já certas. Guardar os objetos
+   * deixaria a barra mostrando o estado velho — e, pior, reaplicaria a ação
+   * sobre cópias que já não existem.
+   */
+  const marcadosVisiveis = useMemo(
+    () => filtered.filter((p) => marcados.includes(p.id)),
+    [filtered, marcados],
+  );
+  const todosMarcados = filtered.length > 0 && marcadosVisiveis.length === filtered.length;
+
+  const alternar = (id: string) => {
+    setAviso('');
+    setMarcados((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+  };
+  const alternarTodos = () => {
+    setAviso('');
+    const ids = filtered.map((p) => p.id);
+    setMarcados((m) => (todosMarcados ? m.filter((x) => !ids.includes(x)) : [...new Set([...m, ...ids])]));
+  };
 
   const save = (p: Product) => {
     const toSave: Product = {
@@ -102,7 +136,7 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
           marcando "0 sem categoria" é ruído; quando ele aparece, é porque há
           produto fora da vitrine, e aí o número já é a informação.
         */}
-        {semCategoria.length > 0 && (
+        {(semCategoria.length > 0 || soSemCategoria) && (
           <Btn
             variant={soSemCategoria ? 'primary' : 'ghost'}
             onClick={() => setSoSemCategoria((v) => !v)}
@@ -116,12 +150,44 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
         <Btn onClick={() => setEditing(blank())}><Plus size={16} /> Novo produto</Btn>
       </div>
 
-      {soSemCategoria && (
+      {soSemCategoria && semCategoria.length > 0 && (
         <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 leading-relaxed">
-          <b>Estes produtos não aparecem na vitrine.</b> Abra cada um e escolha a categoria — ou,
-          se eles vieram do ERP com um código de categoria, resolva de uma vez em
-          <b> Categorias do ERP</b>, que amarra o código e libera todos juntos.
+          <b>Estes produtos não aparecem na vitrine.</b> Marque os que vão para a mesma categoria e
+          use a barra que aparece — ou, se eles vieram do ERP com um código de categoria, resolva de
+          uma vez em <b>Categorias do ERP</b>, que amarra o código e libera todos juntos.
         </div>
+      )}
+
+      {aviso !== '' && (
+        <div className="flex items-center justify-between gap-3 flex-wrap text-xs font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+          <span>{aviso}</span>
+          {/*
+            O caminho de volta.
+            Depois de arrumar os últimos, o filtro continua ligado e a lista
+            fica vazia — sem este botão a tela vira um beco: uma tabela sem
+            nada e nenhum jeito óbvio de sair dela.
+          */}
+          {soSemCategoria && semCategoria.length === 0 && (
+            <Btn variant="ghost" onClick={() => { setSoSemCategoria(false); setAviso(''); }}>
+              Ver todos os produtos
+            </Btn>
+          )}
+        </div>
+      )}
+
+      {marcados.length > 0 && (
+        <BarraDeCategoria
+          quantos={marcados.length}
+          menu={state.menu}
+          onLimpar={() => setMarcados([])}
+          onMover={async (categoria, sub) => {
+            const n = await moverProdutosParaCategoria(marcados, categoria, sub);
+            const nome = state.menu.find((c) => c.id === categoria)?.name ?? categoria;
+            setAviso(`${n} produto(s) movidos para "${nome}". Já aparecem na vitrine.`);
+            setMarcados([]);
+            return n;
+          }}
+        />
       )}
 
       <Card className="overflow-hidden">
@@ -129,6 +195,22 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-gray-400 uppercase tracking-wider border-b border-gray-100 bg-gray-50/50">
+                <th className="py-3 pl-4 pr-0 w-10">
+                  {/*
+                    Marca tudo o que o FILTRO está mostrando, e não o catálogo
+                    inteiro. É a diferença entre "os 51 sem categoria" e "os
+                    1.400 produtos" — e a segunda leitura, num clique de
+                    cabeçalho, seria um estrago difícil de desfazer.
+                  */}
+                  <input
+                    type="checkbox"
+                    checked={todosMarcados}
+                    onChange={alternarTodos}
+                    disabled={filtered.length === 0}
+                    title={todosMarcados ? 'Desmarcar os desta lista' : 'Marcar os desta lista'}
+                    className="w-4 h-4 rounded border-gray-300 text-primary-blue focus:ring-primary-blue/30 cursor-pointer"
+                  />
+                </th>
                 <th className="py-3 px-4 font-semibold">Produto</th>
                 <th className="py-3 px-4 font-semibold">Categoria</th>
                 <th className="py-3 px-4 font-semibold text-center">Estoque</th>
@@ -144,6 +226,14 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
                     p.active === false ? 'bg-gray-50/60' : ''
                   }`}
                 >
+                  <td className="py-2.5 pl-4 pr-0">
+                    <input
+                      type="checkbox"
+                      checked={marcados.includes(p.id)}
+                      onChange={() => alternar(p.id)}
+                      className="w-4 h-4 rounded border-gray-300 text-primary-blue focus:ring-primary-blue/30 cursor-pointer"
+                    />
+                  </td>
                   <td className="py-2.5 px-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -227,7 +317,11 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={5} className="py-10 text-center text-gray-400 text-sm">Nenhum produto encontrado.</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-gray-400 text-sm">
+                  {soSemCategoria && semCategoria.length === 0
+                    ? 'Nenhum produto sem categoria — está tudo na vitrine.'
+                    : 'Nenhum produto encontrado.'}
+                </td></tr>
               )}
             </tbody>
           </table>
@@ -289,6 +383,114 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
             setApagando(null);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * A barra que move os produtos marcados para uma categoria.
+ *
+ * Nasceu de um caso concreto: 51 produtos chegaram do ERP sem destino, e a
+ * única saída era abrir um por um — abrir, escolher, salvar, fechar,
+ * cinquenta e uma vezes. É o tipo de trabalho que ninguém termina, e por isso
+ * a loja fica com produto invisível por semanas.
+ *
+ * A barra aparece só com algo marcado, e some ao terminar. Um painel com uma
+ * faixa de ação permanente ensina a ignorá-la.
+ */
+function BarraDeCategoria({ quantos, menu, onLimpar, onMover }: {
+  quantos: number;
+  menu: MenuCategory[];
+  onLimpar: () => void;
+  onMover: (categoria: string, subcategoria: string | null) => Promise<number>;
+}) {
+  const [categoria, setCategoria] = useState('');
+  const [sub, setSub] = useState('');
+  const [rodando, setRodando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  const subcategorias = useMemo(
+    () => menu.find((c) => c.id === categoria)?.subcategories ?? [],
+    [menu, categoria],
+  );
+
+  /*
+   * O `inputCls` do painel é `w-full`, o que aqui jogaria os botões para a
+   * linha de baixo e faria a barra parecer um formulário. Numa barra de ação,
+   * escolher e aplicar precisam ficar lado a lado.
+   */
+  const seletorCls =
+    'border border-gray-200 rounded-lg py-2.5 px-3 text-sm bg-white focus:outline-none '
+    + 'focus:ring-2 focus:ring-primary-blue/20 focus:border-primary-blue';
+
+  const mover = async () => {
+    setErro('');
+    setRodando(true);
+    try {
+      await onMover(categoria, sub === '' ? null : sub);
+      setCategoria('');
+      setSub('');
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Não foi possível mover os produtos.');
+    } finally {
+      setRodando(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-primary-blue/20 bg-primary-blue/5 px-4 py-3">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="inline-flex items-center gap-2 text-sm font-bold text-primary-blue">
+          <FolderInput size={16} /> {quantos} selecionado(s)
+        </span>
+
+        <select
+          value={categoria}
+          onChange={(e) => { setCategoria(e.target.value); setSub(''); }}
+          className={`${seletorCls} min-w-[190px]`}
+        >
+          <option value="">Mover para…</option>
+          {/* `featured` fica de fora: Promoções e Novidades são vitrines, não
+              categorias de catálogo — produto não "mora" nelas. */}
+          {menu.filter((c) => !c.featured).map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+
+        {subcategorias.length > 0 && (
+          <select
+            value={sub}
+            onChange={(e) => setSub(e.target.value)}
+            className={`${seletorCls} min-w-[170px]`}
+          >
+            <option value="">— sem subcategoria —</option>
+            {subcategorias.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+        )}
+
+        <Btn disabled={categoria === '' || rodando} onClick={() => void mover()}>
+          {rodando ? 'Movendo…' : 'Aplicar'}
+        </Btn>
+        <Btn variant="ghost" onClick={onLimpar}>Limpar seleção</Btn>
+      </div>
+
+      {/*
+        O aviso é curto e fica sempre, não só na primeira vez.
+        Quem arruma categoria à mão precisa saber que o ERP continua mandando
+        nesse campo — senão, no dia em que o produto voltar para outro lugar, a
+        conclusão é "o painel não salvou".
+      */}
+      <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+        Isto resolve agora, mas <b>não trava contra o ERP</b>: se ele mandar depois um
+        <code className="mx-1">categoryCode</code> para estes produtos, a categoria dele vale.
+        Para fixar um produto de vez, edite-o e salve — aí o campo passa a resistir.
+      </p>
+
+      {erro !== '' && (
+        <p className="mt-2 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {erro}
+        </p>
       )}
     </div>
   );
