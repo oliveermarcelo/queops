@@ -2,13 +2,15 @@
 
 Para: equipe de desenvolvimento do UNO ERP
 De: Quéops Pirâmides (loja B2C)
-Data: 13 de outubro de 2026 — **manual de integração na versão 3.3**
+Data: 14 de outubro de 2026 — **manual de integração na versão 3.4**
 
 > **Nota antes de tudo:** a solicitação cita "manual hoje v3.0". A versão atual é a **3.3**. A
 > 3.1 trouxe o contrato completo do pedido (endereço, transportadora, eixos de status, CPF sem
 > máscara), a **3.2 trouxe o capítulo de nota fiscal** — `POST /orders/{id}/invoices` já está em
-> produção — e a 3.3 é esta, com o capítulo 4.7 de variações. Vale conferir se vocês estão
-> lendo o PDF atualizado; ele acompanha este documento.
+> produção —, a 3.3 trouxe o capítulo 4.7 de variações e a 3.4 fecha o que faltava: os campos
+> novos no exemplo do `GET /products`, o caso do **código de categoria que nunca veio como
+> categoria** (seção 4.1) e os passos de variação no checklist de homologação. Vale conferir se
+> vocês estão lendo o PDF atualizado; ele acompanha este documento.
 
 **Resumo:** o pedido foi aceito como desenhado e **está implementado**. O contrato de escrita
 não mudou em nada. O `GET /products` ganhou três campos de leitura, como vocês pediram. A única
@@ -177,8 +179,9 @@ aparecer ao selecioná-la"). Uma galeria curada à parte duplicaria fotos que j�
 envelheceria sozinha. Se fizer falta, é incremental.
 
 **4. OpenAPI.** O projeto não tem arquivo OpenAPI: a documentação da API é o PDF do manual, que
-foi atualizado para a 3.3 com o capítulo 4.7. Se vocês quiserem um `openapi.yaml` para gerar
-cliente, é um pedido à parte e dá para fazer.
+foi atualizado para a 3.4 — capítulo 4.7 (variações), campos novos no exemplo do `GET /products`,
+o caso do código órfão na seção 4.1 e cinco passos novos no checklist de homologação. Se vocês
+quiserem um `openapi.yaml` para gerar cliente, é um pedido à parte e dá para fazer.
 
 ---
 

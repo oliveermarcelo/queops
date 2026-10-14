@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 3.3 — 13 de outubro de 2026'
+VERSAO = 'Versão 3.4 — 14 de outubro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -428,6 +428,38 @@ PUT /api/v1/categories/0004
         'Não muda nada no que o ERP envia: continua sendo '
         '<font face="Courier">categoryCode</font> no produto.', P))
 
+    add(Paragraph('Código que nunca veio como categoria', H3))
+    add(Paragraph(
+        'Existe um caso que não é "pendente de amarração" e que, por um tempo, ficou sem saída: '
+        'o produto chega com um <font face="Courier">categoryCode</font> que <b>nunca</b> foi '
+        'enviado em nenhuma carga de categorias. A loja não consegue amarrar um código que não '
+        'conhece, e o produto fica fora da vitrine sem que exista nada na tela para amarrar.', P))
+    add(Spacer(1, 4))
+    add(aviso(
+        'Como reconhecer isso do lado de vocês',
+        'A resposta do PUT do produto distingue os dois casos em '
+        '<font face="Courier">warnings</font>, e a diferença importa:<br/><br/>'
+        '• <i>"…ainda não está amarrado a uma categoria da loja"</i> → o código existe aqui, falta '
+        'a decisão humana. Nada a fazer do lado de vocês.<br/>'
+        '• <i>"…não veio em nenhuma carga de categorias"</i> → <b>o cadastro de categorias do ERP '
+        'está incompleto</b> para aquele código. Mande '
+        '<font face="Courier">PUT /api/v1/categories/{code}</font> e o produto entra sozinho.'))
+    add(Spacer(1, 6))
+    add(Paragraph(
+        'A loja passou a ter uma saída própria para não ficar refém disso: em Painel → Categorias '
+        'do ERP, o dono vê a lista dos produtos parados <b>agrupada pelo motivo</b> e pode '
+        '<b>registrar o código órfão</b> à mão, dando a ele um destino na vitrine. Esse registro é '
+        'um provisório declarado: ele nasce com o próprio código como nome, e no instante em que a '
+        'carga de categorias de vocês chegar, o nome é corrigido e <b>a amarração é preservada</b> '
+        '— a carga nunca toca na amarração. Não é motivo para deixar de mandar a categoria.', P))
+    add(Spacer(1, 6))
+    add(Paragraph(
+        'Uma consequência prática para quem lê <font face="Courier">productsWaiting</font>: o dono '
+        'da loja também pode atribuir categoria a vários produtos de uma vez pelo painel. Quando '
+        'isso acontece, eles deixam de estar esperando e o contador cai <b>sem</b> que nenhuma '
+        'amarração de código tenha sido feita. O número continua respondendo a pergunta certa — '
+        '"quantos produtos ainda dependem deste código" —, só não serve como registro histórico.', P))
+
     for parte in endpoint('GET', '/categories/{code}', 'O estado de um código só — consulta barata para conferir o cache.'):
         add(parte)
     add(bloco("""
@@ -495,11 +527,22 @@ PUT /api/v1/categories/0004/link
       "weightLabel": "Base 15cm · cobre",   // só texto de vitrine; não é peso
       "tag": "mais vendido",                // opcional
       "highlight": true,                    // opcional
-      "active": true
+      "active": true,
+      "pendingReview": false,               // retido p/ conferencia? (secao 4.7)
+      "groupCode": null,                    // grupo de variacoes, ou null
+      "groupName": null,
+      "options": []                         // [{name,value,position}] se agrupado
     }
   ]
 }
 """))
+    add(Paragraph(
+        'Os quatro últimos campos são <b>somente leitura</b> e entraram na 3.3 — '
+        '<font face="Courier">pendingReview</font>, <font face="Courier">groupCode</font>, '
+        '<font face="Courier">groupName</font> e <font face="Courier">options</font>. Eles contam '
+        'o que a loja fez com o produto depois que ele chegou: se está retido para conferência e '
+        'se pertence a um grupo de variações. Mandá-los numa gravação não tem efeito. A seção 4.7 '
+        'explica os dois assuntos.', P))
     add(Spacer(1, 6))
     add(aviso(
         'MUDOU NA 2.3: weight é número em quilos, e stock aceita fração',
@@ -828,7 +871,7 @@ PATCH /api/v1/orders/QP-000142
         'Mudar o status para <font face="Courier">canceled</font> por esta rota <b>não</b> devolve '
         'estoque nem estorna cobrança — ela só grava o status. O cancelamento com devolução de '
         'estoque acontece no fluxo de pagamento da loja. Cancelamento originado no ERP deve, por '
-        'ora, ser combinado por fora; a seção 7.6 propõe o endpoint que faz a coisa completa.'))
+        'ora, ser combinado por fora; a seção 7.3 propõe o endpoint que faz a coisa completa.'))
 
     for parte in endpoint('GET', '/customers', 'Clientes com contagem de pedidos e total gasto. Limite de 500, sem paginação.'):
         add(parte)
@@ -1354,7 +1397,17 @@ X-Queops-Signature: t=1787061681,v1=<hmac_sha256(segredo, "t.corpo")>
              '200, sem duplicata — e as URLs anteriores param de responder'],
             ['13c', 'Abrir a xmlUrl sem a chave de API',
              '401; com a conta do comprador dono do pedido, 200'],
-            ['14', 'Revogar a chave no painel e repetir o passo 2',
+            ['14', 'Criar um produto novo pela API',
+             '201 com pendingReview:true e o aviso da retenção em warnings'],
+            ['14b', 'Procurá-lo no GET /products',
+             'Aparece normalmente — a reconciliação de vínculo não é afetada'],
+            ['15', 'Agrupar duas variações no painel e ler o GET /products',
+             'Lista continua plana; cada uma traz groupCode, groupName e options'],
+            ['15b', 'PUT /products/{id} mandando groupCode',
+             '200, o campo é IGNORADO e o aviso vem em warnings'],
+            ['15c', 'Comprar duas variações do mesmo grupo e ler GET /orders/{id}',
+             'Duas linhas, com o SKU de cada variação; o código do grupo em lugar nenhum'],
+            ['16', 'Revogar a chave no painel e repetir o passo 2',
              '401 imediato'],
         ],
         [8 * mm, 82 * mm, 75 * mm],
