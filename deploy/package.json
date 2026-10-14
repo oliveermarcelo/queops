@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node app.js",
     "migrar": "node migrate.js",
-    "diagnostico": "node diagnostico.js"
+    "diagnostico": "node diagnostico.js",
+    "zerar": "node zerar.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

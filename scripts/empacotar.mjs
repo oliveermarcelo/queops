@@ -8,6 +8,7 @@
  *   deploy/app.js          → o servidor inteiro num arquivo (entrada da aplicação)
  *   deploy/migrate.js      → instalador do banco, rodado uma vez pelo SSH
  *   deploy/diagnostico.js  → checagem da instalação, para quando algo não sobe
+ *   deploy/zerar.js        → esvazia catálogo, pedidos e clientes (simula por padrão)
  *   deploy/package.json    → só as 4 dependências de runtime, para o npm install
  *   deploy/public/         → a vitrine compilada (index.html, assets, imagens)
  *   deploy/db/             → schema.sql e catalog.json, usados pelo migrate
@@ -84,7 +85,7 @@ mkdirSync(out, { recursive: true });
  * investigar um erro de produção, o rastro de pilha já traz os nomes das
  * funções — o build usa `keepNames`.
  */
-for (const f of ['app.js', 'migrate.js', 'diagnostico.js']) {
+for (const f of ['app.js', 'migrate.js', 'diagnostico.js', 'zerar.js']) {
   const src = resolve(build, f);
   if (existsSync(src)) cpSync(src, resolve(out, f));
 }
@@ -131,6 +132,7 @@ writeFileSync(
         start: 'node app.js',
         migrar: 'node migrate.js',
         diagnostico: 'node diagnostico.js',
+        zerar: 'node zerar.js',
       },
       dependencies,
     },

@@ -97,6 +97,7 @@ quiser. Qualquer arquivo pode ser trocado à mão nas pastas acima.
 | `npm run gerar:sitemap` | Gera `public/sitemap.xml` a partir do catálogo |
 | `npm run empacotar` | Monta a pasta `deploy/` pronta para subir |
 | `npm run diagnostico` | Confere ambiente, banco, tabelas e catálogo |
+| `npm run zerar` | Esvazia catálogo, pedidos e clientes (simula por padrão) |
 | `npm run teste` | Testes de preço e de pagamento (`node --test`, sem banco) |
 | `npm run teste:pagamento` | Travas de pagamento contra um MySQL de verdade |
 | `npm run teste:cobranca` | Checkout pela HTTP: nenhum pedido sem cobrança |

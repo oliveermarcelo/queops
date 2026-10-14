@@ -76,12 +76,44 @@ async function cotar(itens, extra = {}) {
   return r.json ?? {};
 }
 
-// Um produto ativo qualquer, descoberto em tempo de execução: id escrito à mão
-// quebra o teste sempre que o catálogo do ambiente muda.
+/*
+ * O teste CRIA a peça que vai cotar, em vez de garimpar uma no catálogo.
+ *
+ * A versão anterior pegava "um produto ativo qualquer" do ambiente, e isso
+ * funcionava até o dia em que o ambiente ficava vazio — depois de um
+ * `zerar.js`, ou numa instalação nova. O teste então falhava com "não há
+ * produto ativo para cotar", que não é defeito nenhum do desconto do Pix:
+ * é o teste reclamando de um pressuposto que ele mesmo podia garantir.
+ */
+const PRODUTO_DO_TESTE = `pix-min-${Date.now()}`;
+{
+  const admin = cliente();
+  await admin.sessao();
+  await admin.chamar('POST', '/api/admin/login', {
+    email: process.env.ADMIN_EMAIL ?? 'admin@queopspiramides.com.br',
+    password: process.env.ADMIN_PASS ?? 'DemoQueops2026!',
+  });
+  await admin.sessao();
+  const categoria = (await (await fetch(`${BASE}/api/catalog`)).json()).menu?.[0]?.id ?? '';
+  const r = await admin.chamar('POST', '/api/admin/products', {
+    id: PRODUTO_DO_TESTE,
+    name: 'Peça do teste de Pix',
+    price: 120,
+    stock: 50,
+    weight: 0.5,
+    category: categoria,
+    categoryLabel: categoria,
+  });
+  if (r.status !== 200) {
+    console.log('FALHA não consegui criar o produto do teste', r.status, JSON.stringify(r.json));
+    process.exit(1);
+  }
+}
+
 const catalogo = await (await fetch(`${BASE}/api/products`)).json();
-const produto = (catalogo.products ?? []).find((p) => p.active !== false && Number(p.price) > 0);
+const produto = (catalogo.products ?? []).find((p) => p.id === PRODUTO_DO_TESTE);
 if (produto === undefined) {
-  console.log('FALHA não há produto ativo para cotar');
+  console.log('FALHA o produto do teste não apareceu no catálogo');
   process.exit(1);
 }
 
@@ -196,5 +228,17 @@ try {
 }
 
 await closePool();
+// Tira a peça do teste da vitrine — ela não é catálogo de verdade.
+{
+  const admin = cliente();
+  await admin.sessao();
+  await admin.chamar('POST', '/api/admin/login', {
+    email: process.env.ADMIN_EMAIL ?? 'admin@queopspiramides.com.br',
+    password: process.env.ADMIN_PASS ?? 'DemoQueops2026!',
+  });
+  await admin.sessao();
+  await admin.chamar('DELETE', `/api/admin/products/${PRODUTO_DO_TESTE}?definitivo=1`);
+}
+
 console.log(falhas === 0 ? '\ntodos os testes passaram' : `\n${falhas} falha(s)`);
 process.exit(falhas === 0 ? 0 : 1);

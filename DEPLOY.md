@@ -298,6 +298,23 @@ O roteiro de teste com os cartões que forçam aprovação e recusa está em
   Rode o `migrate.js` de novo se o esquema mudou — ele adiciona as colunas que
   faltarem, sem apagar dados.
 
+  Para **esvaziar a loja** (catálogo, pedidos e clientes) antes de uma carga de
+  verdade, existe o `zerar.js`. Ele **simula por padrão**:
+
+  ```bash
+  node zerar.js              # conta o que seria apagado e NÃO apaga nada
+  node zerar.js --confirmo   # apaga
+  ```
+
+  Ele imprime o nome do banco antes de agir — confira. Preserva usuários do
+  painel, credenciais das integrações, configurações, chaves de API, webhooks e
+  cupons; apaga catálogo, pedidos, clientes, carrinhos e sessões, e zera o
+  contador de pedidos. **Faça o backup do banco antes:** é a operação mais
+  destrutiva do projeto e não tem desfazer.
+
+  As fotos em `midia/` e as notas em `notas/` **não** são apagadas por ele, de
+  propósito: elas não entram no dump do banco, então não há de onde voltar.
+
   > **Nunca apague a pasta `midia/` antes de subir a versão nova.** É onde
   > ficam as fotos enviadas pelo painel, e ela não vai no pacote — apagá-la
   > deixa todos os produtos cadastrados à mão sem imagem, sem jeito de

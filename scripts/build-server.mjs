@@ -3,7 +3,7 @@
  *
  *   node scripts/build-server.mjs
  *
- * Saída: `.build/app.js`, `migrate.js` e `diagnostico.js` — CommonJS, porque é o formato
+ * Saída: `.build/app.js`, `migrate.js`, `diagnostico.js` e `zerar.js` — CommonJS, porque é o formato
  * que o Passenger da Hostinger carrega sem exigir "type": "module" no
  * package.json do pacote.
  *
@@ -31,6 +31,7 @@ await build({
     app: resolve(root, 'server/src/index.ts'),
     migrate: resolve(root, 'server/src/migrate.ts'),
     diagnostico: resolve(root, 'server/src/diagnostico.ts'),
+    zerar: resolve(root, 'server/src/zerar.ts'),
   },
   outdir: out,
   bundle: true,

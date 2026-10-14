@@ -318,5 +318,17 @@ ok(semCodigo.json?.product?.categoryCode !== COD_PUL,
 await erp('PUT', `/api/v1/products/${produtoId}`, { active: false });
 await painel.chamar('PATCH', `/api/admin/api-keys/${chave.json?.id}`, { revoked: true });
 
+
+/*
+ * DEVOLVE A RETENÇÃO AO PADRÃO DA LOJA.
+ *
+ * A primeira versão deste desligamento não tinha esta parte, e o efeito foi
+ * exatamente o que se espera: o teste rodava, passava, e deixava a loja com a
+ * retenção desligada — o teste SEGUINTE, que cobra o produto novo nascendo
+ * retido, falhava sem ter nada de errado. Teste que mexe em configuração
+ * global e não a devolve não quebra a si mesmo: quebra o vizinho.
+ */
+await painel.chamar('PUT', '/api/admin/settings', { holdNewProducts: true });
+
 console.log(falhas === 0 ? '\ntodos os testes passaram' : `\n${falhas} falha(s)`);
 process.exit(falhas === 0 ? 0 : 1);
