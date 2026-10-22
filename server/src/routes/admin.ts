@@ -1123,6 +1123,30 @@ adminRoutes.get('/melhorenvio/servicos', h(async (req, res) => {
   jsonOk(res, { opcoes, selecionados: servicosSelecionados(creds), erro });
 }));
 
+/**
+ * GET /api/admin/envia/servicos — transportadoras que a conta da Envia oferece.
+ *
+ * Mesma ideia do endpoint do Melhor Envio, e aqui ela carrega um peso extra: a
+ * documentação pública da Envia não diz quais transportadoras ela opera no
+ * Brasil. Esta chamada é a única coisa que responde isso — e responde com a
+ * conta real da loja, que é o que importa.
+ */
+adminRoutes.get('/envia/servicos', h(async (req, res) => {
+  await requireAdmin(req);
+  const { credsFrom, amostraDeServicos, servicosSelecionados, problemaNasCredenciais } =
+    await import('../envia.ts');
+  const creds = credsFrom(await integrationSecrets('envia'));
+
+  const falta = problemaNasCredenciais(creds);
+  if (falta !== '') {
+    jsonOk(res, { opcoes: [], selecionados: [], erro: falta });
+    return;
+  }
+
+  const { opcoes, erro } = await amostraDeServicos(creds);
+  jsonOk(res, { opcoes, selecionados: servicosSelecionados(creds), erro });
+}));
+
 // POST /api/admin/whatsapp/test — envia uma mensagem de teste pelo provedor ativo
 adminRoutes.post('/whatsapp/test', h(async (req, res) => {
   await requireAdmin(req);
@@ -1152,17 +1176,186 @@ adminRoutes.put('/orders/:id/tracking', h(async (req, res) => {
   jsonOk(res, { trackingCode: code });
 }));
 
-// GET /api/admin/orders/:id/tracking — consulta os Correios e guarda o último status
+/**
+ * POST /api/admin/orders/:id/etiqueta — emite a etiqueta na Envia.
+ *
+ * ISTO GASTA DINHEIRO: a Envia debita o frete do saldo da conta. Daí as três
+ * recusas abaixo, e nenhuma é burocracia:
+ *
+ *  - pedido já com etiqueta → emitir de novo paga o frete duas vezes, e a
+ *    segunda não volta sozinha. Reimprimir usa a URL que já está guardada.
+ *  - pedido não pago → etiqueta antes do dinheiro é prejuízo com um clique.
+ *  - frete que não foi cotado pela Envia → o serviço escolhido pelo cliente
+ *    não existe lá, e emitir por outro caminho cobraria um preço diferente do
+ *    que o cliente pagou.
+ */
+adminRoutes.post('/orders/:id/etiqueta', h(async (req, res) => {
+  await requireAdmin(req);
+  const pedido = await q.one('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+  if (pedido === null) fail('Pedido não encontrado.', 404, 'not_found');
+
+  if (String(pedido.shipment_ref ?? '') !== '') {
+    fail(
+      'Este pedido já tem etiqueta emitida. Para reimprimir, use o link que está no pedido — '
+      + 'emitir de novo pagaria o frete uma segunda vez.',
+      409,
+      'label_exists',
+    );
+  }
+  if (!pedido.paid_at) {
+    fail(
+      'O pedido ainda não foi pago. Emitir a etiqueta agora paga o frete de uma venda que pode '
+      + 'não se confirmar.',
+      409,
+      'order_not_paid',
+    );
+  }
+
+  const servico = String(pedido.shipping_service_code ?? '');
+  const transportadora = String(pedido.shipping_carrier ?? '');
+  if (servico === '' || transportadora === '') {
+    fail(
+      'Este pedido não tem transportadora e serviço gravados — o frete dele não saiu de uma '
+      + 'cotação da Envia.',
+      422,
+      'invalid_shipping',
+    );
+  }
+
+  const itens = await q.all(
+    'SELECT product_id, quantity, unit_price FROM order_items WHERE order_id = ?',
+    [req.params.id],
+  );
+  const pesos = new Map<string, number>();
+  for (const linha of await q.all(
+    `SELECT id, weight_kg FROM products WHERE id IN (${placeholders(Math.max(1, itens.length))})`,
+    itens.length > 0 ? itens.map((i) => i.product_id) : [''],
+  )) {
+    pesos.set(String(linha.id), Number(linha.weight_kg) || 0);
+  }
+
+  const { credsFrom: enviaCreds, gerarEtiqueta } = await import('../envia.ts');
+  const r = await gerarEtiqueta(
+    enviaCreds(await integrationSecrets('envia')),
+    `${transportadora.toLowerCase()}|${servico.toLowerCase()}`,
+    {
+      name: String(pedido.ship_recipient ?? '') || String(pedido.customer_name ?? ''),
+      phone: String(pedido.ship_phone ?? '') || String(pedido.customer_phone ?? ''),
+      street: String(pedido.ship_street ?? ''),
+      number: String(pedido.ship_number ?? ''),
+      district: String(pedido.ship_neighborhood ?? ''),
+      city: String(pedido.ship_city ?? ''),
+      state: String(pedido.ship_state ?? ''),
+      cep: String(pedido.ship_cep ?? ''),
+    },
+    itens.map((i) => ({
+      id: String(i.product_id),
+      // O peso do produto está em QUILOS na coluna; a cotação trabalha em gramas.
+      pesoGramas: Math.round((pesos.get(String(i.product_id)) ?? 0) * 1000),
+      precoUnitario: Number(i.unit_price) || 0,
+      quantidade: Number(i.quantity) || 1,
+    })),
+  );
+  if (r.erro !== '') fail(r.erro, 422, 'label_failed');
+
+  /*
+   * A gravação acontece DEPOIS da emissão, e numa tacada só.
+   *
+   * Se o servidor cair entre a cobrança da Envia e a gravação, a loja fica com
+   * uma etiqueta paga e sem registro — e a próxima tentativa pagaria de novo.
+   * Não há transação distribuída possível aqui; o que dá para fazer é gravar
+   * imediatamente e deixar o `shipment_ref` no log de erro quando a gravação
+   * falhar, para a recuperação ser manual e possível.
+   */
+  try {
+    await q.run(
+      `UPDATE orders
+          SET shipment_ref = ?, label_provider = 'envia', label_url = ?,
+              tracking_code = CASE WHEN ? <> '' THEN ? ELSE tracking_code END,
+              tracking_url = CASE WHEN ? <> '' THEN ? ELSE tracking_url END
+        WHERE id = ?`,
+      [
+        r.envioId, r.etiquetaUrl,
+        r.rastreio, r.rastreio,
+        r.rastreioUrl, r.rastreioUrl,
+        req.params.id,
+      ],
+    );
+  } catch (e) {
+    console.error(
+      `[queops] ETIQUETA EMITIDA E NÃO GRAVADA — pedido ${String(req.params.id)}, `
+      + `envio ${r.envioId}, rastreio ${r.rastreio}, etiqueta ${r.etiquetaUrl}`,
+      e,
+    );
+    throw e;
+  }
+
+  jsonOk(res, {
+    ok: true,
+    labelUrl: r.etiquetaUrl,
+    trackingCode: r.rastreio,
+    trackingUrl: r.rastreioUrl,
+    shipmentRef: r.envioId,
+    price: r.preco,
+  });
+}));
+
+/**
+ * DELETE /api/admin/orders/:id/etiqueta — cancela o envio na Envia.
+ *
+ * O estorno segue as regras da Envia (há prazo, e etiqueta já postada não
+ * volta). A loja limpa os campos só quando o cancelamento é aceito: apagar o
+ * `shipment_ref` de um envio que continua de pé liberaria uma segunda emissão
+ * e um segundo frete.
+ */
+adminRoutes.delete('/orders/:id/etiqueta', h(async (req, res) => {
+  await requireAdmin(req);
+  const pedido = await q.one('SELECT shipment_ref FROM orders WHERE id = ?', [req.params.id]);
+  if (pedido === null) fail('Pedido não encontrado.', 404, 'not_found');
+
+  const { credsFrom: enviaCreds, cancelarEnvio } = await import('../envia.ts');
+  const r = await cancelarEnvio(
+    enviaCreds(await integrationSecrets('envia')),
+    String(pedido.shipment_ref ?? ''),
+  );
+  if (!r.ok) fail(r.erro, 422, 'cancel_failed');
+
+  await q.run(
+    `UPDATE orders SET shipment_ref = '', label_provider = '', label_url = '' WHERE id = ?`,
+    [req.params.id],
+  );
+  jsonOk(res, { ok: true });
+}));
+
+/**
+ * GET /api/admin/orders/:id/tracking — o último status do objeto.
+ *
+ * Quem responde depende de QUEM emitiu: código da Envia não se consulta na API
+ * dos Correios, e vice-versa. Antes isto chamava os Correios sempre — o que
+ * funcionava porque só existia um caminho de etiqueta, e passaria a dizer
+ * "objeto não encontrado" para todo pedido despachado pela Envia.
+ */
 adminRoutes.get('/orders/:id/tracking', h(async (req, res) => {
   await requireAdmin(req);
-  const row = await q.one('SELECT tracking_code FROM orders WHERE id = ?', [req.params.id]);
+  const row = await q.one(
+    'SELECT tracking_code, label_provider FROM orders WHERE id = ?',
+    [req.params.id],
+  );
   if (!row) fail('Pedido não encontrado.', 404, 'not_found');
 
   const code = String(row.tracking_code ?? '');
   if (code === '') jsonOk(res, { trackingCode: '', eventos: [], erro: 'Pedido sem código de rastreio.' });
 
-  const { credsFrom, rastrear } = await import('../correios.ts');
-  const { eventos, erro } = await rastrear(credsFrom(await integrationSecrets('correios')), code);
+  const porEnvia = String(row.label_provider ?? '') === 'envia';
+  const { eventos, erro } = porEnvia
+    ? await (async () => {
+      const { credsFrom: ec, rastrear: re } = await import('../envia.ts');
+      return await re(ec(await integrationSecrets('envia')), code);
+    })()
+    : await (async () => {
+      const { credsFrom, rastrear } = await import('../correios.ts');
+      return await rastrear(credsFrom(await integrationSecrets('correios')), code);
+    })();
 
   if (erro === '' && eventos.length > 0) {
     await q.run(

@@ -461,6 +461,19 @@ CREATE TABLE IF NOT EXISTS orders (
   shipping_max_days INT         NOT NULL DEFAULT 0,
   shipping_cost_owner DECIMAL(10,2) NULL,
   tracking_url    VARCHAR(300)  NOT NULL DEFAULT '',
+  -- Etiqueta emitida pelo provedor de frete (hoje, a Envia).
+  --
+  -- Emitir etiqueta GASTA DINHEIRO: o provedor debita o frete do saldo da
+  -- conta. `shipment_ref` é a prova de que já foi emitida para este pedido, e
+  -- é ela que impede a segunda emissão — etiqueta duplicada é frete pago duas
+  -- vezes, e a segunda não volta sozinha. É também o id que o cancelamento
+  -- usa do outro lado.
+  shipment_ref    VARCHAR(60)   NOT NULL DEFAULT '',
+  -- Qual provedor emitiu. Guardado porque o rastreio depende disso: código da
+  -- Envia não se consulta na API dos Correios, e vice-versa.
+  label_provider  VARCHAR(20)   NOT NULL DEFAULT '',
+  -- PDF da etiqueta, para reimprimir sem gerar outra.
+  label_url       VARCHAR(500)  NOT NULL DEFAULT '',
   -- Desconto repartido por origem: o ERP não sabe separar cupom de Pix a
   -- partir de um número só, e os dois viram lançamentos diferentes.
   discount_coupon DECIMAL(10,2) NOT NULL DEFAULT 0,

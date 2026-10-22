@@ -2,7 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Escolha das transportadoras do Melhor Envio.
+ * Escolha das transportadoras de um provedor de frete.
+ *
+ * Serve ao Melhor Envio e à Envia: as duas resolvem o mesmo problema — a conta
+ * da lojista oferece um punhado de transportadoras, e ela precisa dizer quais
+ * o cliente pode ver. Duplicar a tela por provedor garantiria que uma delas
+ * ficasse para trás na primeira correção; o que muda entre as duas é o
+ * endereço consultado e o nome que aparece no texto, e é só isso que vem por
+ * propriedade.
  *
  * A lista NÃO vem de um catálogo: vem de uma cotação de amostra (500 g para São
  * Paulo), que é a mesma chamada que o checkout faz. Então o que aparece aqui é o
@@ -38,6 +45,12 @@ interface Props {
   /** Ids marcados, como o campo `services` guarda ("1,2,18"). */
   valor: string;
   onChange: (novo: string) => void;
+  /** Endereço que devolve a cotação de amostra. */
+  endpoint?: string;
+  /** Nome do provedor, para o texto da tela. */
+  provedor?: string;
+  /** Peso e destino da amostra, para a linha explicativa. */
+  amostra?: string;
   /**
    * Muda a cada salvar/testar no cartão, para buscar a lista de novo.
    *
@@ -59,6 +72,9 @@ const brl = (n: number): string => n.toFixed(2).replace('.', ',');
 
 export default function TransportadorasMelhorEnvio({
   valor, onChange, recarregar = 0, correiosProprio = false,
+  endpoint = '/admin/melhorenvio/servicos',
+  provedor = 'Melhor Envio',
+  amostra = '500 g para São Paulo',
 }: Props) {
   const [opcoes, setOpcoes] = useState<Opcao[] | null>(null);
   const [erro, setErro] = useState('');
@@ -72,7 +88,7 @@ export default function TransportadorasMelhorEnvio({
     setCarregando(true);
     setErro('');
     try {
-      const r = await api.get<Resposta>('/admin/melhorenvio/servicos');
+      const r = await api.get<Resposta>(endpoint);
       setOpcoes(r.opcoes);
       setErro(r.erro);
       /*
@@ -85,12 +101,12 @@ export default function TransportadorasMelhorEnvio({
         onChange(r.selecionados.join(','));
       }
     } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Não foi possível consultar o Melhor Envio.');
+      setErro(e instanceof Error ? e.message : `Não foi possível consultar ${provedor}.`);
       setOpcoes([]);
     } finally {
       setCarregando(false);
     }
-  }, [valor, onChange]);
+  }, [valor, onChange, endpoint, provedor]);
 
   // Ao abrir a seção e a cada salvar/testar no cartão.
   useEffect(() => {
@@ -128,13 +144,13 @@ export default function TransportadorasMelhorEnvio({
         </button>
       </div>
       <p className="text-[11px] text-gray-400 mt-0 mb-3">
-        Cotação de amostra: 500 g para São Paulo. Marque o que o cliente pode escolher no checkout.
+        Cotação de amostra: {amostra}. Marque o que o cliente pode escolher no checkout.
       </p>
 
       {carregando && opcoes === null && (
         <p className="text-xs text-gray-400 flex items-center gap-2 m-0 py-2">
           <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-          Consultando a sua conta no Melhor Envio…
+          Consultando a sua conta {provedor === 'Envia' ? 'na' : 'no'} {provedor}…
         </p>
       )}
 
@@ -176,7 +192,7 @@ export default function TransportadorasMelhorEnvio({
 
       {cotaram.length > 0 && marcados.size === 0 && (
         <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 m-0 mt-3">
-          Nenhuma marcada: o Melhor Envio não vai aparecer no checkout. Marque ao menos uma e
+          Nenhuma marcada: {provedor} não vai aparecer no checkout. Marque ao menos uma e
           clique em <strong>Salvar</strong>.
         </p>
       )}
@@ -198,8 +214,8 @@ export default function TransportadorasMelhorEnvio({
 
       {!carregando && erro === '' && cotaram.length === 0 && opcoes !== null && (
         <p className="text-xs text-gray-400 m-0">
-          Nenhuma transportadora cotou. Confira no Melhor Envio se há transportadoras habilitadas
-          no seu plano.
+          Nenhuma transportadora cotou. Confira {provedor === 'Envia' ? 'na' : 'no'} {provedor} se
+          há transportadoras habilitadas na sua conta.
         </p>
       )}
     </div>

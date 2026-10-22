@@ -38,6 +38,12 @@ export interface Order {
   trackingCode?: string;
   /** Último status consultado, para não bater na API a cada abertura da tela. */
   trackingStatus?: string;
+  /** PDF da etiqueta já emitida. Null = ainda não emitida. */
+  labelUrl?: string | null;
+  /** Id do envio no provedor — é a prova de que a etiqueta já foi paga. */
+  shipmentRef?: string | null;
+  /** Quem emitiu ('envia'). Decide de quem é a API de rastreio. */
+  labelProvider?: string | null;
   /**
    * Quando o pagamento entrou (ISO), ou null.
    *
@@ -176,7 +182,8 @@ export type IntegrationId =
   // logistics / shipping
   | 'correios'
   | 'melhorenvio'
-  | 'frenet';
+  | 'frenet'
+  | 'envia';
 
 export interface IntegrationConfig {
   id: IntegrationId;

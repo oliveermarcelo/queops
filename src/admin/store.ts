@@ -357,3 +357,24 @@ export interface EstadoDeVariacoes {
   products: Product[];
   productsPendingGroup: number;
 }
+
+// -------------------------------------------------------- etiquetas ------
+
+/**
+ * Emite a etiqueta do pedido na Envia.
+ *
+ * GASTA DINHEIRO: a Envia debita o frete do saldo da conta. O servidor recusa
+ * a segunda emissão para o mesmo pedido, e é bom que recuse — etiqueta
+ * duplicada é frete pago duas vezes, e a segunda não volta sozinha.
+ */
+export function gerarEtiqueta(orderId: string): Promise<{
+  labelUrl: string; trackingCode: string; trackingUrl: string;
+  shipmentRef: string; price: number;
+}> {
+  return api.post(`/admin/orders/${encodeURIComponent(orderId)}/etiqueta`, {});
+}
+
+/** Cancela o envio emitido. O estorno segue as regras da Envia. */
+export function cancelarEtiqueta(orderId: string): Promise<{ ok: boolean }> {
+  return api.del(`/admin/orders/${encodeURIComponent(orderId)}/etiqueta`);
+}

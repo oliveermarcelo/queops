@@ -219,6 +219,32 @@ teste cobra:
 - desfazer o grupo devolve os produtos e **não apaga nenhum**; pedido feito
   antes continua inteiro.
 
+## Envia — cotação, etiqueta e rastreio
+
+```bash
+npm run teste:envia       # 25 verificações
+```
+
+A Envia é a terceira fonte de frete e a primeira que **gasta dinheiro**: emitir
+etiqueta debita o frete do saldo da conta. O teste cobra duas famílias de
+coisa, e as duas falham caro e em silêncio quando falham:
+
+- **a tradução da resposta.** Preço sai de `totalPrice` e não de `basePrice`
+  (que vem sem as taxas, e cobrar o base faria a loja pagar a diferença em toda
+  venda); prazo sai de `deliveryDate.dateDifference` e, na falta dele, do MAIOR
+  número do texto "3-4 días" — prometer o prazo mínimo é prometer o melhor
+  caso; serviço sem preço vira erro, e não uma opção de R$ 0,00.
+- **as travas da etiqueta.** Pedido não pago não emite; pedido que já tem
+  etiqueta recusa a segunda emissão; sem sessão de painel ninguém gasta o
+  saldo.
+
+Verifica também que o par `transportadora|serviço` que a Envia usa **não vaza
+para o ERP**: o `shippingServiceCode` sai limpo (`pac`), porque `correios|pac`
+não casa com serviço nenhum do lado de lá.
+
+A rede não é tocada — a cotação real depende de um token que a loja ainda não
+tem, e teste que depende de internet não roda.
+
 ## Ponta a ponta (Playwright)
 
 Precisam da loja no ar. Com o build pronto:

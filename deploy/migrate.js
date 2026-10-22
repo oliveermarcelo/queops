@@ -392,7 +392,8 @@ var init_store = __esm({
       "pagarme",
       "correios",
       "melhorenvio",
-      "frenet"
+      "frenet",
+      "envia"
     ];
     __name(configSet, "configSet");
   }

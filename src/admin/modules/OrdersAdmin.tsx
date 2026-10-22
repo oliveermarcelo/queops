@@ -4,9 +4,9 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { FileCode2, FileText, Loader2, Package, Search, Trash2 } from 'lucide-react';
+import { FileCode2, FileText, Loader2, Package, Printer, Search, Trash2 } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
-import { fetchOrderTracking, setOrderTracking } from '../store';
+import { cancelarEtiqueta, fetchOrderTracking, gerarEtiqueta, setOrderTracking } from '../store';
 import { Order, OrderInvoice, OrderStatus, TrackingEvent } from '../types';
 import { brl, fmtDate, Btn, Card, ConfirmDialog, inputCls } from '../ui';
 
@@ -211,6 +211,118 @@ function LinhaDeNotas({ notas }: { notas: OrderInvoice[] }) {
   );
 }
 
+
+/**
+ * A etiqueta do pedido.
+ *
+ * Emitir GASTA DINHEIRO — a Envia debita o frete do saldo da conta —, e é por
+ * isso que esta parte da tela é tão explícita. O botão só aparece em pedido
+ * PAGO, diz com todas as letras que vai cobrar, e some assim que a etiqueta
+ * existe: no lugar dele fica o link de reimpressão, porque reimprimir não
+ * custa nada e emitir de novo custa o frete inteiro outra vez.
+ */
+function EtiquetaDoPedido({ o }: { o: Order; key?: React.Key }) {
+  const { refresh } = useAdmin();
+  const [rodando, setRodando] = useState(false);
+  const [erro, setErro] = useState('');
+  const [aviso, setAviso] = useState('');
+  const [confirmando, setConfirmando] = useState(false);
+
+  const emitida = (o.shipmentRef ?? '') !== '';
+
+  const emitir = async () => {
+    setConfirmando(false);
+    setErro('');
+    setAviso('');
+    setRodando(true);
+    try {
+      const r = await gerarEtiqueta(o.id);
+      setAviso(
+        `Etiqueta emitida — R$ ${r.price.toFixed(2).replace('.', ',')}`
+        + (r.trackingCode !== '' ? ` · rastreio ${r.trackingCode}` : ''),
+      );
+      await refresh();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Não foi possível emitir a etiqueta.');
+    } finally {
+      setRodando(false);
+    }
+  };
+
+  const cancelar = async () => {
+    setErro('');
+    setAviso('');
+    setRodando(true);
+    try {
+      await cancelarEtiqueta(o.id);
+      await refresh();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Não foi possível cancelar o envio.');
+    } finally {
+      setRodando(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Etiqueta</span>
+
+      {emitida ? (
+        <>
+          {(o.labelUrl ?? '') !== '' && (
+            <a
+              href={o.labelUrl ?? '#'}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-blue hover:underline"
+            >
+              <Printer size={13} /> Imprimir etiqueta
+            </a>
+          )}
+          <span className="text-[11px] text-gray-400 font-mono">envio {o.shipmentRef}</span>
+          <button
+            onClick={() => void cancelar()}
+            disabled={rodando}
+            className="text-[11px] text-gray-400 hover:text-brand-red disabled:opacity-40"
+          >
+            {rodando ? 'cancelando…' : 'cancelar envio'}
+          </button>
+        </>
+      ) : (
+        <Btn variant="ghost" disabled={rodando} onClick={() => setConfirmando(true)}>
+          {rodando ? 'Emitindo…' : 'Gerar etiqueta na Envia'}
+        </Btn>
+      )}
+
+      {erro !== '' && (
+        <span className="text-[11px] font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+          {erro}
+        </span>
+      )}
+      {aviso !== '' && (
+        <span className="text-[11px] font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">
+          {aviso}
+        </span>
+      )}
+
+      {confirmando && (
+        <ConfirmDialog
+          title="Emitir a etiqueta agora?"
+          message={
+            `A Envia vai cobrar o frete deste pedido do saldo da conta e gerar a etiqueta de `
+            + `"${o.customerName}".\n\n`
+            + 'Isso acontece uma vez só: emitir de novo para o mesmo pedido pagaria o frete duas '
+            + 'vezes, e por isso o botão some depois. Para reimprimir, use o link que fica aqui.'
+          }
+          confirmLabel="Emitir e cobrar"
+          onCancel={() => setConfirmando(false)}
+          onConfirm={() => void emitir()}
+        />
+      )}
+    </div>
+  );
+}
+
 /**
  * Motivos prontos para o cancelamento.
  *
@@ -407,6 +519,18 @@ export default function OrdersAdmin() {
                         initialCode={o.trackingCode ?? ''}
                         lastStatus={o.trackingStatus ?? ''}
                       />
+                    </td>
+                  </tr>
+                )}
+                {/*
+                  Etiqueta: só a partir do PAGO, como o rastreio. Antes do
+                  dinheiro entrar, emitir é pagar frete de uma venda que pode
+                  não se confirmar.
+                */}
+                {o.paidAt && o.status !== 'canceled' && (
+                  <tr className="border-b border-gray-50 bg-gray-50/30">
+                    <td colSpan={7} className="py-2 px-4">
+                      <EtiquetaDoPedido o={o} />
                     </td>
                   </tr>
                 )}

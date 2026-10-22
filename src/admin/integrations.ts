@@ -162,6 +162,48 @@ export const PROVIDERS: ProviderMeta[] = [
       },
     ],
   },
+  /*
+   * A Envia pede o endereço completo do remetente, e as outras duas não.
+   *
+   * Não é capricho do formulário: ela também EMITE a etiqueta, e etiqueta tem
+   * de trazer um remetente que o carteiro consiga ler. Só o CEP, que basta
+   * para cotar nos Correios e no Melhor Envio, não imprime nada.
+   */
+  {
+    id: 'envia',
+    name: 'Envia',
+    category: 'logistics',
+    description: 'Cota, emite a etiqueta e rastreia — tudo pela loja, sem abrir o painel deles.',
+    docsUrl: 'https://docs.envia.com/docs/getting-started',
+    fields: [
+      {
+        key: 'token',
+        label: 'Token da API',
+        type: 'password',
+        help: 'Painel da Envia → Developer → API Keys. A chave vale só no ambiente em que foi '
+          + 'criada: uma de teste não autentica em produção.',
+      },
+      {
+        key: 'sandbox',
+        label: 'Ambiente (production/sandbox)',
+        placeholder: 'production',
+        help: 'Use "sandbox" para testar sem gerar envio nem cobrança.',
+      },
+      { key: 'originName', label: 'Nome do remetente', placeholder: 'Quéops Pirâmides' },
+      { key: 'originPhone', label: 'Telefone do remetente', placeholder: '11998670049' },
+      { key: 'originStreet', label: 'Rua de origem', placeholder: 'Rua das Pirâmides' },
+      { key: 'originNumber', label: 'Número', placeholder: '100' },
+      { key: 'originDistrict', label: 'Bairro', placeholder: 'Centro' },
+      { key: 'originCity', label: 'Cidade de origem', placeholder: 'São Paulo' },
+      { key: 'originState', label: 'UF de origem', placeholder: 'SP' },
+      {
+        key: 'originCep',
+        label: 'CEP de origem',
+        placeholder: 'De onde as encomendas saem',
+        help: 'Obrigatório: sem ele a Envia não cota nem emite etiqueta.',
+      },
+    ],
+  },
   {
     id: 'frenet',
     name: 'Frenet',

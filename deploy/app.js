@@ -857,8 +857,8 @@ async function amarrarCategoria(code, category, subcategory, exec = q) {
 function slugificar(nome) {
   return String(nome).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100);
 }
-function slugUnico(base2, usados) {
-  const inicial = base2 === "" ? "categoria" : base2;
+function slugUnico(base3, usados) {
+  const inicial = base3 === "" ? "categoria" : base3;
   let slug = inicial;
   let n = 2;
   while (usados.has(slug)) {
@@ -1335,9 +1335,9 @@ async function problemaNasVariacoes(grupoId, eixos, variacoes, exec) {
   return "";
 }
 async function slugLivre(nome, exceto, exec) {
-  const base2 = slugificar(nome).slice(0, 36) || "grupo";
+  const base3 = slugificar(nome).slice(0, 36) || "grupo";
   for (let i = 0; i < 200; i++) {
-    const tentativa = i === 0 ? base2 : `${base2}-${i + 1}`;
+    const tentativa = i === 0 ? base3 : `${base3}-${i + 1}`;
     const ocupado = await exec.one(
       `SELECT 1 AS ok FROM product_groups WHERE id = ? AND id <> ?
         UNION SELECT 1 FROM products WHERE id = ? LIMIT 1`,
@@ -1345,7 +1345,7 @@ async function slugLivre(nome, exceto, exec) {
     );
     if (ocupado === null) return tentativa;
   }
-  return `${base2}-${Date.now()}`;
+  return `${base3}-${Date.now()}`;
 }
 async function gravarGrupo(idPedido, pedido) {
   const nome = String(pedido.name ?? "").trim().slice(0, 255);
@@ -1903,6 +1903,16 @@ function orderRowToApi(r, items, invoices = []) {
     trackingStatus: vazioOuNulo(r.tracking_status),
     trackingUrl: vazioOuNulo(r.tracking_url) ?? urlDeRastreio(r.tracking_code),
     /*
+     * Etiqueta emitida pela loja, quando houve.
+     *
+     * Vai também para a API do ERP: o integrador pergunta "esse pedido já tem
+     * etiqueta?" e, sem o campo, a única resposta era abrir o painel. `null`
+     * significa "ainda não emitida" — e não "não sei".
+     */
+    labelUrl: vazioOuNulo(r.label_url),
+    shipmentRef: vazioOuNulo(r.shipment_ref),
+    labelProvider: vazioOuNulo(r.label_provider),
+    /*
      * Quando o dinheiro entrou, ou null.
      *
      * É o fato que separa "pedido que pode sumir" de "registro de pagamento".
@@ -2135,7 +2145,8 @@ var init_store = __esm({
       "pagarme",
       "correios",
       "melhorenvio",
-      "frenet"
+      "frenet",
+      "envia"
     ];
     INTEGRATION_SECRET_FIELDS = [
       "accessToken",
@@ -2238,9 +2249,9 @@ function detalheDoErro(body2) {
 function comMascara(cep) {
   return cep.length === 8 ? `${cep.slice(0, 5)}-${cep.slice(5)}` : cep;
 }
-function comCepNoRecado(detalhe, origem, destino) {
+function comCepNoRecado(detalhe, origem2, destino) {
   if (!/cep|postal/i.test(detalhe)) return detalhe;
-  return `${detalhe} (origem ${comMascara(origem)} \u2192 destino ${comMascara(destino)}). CEP gen\xE9rico de cidade (terminado em -000) costuma ser recusado pelo Melhor Envio, mesmo sendo aceito pelos Correios: teste com um CEP de rua.`;
+  return `${detalhe} (origem ${comMascara(origem2)} \u2192 destino ${comMascara(destino)}). CEP gen\xE9rico de cidade (terminado em -000) costuma ser recusado pelo Melhor Envio, mesmo sendo aceito pelos Correios: teste com um CEP de rua.`;
 }
 async function cotar(c, cepDestino, itens, apenasServicos = []) {
   const destino = String(cepDestino ?? "").replace(/\D/g, "");
@@ -2352,6 +2363,341 @@ var init_melhorenvio = __esm({
     __name(cotar, "cotar");
     __name(mapearOpcoes, "mapearOpcoes");
     __name(amostraDeServicos, "amostraDeServicos");
+  }
+});
+
+// server/src/envia.ts
+var envia_exports = {};
+__export(envia_exports, {
+  amostraDeServicos: () => amostraDeServicos2,
+  cancelarEnvio: () => cancelarEnvio,
+  cotar: () => cotar2,
+  credsFrom: () => credsFrom2,
+  detalheDoErro: () => detalheDoErro2,
+  ehSandbox: () => ehSandbox,
+  gerarEtiqueta: () => gerarEtiqueta,
+  mapearOpcoes: () => mapearOpcoes2,
+  problemaNasCredenciais: () => problemaNasCredenciais,
+  rastrear: () => rastrear,
+  servicosSelecionados: () => servicosSelecionados2
+});
+function credsFrom2(f) {
+  const s = /* @__PURE__ */ __name((k) => {
+    const v = f[k];
+    return v === null || v === void 0 || typeof v === "object" ? "" : String(v).trim();
+  }, "s");
+  return {
+    token: s("token"),
+    sandbox: s("sandbox").toLowerCase(),
+    services: s("services"),
+    originName: s("originName"),
+    originPhone: s("originPhone").replace(/\D/g, ""),
+    originStreet: s("originStreet"),
+    originNumber: s("originNumber"),
+    originDistrict: s("originDistrict"),
+    originCity: s("originCity"),
+    originState: s("originState").toUpperCase().slice(0, 2),
+    originCep: s("originCep").replace(/\D/g, "")
+  };
+}
+function ehSandbox(c) {
+  return c.sandbox === "sandbox" || c.sandbox === "teste" || c.sandbox === "test";
+}
+function base2(c) {
+  return ehSandbox(c) ? "https://api-test.envia.com" : "https://api.envia.com";
+}
+function servicosSelecionados2(c) {
+  return c.services.split(/[,;\n]+/).map((x) => x.trim().toLowerCase()).filter((x) => x !== "");
+}
+function problemaNasCredenciais(c) {
+  if (c.token === "") return "Token da Envia n\xE3o cadastrado.";
+  const faltando = [];
+  if (c.originName === "") faltando.push("nome do remetente");
+  if (c.originPhone.length < 10) faltando.push("telefone do remetente");
+  if (c.originStreet === "") faltando.push("rua de origem");
+  if (c.originCity === "") faltando.push("cidade de origem");
+  if (c.originState.length !== 2) faltando.push("UF de origem");
+  if (c.originCep.length !== 8) faltando.push("CEP de origem");
+  if (faltando.length === 0) return "";
+  return `Falta preencher, em Painel \u2192 Integra\xE7\xF5es \u2192 Envia: ${faltando.join(", ")}. A Envia exige o endere\xE7o completo do remetente \u2014 diferente dos Correios e do Melhor Envio, que se contentam com o CEP \u2014 porque ela tamb\xE9m emite a etiqueta.`;
+}
+function numero2(v) {
+  const n = Number(String(v ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+function pacoteDo(itens) {
+  const gramas = itens.reduce(
+    (t, i) => t + Math.max(0, i.pesoGramas) * Math.max(1, Math.round(i.quantidade)),
+    0
+  );
+  const valor2 = itens.reduce(
+    (t, i) => t + Math.max(0, i.precoUnitario) * Math.max(1, Math.round(i.quantidade)),
+    0
+  );
+  return {
+    type: "box",
+    content: "Artigos de decoracao",
+    amount: 1,
+    declaredValue: Number(valor2.toFixed(2)),
+    lengthUnit: "CM",
+    weightUnit: "KG",
+    weight: Math.max(MIN_PESO_GRAMAS2, Math.round(gramas)) / 1e3,
+    dimensions: { length: MIN_COMPRIMENTO2, width: MIN_LARGURA2, height: MIN_ALTURA2 }
+  };
+}
+function origem(c) {
+  return {
+    name: c.originName,
+    phone: c.originPhone,
+    street: c.originStreet,
+    number: c.originNumber || "S/N",
+    district: c.originDistrict,
+    city: c.originCity,
+    state: c.originState,
+    country: "BR",
+    postalCode: c.originCep
+  };
+}
+function destinoApi(d) {
+  return {
+    name: d.name || "Cliente",
+    phone: String(d.phone ?? "").replace(/\D/g, "") || "0000000000",
+    street: d.street || "Nao informado",
+    number: d.number || "S/N",
+    district: d.district,
+    city: d.city,
+    state: String(d.state ?? "").toUpperCase().slice(0, 2),
+    country: "BR",
+    postalCode: String(d.cep ?? "").replace(/\D/g, "")
+  };
+}
+function detalheDoErro2(body2) {
+  const limpo = String(body2 ?? "").trim();
+  if (limpo === "") return "";
+  try {
+    const d = JSON.parse(limpo);
+    const e = d.error ?? d.message ?? d.meta ?? d.errors;
+    if (typeof e === "string" && e.trim() !== "") return e.trim().slice(0, 300);
+    if (Array.isArray(e)) return e.map((x) => String(x?.message ?? x)).join(" \xB7 ").slice(0, 300);
+    if (e !== null && typeof e === "object") {
+      const o = e;
+      const msg = o.message ?? o.description ?? "";
+      if (String(msg).trim() !== "") return String(msg).trim().slice(0, 300);
+      return JSON.stringify(e).slice(0, 300);
+    }
+    return limpo.slice(0, 300);
+  } catch {
+    return limpo.length <= 300 ? limpo : limpo.slice(0, 300);
+  }
+}
+function recusaDeToken(c) {
+  const ambiente2 = ehSandbox(c) ? "sandbox (api-test.envia.com)" : "produ\xE7\xE3o (api.envia.com)";
+  return `Token recusado pela Envia em ${ambiente2}. As chaves s\xE3o por ambiente: uma gerada no painel de teste n\xE3o funciona em produ\xE7\xE3o, e vice-versa. Gere a chave em Developer \u2192 API Keys do painel correspondente.`;
+}
+async function chamar(c, caminho, corpo, timeoutMs = 2e4) {
+  const r = await httpCall(
+    "POST",
+    `${base2(c)}${caminho}`,
+    { Authorization: "Bearer " + c.token, Accept: "application/json" },
+    corpo,
+    timeoutMs
+  );
+  if (!r.ok) {
+    console.error(
+      `[queops] Envia recusou ${caminho} (HTTP ${r.status}):`,
+      String(r.body ?? "").slice(0, 600)
+    );
+    if (r.status === 401 || r.status === 403) return { dados: null, erro: recusaDeToken(c) };
+    const detalhe = detalheDoErro2(r.body);
+    return {
+      dados: null,
+      erro: detalhe !== "" ? detalhe : `Envia respondeu HTTP ${r.status}. ${r.error}`.trim()
+    };
+  }
+  try {
+    return { dados: JSON.parse(r.body), erro: "" };
+  } catch {
+    return { dados: null, erro: "Resposta inesperada da Envia (n\xE3o era JSON)." };
+  }
+}
+function listaDe(dados) {
+  const d = dados ?? {};
+  const lista = Array.isArray(d.data) ? d.data : Array.isArray(dados) ? dados : [];
+  return lista.filter((x) => x !== null && typeof x === "object");
+}
+function mapearOpcoes2(lista) {
+  return lista.map((item) => {
+    const transportadora = String(item.carrierDescription ?? item.carrier ?? "").trim();
+    const servicoNome = String(item.serviceDescription ?? item.service ?? "").trim();
+    const par = `${String(item.carrier ?? "").toLowerCase()}|${String(item.service ?? "").toLowerCase()}`;
+    const preco = numero2(item.totalPrice ?? item.basePrice);
+    const entrega = item.deliveryDate ?? {};
+    let prazo = Math.round(numero2(entrega.dateDifference));
+    if (prazo <= 0) {
+      const numeros = String(item.deliveryEstimate ?? "").match(/\d+/g) ?? [];
+      prazo = numeros.length > 0 ? Math.max(...numeros.map(Number)) : 0;
+    }
+    return {
+      servico: par,
+      nome: transportadora === "" ? servicoNome : servicoNome === "" ? transportadora : `${transportadora} \xB7 ${servicoNome}`,
+      transportadora,
+      preco,
+      prazoDias: prazo,
+      erro: preco > 0 ? "" : "sem pre\xE7o na resposta"
+    };
+  });
+}
+async function cotar2(c, cepDestino, itens, apenasServicos = [], ufDestino = "", cidadeDestino = "") {
+  const problema = problemaNasCredenciais(c);
+  if (problema !== "") return { opcoes: [], erro: problema };
+  const destino = String(cepDestino ?? "").replace(/\D/g, "");
+  if (destino.length !== 8) return { opcoes: [], erro: "CEP de destino inv\xE1lido." };
+  if (itens.length === 0) return { opcoes: [], erro: "Carrinho vazio." };
+  const uf = String(ufDestino ?? "").toUpperCase().slice(0, 2);
+  const corpo = {
+    origin: origem(c),
+    destination: {
+      name: "Cliente",
+      phone: c.originPhone,
+      street: "Nao informado",
+      number: "S/N",
+      city: cidadeDestino || uf || "Nao informado",
+      state: uf,
+      country: "BR",
+      postalCode: destino
+    },
+    packages: [pacoteDo(itens)],
+    shipment: { type: 1 },
+    settings: { currency: "BRL" }
+  };
+  const { dados, erro } = await chamar(c, "/ship/rate/", corpo);
+  if (erro !== "") return { opcoes: [], erro };
+  const todas = mapearOpcoes2(listaDe(dados));
+  if (apenasServicos.length === 0) return { opcoes: todas, erro: "" };
+  const marcados = new Set(apenasServicos.map((x) => x.toLowerCase()));
+  return { opcoes: todas.filter((o) => marcados.has(o.servico)), erro: "" };
+}
+async function amostraDeServicos2(c) {
+  return await cotar2(
+    c,
+    "01310100",
+    [{ id: "amostra", pesoGramas: 1e3, precoUnitario: 100, quantidade: 1 }],
+    [],
+    "SP",
+    "Sao Paulo"
+  );
+}
+async function gerarEtiqueta(c, servico, destino, itens) {
+  const problema = problemaNasCredenciais(c);
+  if (problema !== "") return { ...SEM_ETIQUETA, erro: problema };
+  const [transportadora, codigo] = String(servico ?? "").toLowerCase().split("|");
+  if (!transportadora || !codigo) {
+    return {
+      ...SEM_ETIQUETA,
+      erro: "Este pedido n\xE3o tem um servi\xE7o da Envia escolhido. A etiqueta s\xF3 sai para pedido cujo frete foi cotado pela Envia no checkout."
+    };
+  }
+  if (String(destino.cep ?? "").replace(/\D/g, "").length !== 8) {
+    return { ...SEM_ETIQUETA, erro: "O pedido est\xE1 sem CEP de entrega." };
+  }
+  if (String(destino.city ?? "").trim() === "" || String(destino.state ?? "").trim() === "") {
+    return { ...SEM_ETIQUETA, erro: "O pedido est\xE1 sem cidade ou UF de entrega." };
+  }
+  const corpo = {
+    origin: origem(c),
+    destination: destinoApi(destino),
+    packages: [pacoteDo(itens)],
+    shipment: { type: 1, carrier: transportadora, service: codigo },
+    /*
+     * PDF em 4x6 polegadas: é o formato das impressoras térmicas de etiqueta,
+     * e também imprime em folha A4 sem ficar ilegível. Pedir "ZPL" geraria um
+     * arquivo que só a térmica entende, e a loja não tem uma.
+     */
+    settings: { printFormat: "PDF", printSize: "STOCK_4X6", currency: "BRL" }
+  };
+  const { dados, erro } = await chamar(c, "/ship/generate/", corpo, 4e4);
+  if (erro !== "") return { ...SEM_ETIQUETA, erro };
+  const primeira = listaDe(dados)[0];
+  if (primeira === void 0) {
+    return { ...SEM_ETIQUETA, erro: "A Envia respondeu sem etiqueta. Nada foi cobrado." };
+  }
+  const pacote = Array.isArray(primeira.packages) ? primeira.packages[0] : null;
+  return {
+    erro: "",
+    rastreio: String(primeira.trackingNumber ?? pacote?.trackingNumber ?? ""),
+    etiquetaUrl: String(primeira.label ?? ""),
+    rastreioUrl: String(primeira.trackUrl ?? pacote?.trackUrl ?? ""),
+    envioId: String(primeira.shipmentId ?? ""),
+    preco: numero2(primeira.totalPrice)
+  };
+}
+async function cancelarEnvio(c, envioId) {
+  if (String(envioId ?? "").trim() === "") {
+    return { ok: false, erro: "Este pedido n\xE3o tem envio emitido na Envia." };
+  }
+  const { erro } = await chamar(c, "/ship/cancel/", { shipmentId: [String(envioId).trim()] });
+  return { ok: erro === "", erro };
+}
+async function rastrear(c, codigo) {
+  if (c.token === "") return { eventos: [], erro: "Token da Envia n\xE3o cadastrado." };
+  const limpo = String(codigo ?? "").trim();
+  if (limpo === "") return { eventos: [], erro: "Pedido sem c\xF3digo de rastreio." };
+  const { dados, erro } = await chamar(c, "/ship/generaltrack/", { trackingNumbers: [limpo] });
+  if (erro !== "") return { eventos: [], erro };
+  const primeira = listaDe(dados)[0];
+  if (primeira === void 0) {
+    return { eventos: [], erro: "A Envia n\xE3o encontrou este c\xF3digo de rastreio." };
+  }
+  const brutos = [primeira.history, primeira.events, primeira.statusHistory, primeira.tracking].find((x) => Array.isArray(x) && x.length > 0);
+  if (brutos === void 0) {
+    const status = String(
+      primeira.status?.description ?? primeira.statusDescription ?? primeira.status ?? ""
+    ).trim();
+    return status === "" ? { eventos: [], erro: "A Envia ainda n\xE3o tem movimenta\xE7\xE3o para este c\xF3digo." } : { eventos: [{ data: "", descricao: status, local: "" }], erro: "" };
+  }
+  const eventos = brutos.map((e) => ({
+    data: String(e.date ?? e.datetime ?? e.updatedAt ?? ""),
+    descricao: String(e.description ?? e.status ?? e.statusDescription ?? "").trim(),
+    local: String(e.location ?? e.city ?? e.place ?? "").trim()
+  })).filter((e) => e.descricao !== "");
+  return { eventos, erro: "" };
+}
+var MIN_COMPRIMENTO2, MIN_LARGURA2, MIN_ALTURA2, MIN_PESO_GRAMAS2, SEM_ETIQUETA;
+var init_envia = __esm({
+  "server/src/envia.ts"() {
+    "use strict";
+    init_providers();
+    __name(credsFrom2, "credsFrom");
+    __name(ehSandbox, "ehSandbox");
+    __name(base2, "base");
+    __name(servicosSelecionados2, "servicosSelecionados");
+    __name(problemaNasCredenciais, "problemaNasCredenciais");
+    MIN_COMPRIMENTO2 = 16;
+    MIN_LARGURA2 = 11;
+    MIN_ALTURA2 = 2;
+    MIN_PESO_GRAMAS2 = 300;
+    __name(numero2, "numero");
+    __name(pacoteDo, "pacoteDo");
+    __name(origem, "origem");
+    __name(destinoApi, "destinoApi");
+    __name(detalheDoErro2, "detalheDoErro");
+    __name(recusaDeToken, "recusaDeToken");
+    __name(chamar, "chamar");
+    __name(listaDe, "listaDe");
+    __name(mapearOpcoes2, "mapearOpcoes");
+    __name(cotar2, "cotar");
+    __name(amostraDeServicos2, "amostraDeServicos");
+    SEM_ETIQUETA = {
+      erro: "",
+      rastreio: "",
+      etiquetaUrl: "",
+      rastreioUrl: "",
+      envioId: "",
+      preco: 0
+    };
+    __name(gerarEtiqueta, "gerarEtiqueta");
+    __name(cancelarEnvio, "cancelarEnvio");
+    __name(rastrear, "rastrear");
   }
 });
 
@@ -2500,7 +2846,7 @@ async function providerTest(id, f) {
         message: r.ok ? "Pagar.me conectado." : `Falha (HTTP ${r.status}). Confira a API Key.`
       };
     case "melhorenvio": {
-      const { credsFrom: meCreds, amostraDeServicos: amostraDeServicos2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
+      const { credsFrom: meCreds, amostraDeServicos: amostraDeServicos3 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
       const creds = meCreds(f);
       if (creds.originCep.length !== 8) {
         return {
@@ -2508,7 +2854,7 @@ async function providerTest(id, f) {
           message: 'Falta o CEP de origem \u2014 sem ele o Melhor Envio n\xE3o cota nada. Preencha "CEP de origem" e salve.'
         };
       }
-      const { opcoes, erro } = await amostraDeServicos2(creds);
+      const { opcoes, erro } = await amostraDeServicos3(creds);
       if (erro !== "") return { ok: false, message: erro };
       const cotaram = opcoes.filter((o) => o.erro === "" && o.preco > 0);
       if (cotaram.length === 0) {
@@ -2523,6 +2869,27 @@ async function providerTest(id, f) {
       return {
         ok: true,
         message: `${cotaram.length} transportadora(s) cotando: ${amostra}${cotaram.length > 4 ? "\u2026" : ""} (500 g para S\xE3o Paulo).` + (selecionados === 0 ? " Escolha abaixo quais o cliente pode ver." : ` ${selecionados} liberada(s) para o cliente.`)
+      };
+    }
+    case "envia": {
+      const { credsFrom: enviaCreds, amostraDeServicos: amostraEnvia, ehSandbox: ehSandbox2, problemaNasCredenciais: problemaNasCredenciais2 } = await Promise.resolve().then(() => (init_envia(), envia_exports));
+      const creds = enviaCreds(f);
+      const falta = problemaNasCredenciais2(creds);
+      if (falta !== "") return { ok: false, message: falta };
+      const { opcoes, erro } = await amostraEnvia(creds);
+      if (erro !== "") return { ok: false, message: erro };
+      const cotaram = opcoes.filter((o) => o.erro === "" && o.preco > 0);
+      if (cotaram.length === 0) {
+        return {
+          ok: false,
+          message: `O token foi aceito, mas nenhuma transportadora cotou de ${creds.originCep} para S\xE3o Paulo. Confirme com a Envia se a conta atende frete nacional no Brasil e quais transportadoras est\xE3o habilitadas nela.`
+        };
+      }
+      const amostra = cotaram.slice(0, 4).map((o) => `${o.nome} R$ ${o.preco.toFixed(2).replace(".", ",")}`).join(" \xB7 ");
+      const marcados = creds.services.trim() === "" ? 0 : creds.services.split(",").length;
+      return {
+        ok: true,
+        message: `${cotaram.length} transportadora(s) cotando: ${amostra}${cotaram.length > 4 ? "\u2026" : ""} (1 kg para S\xE3o Paulo, ambiente ${ehSandbox2(creds) ? "de teste" : "de produ\xE7\xE3o"}).` + (marcados === 0 ? " Escolha abaixo quais o cliente pode ver." : ` ${marcados} liberada(s) para o cliente.`)
       };
     }
     /*
@@ -2574,8 +2941,8 @@ async function providerTest(id, f) {
       });
       return { ok: r.ok, message: r.ok ? "ERP respondeu OK." : `Falha (HTTP ${r.status}). ${r.error}` };
     case "correios": {
-      const { credsFrom: credsFrom3, autenticar: autenticar2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
-      const creds = credsFrom3(f);
+      const { credsFrom: credsFrom4, autenticar: autenticar2, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+      const creds = credsFrom4(f);
       const { erro } = await autenticar2(creds);
       if (erro) return { ok: false, message: erro };
       if ((creds.originCep ?? "").length !== 8) {
@@ -2662,6 +3029,12 @@ var init_providers = __esm({
       encryptionKey: "Encryption Key",
       instance: "Inst\xE2ncia",
       instanceId: "Instance ID",
+      originCep: "CEP de origem",
+      originCity: "Cidade de origem",
+      originName: "Nome do remetente",
+      originPhone: "Telefone do remetente",
+      originState: "UF de origem",
+      originStreet: "Rua de origem",
       postingCard: "Cart\xE3o de postagem",
       publicKey: "Public Key",
       publishableKey: "Publishable Key",
@@ -2678,6 +3051,15 @@ var init_providers = __esm({
       correios: { fields: ["user", "accessCode", "postingCard"] },
       melhorenvio: { fields: ["token"] },
       frenet: { fields: ["token"] },
+      /*
+       * A Envia pede mais que as outras duas: ela também EMITE a etiqueta, e
+       * etiqueta exige remetente de verdade — nome, telefone, rua, cidade e UF.
+       * Só o CEP, que basta para cotar nos Correios e no Melhor Envio, não imprime
+       * uma etiqueta que o carteiro consiga ler.
+       */
+      envia: {
+        fields: ["token", "originName", "originPhone", "originStreet", "originCity", "originState", "originCep"]
+      },
       // Sem campo obrigatório: o teste do UNO não usa credencial nenhuma da loja —
       // ele lê o uso das chaves de API, que é o caminho por onde o UNO entra.
       uno: { fields: [] },
@@ -2706,18 +3088,18 @@ __export(correios_exports, {
   SERVICO_SEDEX: () => SERVICO_SEDEX,
   _internos: () => _internos,
   autenticar: () => autenticar,
-  cotar: () => cotar2,
+  cotar: () => cotar3,
   cotarTodos: () => cotarTodos,
-  credsFrom: () => credsFrom2,
+  credsFrom: () => credsFrom3,
   esquecerToken: () => esquecerToken,
   nomeDoServico: () => nomeDoServico,
-  rastrear: () => rastrear,
+  rastrear: () => rastrear2,
   servicesOf: () => servicesOf
 });
 function nomeDoServico(codigo) {
   return NOMES[codigo] ?? `Correios ${codigo}`;
 }
-function credsFrom2(f) {
+function credsFrom3(f) {
   const s = /* @__PURE__ */ __name((k) => String(f[k] ?? "").trim(), "s");
   return {
     user: s("user"),
@@ -2770,7 +3152,7 @@ function explicar(r, onde = "auth") {
     return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
   }
   if (r.status === 400) {
-    const detalhe = detalheDoErro2(r.body);
+    const detalhe = detalheDoErro3(r.body);
     if (detalhe !== "") return detalhe;
     if (onde === "cotacao") {
       return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Confira em "Servi\xE7os a cotar" se os c\xF3digos pertencem ao seu contrato \u2014 os de balc\xE3o (04510 PAC, 04014 Sedex) cotam sem contrato e servem para testar.';
@@ -2780,7 +3162,7 @@ function explicar(r, onde = "auth") {
   if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
   return `Correios responderam HTTP ${r.status}.`;
 }
-function detalheDoErro2(body2) {
+function detalheDoErro3(body2) {
   const limpo = String(body2 ?? "").trim();
   if (limpo === "") return "";
   try {
@@ -2817,18 +3199,18 @@ function moeda(v) {
   const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }
-async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
+async function cotar3(c, servico, cepDestino, pesoGramas, dim = {}) {
   const vazio = { servico, nome: nomeDoServico(servico), preco: 0, prazoDias: 0, erro: "" };
   const { token, erro } = await autenticar(c);
   if (erro) return { ...vazio, erro };
-  const origem = (c.originCep ?? "").replace(/\D/g, "");
+  const origem2 = (c.originCep ?? "").replace(/\D/g, "");
   const destino = String(cepDestino ?? "").replace(/\D/g, "");
-  if (origem.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
+  if (origem2.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
   if (destino.length !== 8) return { ...vazio, erro: "CEP de destino inv\xE1lido." };
   const produto = {
     coProduto: servico,
     nuRequisicao: "1",
-    cepOrigem: origem,
+    cepOrigem: origem2,
     cepDestino: destino,
     psObjeto: String(Math.max(300, Math.round(pesoGramas))),
     tpObjeto: "2",
@@ -2849,7 +3231,7 @@ async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
     parametrosPrazo: [{
       coProduto: servico,
       nuRequisicao: "1",
-      cepOrigem: origem,
+      cepOrigem: origem2,
       cepDestino: destino
     }]
   };
@@ -2903,11 +3285,11 @@ async function cotar2(c, servico, cepDestino, pesoGramas, dim = {}) {
 }
 async function cotarTodos(c, cepDestino, pesoGramas, dim) {
   const servicos = servicesOf(c);
-  const todas = await Promise.all(servicos.map((s) => cotar2(c, s, cepDestino, pesoGramas, dim)));
+  const todas = await Promise.all(servicos.map((s) => cotar3(c, s, cepDestino, pesoGramas, dim)));
   const boas = todas.filter((x) => x.erro === "" && x.preco > 0);
   return boas.length > 0 ? boas.sort((a, b) => a.preco - b.preco) : todas;
 }
-async function rastrear(c, codigo) {
+async function rastrear2(c, codigo) {
   const { token, erro } = await autenticar(c);
   if (erro) return { eventos: [], erro };
   const limpo = String(codigo ?? "").trim().toUpperCase().replace(/\s/g, "");
@@ -2963,18 +3345,18 @@ var init_correios = __esm({
       "04014": "Sedex"
     };
     __name(nomeDoServico, "nomeDoServico");
-    __name(credsFrom2, "credsFrom");
+    __name(credsFrom3, "credsFrom");
     __name(servicesOf, "servicesOf");
     cache = /* @__PURE__ */ new Map();
     __name(autenticar, "autenticar");
     __name(esquecerToken, "esquecerToken");
     __name(explicar, "explicar");
-    __name(detalheDoErro2, "detalheDoErro");
-    _internos = { detalheDoErro: detalheDoErro2 };
+    __name(detalheDoErro3, "detalheDoErro");
+    _internos = { detalheDoErro: detalheDoErro3 };
     __name(moeda, "moeda");
-    __name(cotar2, "cotar");
+    __name(cotar3, "cotar");
     __name(cotarTodos, "cotarTodos");
-    __name(rastrear, "rastrear");
+    __name(rastrear2, "rastrear");
   }
 });
 
@@ -3895,10 +4277,10 @@ function dadosDaTransportadora(cotacao, transportadoraPadrao = "") {
       maxDays: cotacao.deliveryDays ?? 0
     };
   }
+  const depoisDoProvedor = escolhida.id.split(":").slice(1).join(":");
   return {
     carrier: escolhida.carrier,
-    // 'correios:03220' → '03220'
-    serviceCode: escolhida.id.split(":")[1] ?? "",
+    serviceCode: depoisDoProvedor.includes("|") ? depoisDoProvedor.split("|")[1] : depoisDoProvedor,
     serviceName: escolhida.label,
     minDays: escolhida.days,
     maxDays: escolhida.days
@@ -3923,8 +4305,8 @@ function pesoDoCarrinho(items, found) {
   let total = 0;
   const semPeso = [];
   for (const item of items) {
-    const { gramas, origem } = pesoDoProduto(found.get(item.productId), PADRAO_G);
-    if (origem === "padrao") semPeso.push(String(item.productId));
+    const { gramas, origem: origem2 } = pesoDoProduto(found.get(item.productId), PADRAO_G);
+    if (origem2 === "padrao") semPeso.push(String(item.productId));
     total += gramas * item.quantity;
   }
   if (semPeso.length > 0) {
@@ -3949,8 +4331,8 @@ async function opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico) {
     );
     if (!row) return pulou("integra\xE7\xE3o desligada em Painel \u2192 Integra\xE7\xF5es");
     const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
-    const { credsFrom: credsFrom3, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
-    const creds = credsFrom3(await integrationSecrets2("correios", exec));
+    const { credsFrom: credsFrom4, cotarTodos: cotarTodos2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+    const creds = credsFrom4(await integrationSecrets2("correios", exec));
     if (creds.user === "" || creds.accessCode === "") {
       return pulou("usu\xE1rio ou c\xF3digo de acesso n\xE3o cadastrados");
     }
@@ -3990,11 +4372,11 @@ async function opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico
     );
     if (!row) return null;
     const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
-    const { credsFrom: credsFrom3, cotar: cotar3, servicosSelecionados: servicosSelecionados2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
-    const creds = credsFrom3(await integrationSecrets2("melhorenvio", exec));
+    const { credsFrom: credsFrom4, cotar: cotar4, servicosSelecionados: servicosSelecionados3 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
+    const creds = credsFrom4(await integrationSecrets2("melhorenvio", exec));
     if (creds.token === "") return pulou("token n\xE3o cadastrado");
     if (creds.originCep.length !== 8) return pulou("CEP de origem n\xE3o configurado");
-    const selecionados = servicosSelecionados2(creds);
+    const selecionados = servicosSelecionados3(creds);
     if (selecionados.length === 0) {
       return pulou("nenhuma transportadora marcada em Painel \u2192 Integra\xE7\xF5es");
     }
@@ -4006,7 +4388,7 @@ async function opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico
       precoUnitario: i.unitPrice,
       quantidade: i.quantity
     }));
-    const { opcoes, erro } = await cotar3(creds, cep, paraCotar, selecionados);
+    const { opcoes, erro } = await cotar4(creds, cep, paraCotar, selecionados);
     if (erro !== "") return pulou(erro);
     const boas = opcoes.filter((o) => o.erro === "" && o.preco > 0);
     if (boas.length === 0) {
@@ -4026,12 +4408,61 @@ async function opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico
   }
 }
 __name(opcoesDoMelhorEnvio, "opcoesDoMelhorEnvio");
+async function opcoesDaEnvia(ship, cep, itens, produtos, exec, diagnostico) {
+  const pulou = /* @__PURE__ */ __name((motivo) => {
+    console.warn(`[queops] frete: Envia n\xE3o consultada \u2014 ${motivo}`);
+    diagnostico.motivo = diagnostico.motivo === "" ? `Envia: ${motivo}` : `${diagnostico.motivo} \xB7 Envia: ${motivo}`;
+    return null;
+  }, "pulou");
+  if (ship.reason.startsWith("free_")) return null;
+  if (normalizeCep(cep) === "") return null;
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'envia' AND enabled = 1"
+    );
+    if (!row) return null;
+    const { integrationSecrets: integrationSecrets2 } = await Promise.resolve().then(() => (init_store(), store_exports));
+    const { credsFrom: credsFrom4, cotar: cotar4, servicosSelecionados: servicosSelecionados3, problemaNasCredenciais: problemaNasCredenciais2 } = await Promise.resolve().then(() => (init_envia(), envia_exports));
+    const creds = credsFrom4(await integrationSecrets2("envia", exec));
+    const falta = problemaNasCredenciais2(creds);
+    if (falta !== "") return pulou(falta);
+    const selecionados = servicosSelecionados3(creds);
+    if (selecionados.length === 0) {
+      return pulou("nenhuma transportadora marcada em Painel \u2192 Integra\xE7\xF5es");
+    }
+    const paraCotar = itens.map((i) => ({
+      id: i.productId,
+      pesoGramas: pesoDoProduto(produtos.get(i.productId)).gramas,
+      precoUnitario: i.unitPrice,
+      quantidade: i.quantity
+    }));
+    const { opcoes, erro } = await cotar4(creds, cep, paraCotar, selecionados, ufFromCep(cep));
+    if (erro !== "") return pulou(erro);
+    const boas = opcoes.filter((o) => o.erro === "" && o.preco > 0);
+    if (boas.length === 0) {
+      const motivos = opcoes.map((o) => `${o.nome}: ${o.erro || "sem pre\xE7o"}`).join(" \xB7 ");
+      return pulou(motivos === "" ? "nenhuma transportadora cotou" : `nenhuma cotou (${motivos})`);
+    }
+    return boas.map((o) => ({
+      id: `envia:${o.servico}`,
+      label: o.nome,
+      carrier: o.transportadora === "" ? "Envia" : o.transportadora,
+      price: round2(o.preco),
+      days: o.prazoDias,
+      source: "envia"
+    }));
+  } catch (e) {
+    return pulou(e instanceof Error ? e.message : String(e));
+  }
+}
+__name(opcoesDaEnvia, "opcoesDaEnvia");
 async function cotarTransportadoras(ship, cep, pesoGramas, itens, produtos, exec, diagnostico) {
-  const [correios, melhorEnvio] = await Promise.all([
+  const [correios, melhorEnvio, envia] = await Promise.all([
     opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico),
-    opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico)
+    opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico),
+    opcoesDaEnvia(ship, cep, itens, produtos, exec, diagnostico)
   ]);
-  const todas = [...correios ?? [], ...melhorEnvio ?? []];
+  const todas = [...correios ?? [], ...melhorEnvio ?? [], ...envia ?? []];
   return todas.sort((a, b) => a.price - b.price);
 }
 __name(cotarTransportadoras, "cotarTransportadoras");
@@ -4987,10 +5418,10 @@ adminRoutes.post("/categories", h(async (req, res) => {
   await requireAdmin(req);
   const nome = bodyStr(body(req), "name", "", 120).trim();
   if (nome === "") fail("Informe o nome da categoria.", 422, "invalid_name");
-  const base2 = nome.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "categoria";
-  let slug = base2;
+  const base3 = nome.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "categoria";
+  let slug = base3;
   for (let n = 2; await q.one("SELECT id FROM categories WHERE id = ?", [slug]); n++) {
-    slug = `${base2}-${n}`;
+    slug = `${base3}-${n}`;
   }
   const ultima = await q.one("SELECT MAX(position) AS p FROM categories");
   await q.run(
@@ -5224,8 +5655,8 @@ adminRoutes.post("/integrations/:id/test", h(async (req, res) => {
 }));
 adminRoutes.get("/melhorenvio/servicos", h(async (req, res) => {
   await requireAdmin(req);
-  const { credsFrom: credsFrom3, amostraDeServicos: amostraDeServicos2, servicosSelecionados: servicosSelecionados2 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
-  const creds = credsFrom3(await integrationSecrets("melhorenvio"));
+  const { credsFrom: credsFrom4, amostraDeServicos: amostraDeServicos3, servicosSelecionados: servicosSelecionados3 } = await Promise.resolve().then(() => (init_melhorenvio(), melhorenvio_exports));
+  const creds = credsFrom4(await integrationSecrets("melhorenvio"));
   if (creds.token === "") {
     jsonOk(res, { opcoes: [], selecionados: [], erro: "Cadastre o token do Melhor Envio e salve." });
     return;
@@ -5238,8 +5669,20 @@ adminRoutes.get("/melhorenvio/servicos", h(async (req, res) => {
     });
     return;
   }
-  const { opcoes, erro } = await amostraDeServicos2(creds);
-  jsonOk(res, { opcoes, selecionados: servicosSelecionados2(creds), erro });
+  const { opcoes, erro } = await amostraDeServicos3(creds);
+  jsonOk(res, { opcoes, selecionados: servicosSelecionados3(creds), erro });
+}));
+adminRoutes.get("/envia/servicos", h(async (req, res) => {
+  await requireAdmin(req);
+  const { credsFrom: credsFrom4, amostraDeServicos: amostraDeServicos3, servicosSelecionados: servicosSelecionados3, problemaNasCredenciais: problemaNasCredenciais2 } = await Promise.resolve().then(() => (init_envia(), envia_exports));
+  const creds = credsFrom4(await integrationSecrets("envia"));
+  const falta = problemaNasCredenciais2(creds);
+  if (falta !== "") {
+    jsonOk(res, { opcoes: [], selecionados: [], erro: falta });
+    return;
+  }
+  const { opcoes, erro } = await amostraDeServicos3(creds);
+  jsonOk(res, { opcoes, selecionados: servicosSelecionados3(creds), erro });
 }));
 adminRoutes.post("/whatsapp/test", h(async (req, res) => {
   await requireAdmin(req);
@@ -5261,14 +5704,133 @@ adminRoutes.put("/orders/:id/tracking", h(async (req, res) => {
   );
   jsonOk(res, { trackingCode: code });
 }));
+adminRoutes.post("/orders/:id/etiqueta", h(async (req, res) => {
+  await requireAdmin(req);
+  const pedido = await q.one("SELECT * FROM orders WHERE id = ?", [req.params.id]);
+  if (pedido === null) fail("Pedido n\xE3o encontrado.", 404, "not_found");
+  if (String(pedido.shipment_ref ?? "") !== "") {
+    fail(
+      "Este pedido j\xE1 tem etiqueta emitida. Para reimprimir, use o link que est\xE1 no pedido \u2014 emitir de novo pagaria o frete uma segunda vez.",
+      409,
+      "label_exists"
+    );
+  }
+  if (!pedido.paid_at) {
+    fail(
+      "O pedido ainda n\xE3o foi pago. Emitir a etiqueta agora paga o frete de uma venda que pode n\xE3o se confirmar.",
+      409,
+      "order_not_paid"
+    );
+  }
+  const servico = String(pedido.shipping_service_code ?? "");
+  const transportadora = String(pedido.shipping_carrier ?? "");
+  if (servico === "" || transportadora === "") {
+    fail(
+      "Este pedido n\xE3o tem transportadora e servi\xE7o gravados \u2014 o frete dele n\xE3o saiu de uma cota\xE7\xE3o da Envia.",
+      422,
+      "invalid_shipping"
+    );
+  }
+  const itens = await q.all(
+    "SELECT product_id, quantity, unit_price FROM order_items WHERE order_id = ?",
+    [req.params.id]
+  );
+  const pesos = /* @__PURE__ */ new Map();
+  for (const linha of await q.all(
+    `SELECT id, weight_kg FROM products WHERE id IN (${placeholders(Math.max(1, itens.length))})`,
+    itens.length > 0 ? itens.map((i) => i.product_id) : [""]
+  )) {
+    pesos.set(String(linha.id), Number(linha.weight_kg) || 0);
+  }
+  const { credsFrom: enviaCreds, gerarEtiqueta: gerarEtiqueta2 } = await Promise.resolve().then(() => (init_envia(), envia_exports));
+  const r = await gerarEtiqueta2(
+    enviaCreds(await integrationSecrets("envia")),
+    `${transportadora.toLowerCase()}|${servico.toLowerCase()}`,
+    {
+      name: String(pedido.ship_recipient ?? "") || String(pedido.customer_name ?? ""),
+      phone: String(pedido.ship_phone ?? "") || String(pedido.customer_phone ?? ""),
+      street: String(pedido.ship_street ?? ""),
+      number: String(pedido.ship_number ?? ""),
+      district: String(pedido.ship_neighborhood ?? ""),
+      city: String(pedido.ship_city ?? ""),
+      state: String(pedido.ship_state ?? ""),
+      cep: String(pedido.ship_cep ?? "")
+    },
+    itens.map((i) => ({
+      id: String(i.product_id),
+      // O peso do produto está em QUILOS na coluna; a cotação trabalha em gramas.
+      pesoGramas: Math.round((pesos.get(String(i.product_id)) ?? 0) * 1e3),
+      precoUnitario: Number(i.unit_price) || 0,
+      quantidade: Number(i.quantity) || 1
+    }))
+  );
+  if (r.erro !== "") fail(r.erro, 422, "label_failed");
+  try {
+    await q.run(
+      `UPDATE orders
+          SET shipment_ref = ?, label_provider = 'envia', label_url = ?,
+              tracking_code = CASE WHEN ? <> '' THEN ? ELSE tracking_code END,
+              tracking_url = CASE WHEN ? <> '' THEN ? ELSE tracking_url END
+        WHERE id = ?`,
+      [
+        r.envioId,
+        r.etiquetaUrl,
+        r.rastreio,
+        r.rastreio,
+        r.rastreioUrl,
+        r.rastreioUrl,
+        req.params.id
+      ]
+    );
+  } catch (e) {
+    console.error(
+      `[queops] ETIQUETA EMITIDA E N\xC3O GRAVADA \u2014 pedido ${String(req.params.id)}, envio ${r.envioId}, rastreio ${r.rastreio}, etiqueta ${r.etiquetaUrl}`,
+      e
+    );
+    throw e;
+  }
+  jsonOk(res, {
+    ok: true,
+    labelUrl: r.etiquetaUrl,
+    trackingCode: r.rastreio,
+    trackingUrl: r.rastreioUrl,
+    shipmentRef: r.envioId,
+    price: r.preco
+  });
+}));
+adminRoutes.delete("/orders/:id/etiqueta", h(async (req, res) => {
+  await requireAdmin(req);
+  const pedido = await q.one("SELECT shipment_ref FROM orders WHERE id = ?", [req.params.id]);
+  if (pedido === null) fail("Pedido n\xE3o encontrado.", 404, "not_found");
+  const { credsFrom: enviaCreds, cancelarEnvio: cancelarEnvio2 } = await Promise.resolve().then(() => (init_envia(), envia_exports));
+  const r = await cancelarEnvio2(
+    enviaCreds(await integrationSecrets("envia")),
+    String(pedido.shipment_ref ?? "")
+  );
+  if (!r.ok) fail(r.erro, 422, "cancel_failed");
+  await q.run(
+    `UPDATE orders SET shipment_ref = '', label_provider = '', label_url = '' WHERE id = ?`,
+    [req.params.id]
+  );
+  jsonOk(res, { ok: true });
+}));
 adminRoutes.get("/orders/:id/tracking", h(async (req, res) => {
   await requireAdmin(req);
-  const row = await q.one("SELECT tracking_code FROM orders WHERE id = ?", [req.params.id]);
+  const row = await q.one(
+    "SELECT tracking_code, label_provider FROM orders WHERE id = ?",
+    [req.params.id]
+  );
   if (!row) fail("Pedido n\xE3o encontrado.", 404, "not_found");
   const code = String(row.tracking_code ?? "");
   if (code === "") jsonOk(res, { trackingCode: "", eventos: [], erro: "Pedido sem c\xF3digo de rastreio." });
-  const { credsFrom: credsFrom3, rastrear: rastrear2 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
-  const { eventos, erro } = await rastrear2(credsFrom3(await integrationSecrets("correios")), code);
+  const porEnvia = String(row.label_provider ?? "") === "envia";
+  const { eventos, erro } = porEnvia ? await (async () => {
+    const { credsFrom: ec, rastrear: re } = await Promise.resolve().then(() => (init_envia(), envia_exports));
+    return await re(ec(await integrationSecrets("envia")), code);
+  })() : await (async () => {
+    const { credsFrom: credsFrom4, rastrear: rastrear3 } = await Promise.resolve().then(() => (init_correios(), correios_exports));
+    return await rastrear3(credsFrom4(await integrationSecrets("correios")), code);
+  })();
   if (erro === "" && eventos.length > 0) {
     await q.run(
       "UPDATE orders SET tracking_status = ?, tracking_at = NOW() WHERE id = ?",
@@ -6769,8 +7331,8 @@ v1Routes.post("/orders/:id/invoices", h(async (req, res) => {
     );
   }
   const inteiro = /* @__PURE__ */ __name((valor2) => /^\d{1,9}$/.test(valor2.trim()) ? Number(valor2) : -1, "inteiro");
-  const numero2 = inteiro(String(form.campos.number ?? ""));
-  if (numero2 < 0) fail('Informe "number" como um n\xFAmero inteiro.', 422, "invalid_invoice");
+  const numero3 = inteiro(String(form.campos.number ?? ""));
+  if (numero3 < 0) fail('Informe "number" como um n\xFAmero inteiro.', 422, "invalid_invoice");
   const serie = inteiro(String(form.campos.series ?? ""));
   if (serie < 0) fail('Informe "series" como um n\xFAmero inteiro.', 422, "invalid_invoice");
   const emitidaEm = String(form.campos.issuedAt ?? "").trim();
@@ -6824,7 +7386,7 @@ v1Routes.post("/orders/:id/invoices", h(async (req, res) => {
         `INSERT INTO order_invoices
            (nfe_key, order_id, number, series, issued_at, total_amount, status, xml_token, pdf_token)
          VALUES (?, ?, ?, ?, ?, ?, 'authorized', ?, ?)`,
-        [chave, pedidoId, numero2, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf]
+        [chave, pedidoId, numero3, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf]
       );
     } catch (e) {
       if (e?.code !== "ER_DUP_ENTRY") {
@@ -6853,7 +7415,7 @@ v1Routes.post("/orders/:id/invoices", h(async (req, res) => {
           SET number = ?, series = ?, issued_at = ?, total_amount = ?,
               xml_token = ?, pdf_token = ?
         WHERE nfe_key = ? AND order_id = ? AND status = 'authorized'`,
-      [numero2, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf, chave, pedidoId]
+      [numero3, serie, emitidaLocal, valorBruto, tokenXml, tokenPdf, chave, pedidoId]
     );
     if (trocadas === 0) {
       await descartarNovos();

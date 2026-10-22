@@ -76,7 +76,8 @@ export interface ShippingResult {
     | 'per_state'
     | 'default'
     | 'correios'
-    | 'melhorenvio';
+    | 'melhorenvio'
+    | 'envia';
   label: string;
 }
 
@@ -237,10 +238,21 @@ export function dadosDaTransportadora(
     };
   }
 
+  /*
+   * 'correios:03220' → '03220' · 'envia:correios|pac' → 'pac'.
+   *
+   * A Envia identifica o serviço pelo PAR (transportadora, serviço), e o id da
+   * opção carrega os dois para a etiqueta poder ser emitida depois. O ERP, no
+   * entanto, quer o código do serviço limpo — "correios|pac" no campo
+   * `shippingServiceCode` não casa com serviço nenhum do lado de lá.
+   */
+  const depoisDoProvedor = escolhida.id.split(':').slice(1).join(':');
+
   return {
     carrier: escolhida.carrier,
-    // 'correios:03220' → '03220'
-    serviceCode: escolhida.id.split(':')[1] ?? '',
+    serviceCode: depoisDoProvedor.includes('|')
+      ? depoisDoProvedor.split('|')[1]
+      : depoisDoProvedor,
     serviceName: escolhida.label,
     minDays: escolhida.days,
     maxDays: escolhida.days,
@@ -265,7 +277,7 @@ export interface QuoteItem {
  * cota de novo por ele, em vez de aceitar o preço que vier junto.
  */
 export interface OpcaoDeFrete {
-  /** 'correios:03220' · 'melhorenvio:2' — provedor e serviço. */
+  /** 'correios:03220' · 'melhorenvio:2' · 'envia:correios|pac' — provedor e serviço. */
   id: string;
   /** "Jadlog · .Package" — o que o cliente lê. */
   label: string;
@@ -273,7 +285,7 @@ export interface OpcaoDeFrete {
   carrier: string;
   price: number;
   days: number;
-  source: 'correios' | 'melhorenvio';
+  source: 'correios' | 'melhorenvio' | 'envia';
 }
 
 export interface Quote {
@@ -527,6 +539,86 @@ async function opcoesDoMelhorEnvio(
   }
 }
 
+
+/**
+ * Opções da Envia.
+ *
+ * Mesma forma das outras duas, e de propósito: o checkout não sabe (nem deve
+ * saber) de qual provedor veio cada linha — ele mostra preço, prazo e nome, e
+ * cota de novo pelo id na hora de fechar o pedido.
+ *
+ * A diferença está no id: `envia:correios|pac` carrega a transportadora junto
+ * do serviço, porque é o par que a Envia usa para identificar o que foi
+ * cotado — e é com ele que a etiqueta é emitida depois, sem uma nova cotação
+ * que poderia vir com outro preço.
+ */
+async function opcoesDaEnvia(
+  ship: ShippingResult,
+  cep: string,
+  itens: QuoteItem[],
+  produtos: Map<string, Record<string, unknown>>,
+  exec: Q,
+  diagnostico: { motivo: string },
+): Promise<OpcaoDeFrete[] | null> {
+  const pulou = (motivo: string): null => {
+    console.warn(`[queops] frete: Envia não consultada — ${motivo}`);
+    diagnostico.motivo = diagnostico.motivo === ''
+      ? `Envia: ${motivo}`
+      : `${diagnostico.motivo} · Envia: ${motivo}`;
+    return null;
+  };
+
+  if (ship.reason.startsWith('free_')) return null;
+  if (normalizeCep(cep) === '') return null; // já reportado pelos Correios
+
+  try {
+    const row = await exec.one(
+      "SELECT enabled FROM integrations WHERE id = 'envia' AND enabled = 1",
+    );
+    if (!row) return null; // desligada é escolha, não falha: nem vale log.
+
+    const { integrationSecrets } = await import('./store.ts');
+    const { credsFrom, cotar, servicosSelecionados, problemaNasCredenciais } =
+      await import('./envia.ts');
+    const creds = credsFrom(await integrationSecrets('envia', exec));
+
+    const falta = problemaNasCredenciais(creds);
+    if (falta !== '') return pulou(falta);
+
+    const selecionados = servicosSelecionados(creds);
+    if (selecionados.length === 0) {
+      return pulou('nenhuma transportadora marcada em Painel → Integrações');
+    }
+
+    const paraCotar = itens.map((i) => ({
+      id: i.productId,
+      pesoGramas: pesoDoProduto(produtos.get(i.productId)).gramas,
+      precoUnitario: i.unitPrice,
+      quantidade: i.quantity,
+    }));
+
+    const { opcoes, erro } = await cotar(creds, cep, paraCotar, selecionados, ufFromCep(cep));
+    if (erro !== '') return pulou(erro);
+
+    const boas = opcoes.filter((o) => o.erro === '' && o.preco > 0);
+    if (boas.length === 0) {
+      const motivos = opcoes.map((o) => `${o.nome}: ${o.erro || 'sem preço'}`).join(' · ');
+      return pulou(motivos === '' ? 'nenhuma transportadora cotou' : `nenhuma cotou (${motivos})`);
+    }
+
+    return boas.map((o) => ({
+      id: `envia:${o.servico}`,
+      label: o.nome,
+      carrier: o.transportadora === '' ? 'Envia' : o.transportadora,
+      price: round2(o.preco),
+      days: o.prazoDias,
+      source: 'envia' as const,
+    }));
+  } catch (e) {
+    return pulou(e instanceof Error ? e.message : String(e));
+  }
+}
+
 /** Junta o que as transportadoras cotaram, da mais barata para a mais cara. */
 async function cotarTransportadoras(
   ship: ShippingResult,
@@ -538,15 +630,18 @@ async function cotarTransportadoras(
   diagnostico: { motivo: string },
 ): Promise<OpcaoDeFrete[]> {
   /*
-   * Os dois provedores em paralelo: são chamadas de rede independentes, e
-   * esperar uma para começar a outra dobraria o tempo do checkout sem motivo.
+   * Os três provedores em PARALELO: são chamadas de rede independentes, e
+   * esperar uma para começar a outra somaria os tempos no checkout. Com três,
+   * isso deixou de ser economia e virou necessidade — em série, uma cotação
+   * lenta de um provedor atrasaria a tela inteira.
    */
-  const [correios, melhorEnvio] = await Promise.all([
+  const [correios, melhorEnvio, envia] = await Promise.all([
     opcoesDosCorreios(ship, cep, pesoGramas, exec, diagnostico),
     opcoesDoMelhorEnvio(ship, cep, itens, produtos, exec, diagnostico),
+    opcoesDaEnvia(ship, cep, itens, produtos, exec, diagnostico),
   ]);
 
-  const todas = [...(correios ?? []), ...(melhorEnvio ?? [])];
+  const todas = [...(correios ?? []), ...(melhorEnvio ?? []), ...(envia ?? [])];
   return todas.sort((a, b) => a.price - b.price);
 }
 

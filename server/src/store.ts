@@ -122,7 +122,7 @@ export const DEFAULT_RECOVERY: RecoveryConfig = {
 export const INTEGRATION_IDS = [
   'uno', 'erp', 'zapi', 'evolution', 'chatwoot', 'chatvolt',
   'mercadopago', 'pagseguro', 'stripe', 'pagarme',
-  'correios', 'melhorenvio', 'frenet',
+  'correios', 'melhorenvio', 'frenet', 'envia',
 ] as const;
 
 /** Quais campos de cada integração são segredo e nunca voltam para o navegador. */
@@ -814,6 +814,16 @@ export function orderRowToApi(r: Row, items: Row[], invoices: Row[] = []): Recor
     trackingCode: vazioOuNulo(r.tracking_code),
     trackingStatus: vazioOuNulo(r.tracking_status),
     trackingUrl: vazioOuNulo(r.tracking_url) ?? urlDeRastreio(r.tracking_code),
+    /*
+     * Etiqueta emitida pela loja, quando houve.
+     *
+     * Vai também para a API do ERP: o integrador pergunta "esse pedido já tem
+     * etiqueta?" e, sem o campo, a única resposta era abrir o painel. `null`
+     * significa "ainda não emitida" — e não "não sei".
+     */
+    labelUrl: vazioOuNulo(r.label_url),
+    shipmentRef: vazioOuNulo(r.shipment_ref),
+    labelProvider: vazioOuNulo(r.label_provider),
     /*
      * Quando o dinheiro entrou, ou null.
      *

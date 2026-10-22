@@ -39,6 +39,12 @@ const FIELD_LABELS: Record<string, string> = {
   encryptionKey: 'Encryption Key',
   instance: 'Instância',
   instanceId: 'Instance ID',
+  originCep: 'CEP de origem',
+  originCity: 'Cidade de origem',
+  originName: 'Nome do remetente',
+  originPhone: 'Telefone do remetente',
+  originState: 'UF de origem',
+  originStreet: 'Rua de origem',
   postingCard: 'Cartão de postagem',
   publicKey: 'Public Key',
   publishableKey: 'Publishable Key',
@@ -56,6 +62,15 @@ export const PROVIDERS_META: Record<string, { fields: string[] }> = {
   correios: { fields: ['user', 'accessCode', 'postingCard'] },
   melhorenvio: { fields: ['token'] },
   frenet: { fields: ['token'] },
+  /*
+   * A Envia pede mais que as outras duas: ela também EMITE a etiqueta, e
+   * etiqueta exige remetente de verdade — nome, telefone, rua, cidade e UF.
+   * Só o CEP, que basta para cotar nos Correios e no Melhor Envio, não imprime
+   * uma etiqueta que o carteiro consiga ler.
+   */
+  envia: {
+    fields: ['token', 'originName', 'originPhone', 'originStreet', 'originCity', 'originState', 'originCep'],
+  },
   // Sem campo obrigatório: o teste do UNO não usa credencial nenhuma da loja —
   // ele lê o uso das chaves de API, que é o caminho por onde o UNO entra.
   uno: { fields: [] },
@@ -331,6 +346,55 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
           + (selecionados === 0
             ? ' Escolha abaixo quais o cliente pode ver.'
             : ` ${selecionados} liberada(s) para o cliente.`),
+      };
+    }
+
+    case 'envia': {
+      /*
+       * O teste COTA, como nos Correios e no Melhor Envio — e aqui ele vale
+       * ainda mais: a documentação pública da Envia não diz quais
+       * transportadoras ela opera no Brasil. Uma cotação de verdade responde
+       * essa pergunta em dois segundos, e é a única coisa que responde.
+       */
+      const { credsFrom: enviaCreds, amostraDeServicos: amostraEnvia, ehSandbox, problemaNasCredenciais } =
+        await import('./envia.ts');
+      const creds = enviaCreds(f as Record<string, unknown>);
+
+      const falta = problemaNasCredenciais(creds);
+      if (falta !== '') return { ok: false, message: falta };
+
+      const { opcoes, erro } = await amostraEnvia(creds);
+      if (erro !== '') return { ok: false, message: erro };
+
+      const cotaram = opcoes.filter((o) => o.erro === '' && o.preco > 0);
+      if (cotaram.length === 0) {
+        /*
+         * Token válido e zero transportadoras é o resultado mais informativo
+         * que este teste pode dar: significa que a conta autentica mas não
+         * cota esta rota. Dizer isso por extenso evita a conclusão errada de
+         * que "a integração está pronta".
+         */
+        return {
+          ok: false,
+          message: 'O token foi aceito, mas nenhuma transportadora cotou de '
+            + `${creds.originCep} para São Paulo. Confirme com a Envia se a conta atende frete `
+            + 'nacional no Brasil e quais transportadoras estão habilitadas nela.',
+        };
+      }
+
+      const amostra = cotaram
+        .slice(0, 4)
+        .map((o) => `${o.nome} R$ ${o.preco.toFixed(2).replace('.', ',')}`)
+        .join(' · ');
+      const marcados = creds.services.trim() === '' ? 0 : creds.services.split(',').length;
+      return {
+        ok: true,
+        message: `${cotaram.length} transportadora(s) cotando: ${amostra}`
+          + `${cotaram.length > 4 ? '…' : ''} (1 kg para São Paulo, ambiente `
+          + `${ehSandbox(creds) ? 'de teste' : 'de produção'}).`
+          + (marcados === 0
+            ? ' Escolha abaixo quais o cliente pode ver.'
+            : ` ${marcados} liberada(s) para o cliente.`),
       };
     }
 

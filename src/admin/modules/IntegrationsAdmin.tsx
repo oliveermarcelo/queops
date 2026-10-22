@@ -30,6 +30,7 @@ const PROVIDER_ICON: Record<IntegrationId, React.ComponentType<{ size?: number }
   correios: Truck,
   melhorenvio: Truck,
   frenet: Truck,
+  envia: Truck,
 };
 
 // Accent color per category (tailwind-friendly fragments)
@@ -340,6 +341,19 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
                 onChange={(novo) => setField('services', novo)}
                 recarregar={versaoServidor}
                 correiosProprio={state.integrations.correios?.enabled === true}
+              />
+            )}
+
+            {/* A Envia usa a mesma tela: a escolha é a mesma, só a conta muda. */}
+            {provider.id === 'envia' && (
+              <TransportadorasMelhorEnvio
+                valor={fieldValue('services')}
+                onChange={(novo) => setField('services', novo)}
+                recarregar={versaoServidor}
+                correiosProprio={state.integrations.correios?.enabled === true}
+                endpoint="/admin/envia/servicos"
+                provedor="Envia"
+                amostra="1 kg para São Paulo"
               />
             )}
 
