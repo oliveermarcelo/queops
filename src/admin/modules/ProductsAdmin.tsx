@@ -211,8 +211,13 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
                     className="w-4 h-4 rounded border-gray-300 text-primary-blue focus:ring-primary-blue/30 cursor-pointer"
                   />
                 </th>
-                <th className="py-3 px-4 font-semibold">Produto</th>
-                <th className="py-3 px-4 font-semibold">Categoria</th>
+                {/*
+                  Produto leva a sobra da linha: o nome completo é o que a
+                  pessoa usa para saber em qual produto está mexendo, e as
+                  outras colunas cabem no conteúdo delas.
+                */}
+                <th className="py-3 px-4 font-semibold w-full">Produto</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Categoria</th>
                 <th className="py-3 px-4 font-semibold text-center">Estoque</th>
                 <th className="py-3 px-4 font-semibold text-right">Preço</th>
                 <th className="py-3 px-4 font-semibold text-right">Ações</th>
@@ -243,11 +248,20 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
                           ? <img src={safeImageSrc(p.image)} alt="" loading="lazy" decoding="async" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                           : <span className="text-[9px] text-gray-300">s/ img</span>}
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className={`font-semibold truncate max-w-[260px] ${
-                            p.active === false ? 'text-gray-400' : 'text-gray-800'
-                          }`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start gap-2">
+                          {/*
+                            O nome quebra em linha em vez de ser cortado: antes
+                            havia `truncate max-w-[260px]`, e a pessoa tinha de
+                            abrir o produto só para ler o nome inteiro na hora
+                            de subir as fotos.
+                          */}
+                          <p
+                            title={p.name}
+                            className={`font-semibold break-words ${
+                              p.active === false ? 'text-gray-400' : 'text-gray-800'
+                            }`}
+                          >
                             {p.name}
                           </p>
                           {/*
@@ -256,7 +270,7 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
                             aos outros.
                           */}
                           {p.active === false && (
-                            <span className="text-[10px] font-bold bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            <span className="text-[10px] font-bold bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 mt-0.5">
                               fora da vitrine
                             </span>
                           )}
