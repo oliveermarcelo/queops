@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Database, MessageCircle, Bot, Headphones, Plug,
   CheckCircle2, XCircle, Send, ExternalLink, Loader2,
@@ -150,7 +150,8 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
   // Rascunho local: os campos só vão para o servidor ao clicar em "Salvar".
   // Digitar não pode disparar uma gravação por tecla.
   const [draft, setDraft] = useState<Record<string, string>>({});
-  const [dirty, setDirty] = useState(false);
+  /** A área dos campos, para ler o que está escrito neles de verdade. */
+  const campos = useRef<HTMLDivElement | null>(null);
 
   /*
    * Muda a cada salvar/testar, para as seções que consultam o servidor
@@ -168,40 +169,77 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
 
   const setField = (key: string, value: string) => {
     setDraft((d) => ({ ...d, [key]: value }));
-    setDirty(true);
+  };
+
+  /*
+   * O QUE ESTÁ NOS CAMPOS AGORA — lido do DOM, não do estado do React.
+   *
+   * O preenchimento automático do navegador escreve no input sem disparar o
+   * onChange. Telefone, rua, cidade, UF e CEP são justamente os campos que o
+   * Chrome preenche sozinho: a tela mostrava o endereço completo, o rascunho
+   * do React continuava vazio, e o servidor recebia um salvar sem eles — daí
+   * o "falta preencher" com tudo visivelmente preenchido.
+   *
+   * Ler o DOM na hora de salvar fecha esse buraco para qualquer campo, de
+   * qualquer integração, sem depender de o navegador ter avisado.
+   */
+  const valoresDaTela = (): Record<string, string> => {
+    const atual: Record<string, string> = { ...draft };
+    const caixa = campos.current;
+    if (caixa === null) return atual;
+    for (const f of provider.fields) {
+      const input = caixa.querySelector<HTMLInputElement>(`#${CSS.escape(`${provider.id}-${f.key}`)}`);
+      if (input === null) continue;
+      const v = input.value.trim();
+      // Campo secreto em branco significa "mantenha o que já está salvo", e
+      // não "apague": mandá-lo zeraria a credencial a cada salvar.
+      if (v === '' && SECRET_FIELD_KEYS.has(f.key)) continue;
+      atual[f.key] = input.value;
+    }
+    return atual;
+  };
+
+  const salvar = async () => {
+    await updateIntegration(provider.id, {
+      fields: valoresDaTela(),
+      enabled: cfg?.enabled ?? false,
+    });
+    setDraft({});
   };
 
   const handleSave = async () => {
     setBusy(true);
     setResult(null);
     try {
-      await updateIntegration(provider.id, { fields: draft, enabled: cfg?.enabled ?? false });
-      setDraft({});
-      setDirty(false);
+      await salvar();
       setVersaoServidor((v) => v + 1);
       setResult({ ok: true, message: 'Credenciais salvas no servidor (cifradas).' });
+    } catch (err) {
+      // Sem este catch, um salvar que falhava não mostrava nada: a tela voltava
+      // ao normal e quem clicou concluía que tinha salvo.
+      setResult({ ok: false, message: err instanceof Error ? err.message : 'Falha ao salvar.' });
     } finally {
       setBusy(false);
     }
   };
 
   /*
-   * Salva antes de testar, quando há edição pendente.
+   * Salva ANTES de testar, sempre.
    *
    * O teste roda no servidor contra a credencial CIFRADA no banco — o que está
    * na tela não viaja junto. Sem salvar primeiro, quem digitou e clicou em
    * "Testar conexão" recebia "falta preencher" com o campo visivelmente
    * preenchido, e concluía que o provedor tinha recusado a credencial.
+   *
+   * Era condicionado a "ter edição pendente", e isso reabria o mesmo buraco
+   * pelo lado do preenchimento automático: sem onChange não há edição
+   * pendente, e o salvar era pulado.
    */
   const handleTest = async () => {
     setBusy(true);
     setResult(null);
     try {
-      if (dirty) {
-        await updateIntegration(provider.id, { fields: draft, enabled: cfg?.enabled ?? false });
-        setDraft({});
-        setDirty(false);
-      }
+      await salvar();
       setResult(await testIntegration(provider.id));
       setVersaoServidor((v) => v + 1);
     } catch (err) {
@@ -281,7 +319,7 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
 
         {/* Collapsible config */}
         {open && (
-          <div className="mt-4 pt-4 border-t border-gray-100 space-y-3 animate-fade-in">
+          <div ref={campos} className="mt-4 pt-4 border-t border-gray-100 space-y-3 animate-fade-in">
             {/*
               Integração sem campo de credencial existe: é o caso de quem
               CONSOME a API da loja, em vez de a loja consumir a dele. Sem esta
@@ -391,7 +429,13 @@ function IntegrationCard({ provider }: { provider: ProviderMeta; key?: React.Key
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleSave}
-                  disabled={busy || !dirty}
+                  /*
+                    Só desabilitado enquanto grava. Depender de "ter edição
+                    pendente" travava o botão quando o navegador preenchia os
+                    campos sozinho: a tela mostrava o endereço e o SALVAR
+                    ficava apagado, sem explicação nenhuma.
+                  */
+                  disabled={busy}
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50"
                 >
                   Salvar
