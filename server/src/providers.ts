@@ -356,8 +356,10 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
        * transportadoras ela opera no Brasil. Uma cotação de verdade responde
        * essa pergunta em dois segundos, e é a única coisa que responde.
        */
-      const { credsFrom: enviaCreds, amostraDeServicos: amostraEnvia, ehSandbox, problemaNasCredenciais } =
-        await import('./envia.ts');
+      const {
+        credsFrom: enviaCreds, amostraDeServicos: amostraEnvia, ehSandbox,
+        problemaNasCredenciais, CAUSAS_DE_COTACAO_VAZIA,
+      } = await import('./envia.ts');
       const creds = enviaCreds(f as Record<string, unknown>);
 
       const falta = problemaNasCredenciais(creds);
@@ -377,8 +379,7 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
         return {
           ok: false,
           message: 'O token foi aceito, mas nenhuma transportadora cotou de '
-            + `${creds.originCep} para São Paulo. Confirme com a Envia se a conta atende frete `
-            + 'nacional no Brasil e quais transportadoras estão habilitadas nela.',
+            + `${creds.originCep} para São Paulo (1 kg). ${CAUSAS_DE_COTACAO_VAZIA}`,
         };
       }
 

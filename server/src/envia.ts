@@ -387,12 +387,23 @@ export async function cotar(
    */
   const uf = String(ufDestino ?? '').toUpperCase().slice(0, 2);
   const corpo = {
-    origin: origem(c),
+    /*
+     * Bairro vazio não vai: a própria documentação da Envia lista "endereço
+     * inválido" como causa de cotação vazia, e bairro é obrigatório para as
+     * transportadoras brasileiras. No remetente ele é um campo opcional do
+     * painel — aqui, na cotação, entra um valor genérico em vez de vazio.
+     *
+     * Isto vale SÓ para cotar. A etiqueta continua saindo com o endereço que a
+     * lojista cadastrou, sem remendo: uma etiqueta com bairro inventado é uma
+     * encomenda que volta.
+     */
+    origin: { ...origem(c), district: c.originDistrict || 'Centro' },
     destination: {
       name: 'Cliente',
       phone: c.originPhone,
       street: 'Nao informado',
       number: 'S/N',
+      district: 'Centro',
       city: cidadeDestino || uf || 'Nao informado',
       state: uf,
       country: 'BR',
@@ -407,6 +418,20 @@ export async function cotar(
   if (erro !== '') return { opcoes: [], erro };
 
   const todas = mapearOpcoes(listaDe(dados));
+
+  /*
+   * Zero transportadoras com HTTP 200 é o caso mais difícil de investigar: a
+   * Envia aceita o pedido e devolve lista vazia, sem dizer por quê. Guardar a
+   * resposta crua é o que permite descobrir se veio mesmo vazia ou se veio com
+   * um aviso que a loja não está lendo.
+   */
+  if (todas.length === 0) {
+    console.error(
+      '[queops] Envia cotou ZERO transportadoras.',
+      `origem ${c.originCep} → destino ${destino}.`,
+      'resposta:', JSON.stringify(dados ?? null).slice(0, 600),
+    );
+  }
   if (apenasServicos.length === 0) return { opcoes: todas, erro: '' };
 
   const marcados = new Set(apenasServicos.map((x) => x.toLowerCase()));
@@ -433,6 +458,19 @@ export async function amostraDeServicos(
     'Sao Paulo',
   );
 }
+
+/**
+ * As quatro causas de cotação vazia, segundo a própria Envia.
+ *
+ * Vai inteira para a tela quando o token é aceito e ninguém cota. Sem isto a
+ * mensagem mandava "confirme com a Envia" e parava aí — sem dizer o que
+ * perguntar, que é a parte difícil.
+ */
+export const CAUSAS_DE_COTACAO_VAZIA =
+  'Pela documentação da Envia, cotação vazia tem quatro causas: a transportadora não atende '
+  + 'a rota; o endereço de origem está incompleto (bairro em branco é o caso mais comum); o peso '
+  + 'ou as medidas do pacote estão fora do que ela aceita; ou a conta não tem aquela '
+  + 'transportadora habilitada. Vale conferir o cadastro do remetente antes de abrir chamado.';
 
 // ------------------------------------------------------------ etiqueta ----
 

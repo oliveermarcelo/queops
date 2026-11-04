@@ -2369,6 +2369,7 @@ var init_melhorenvio = __esm({
 // server/src/envia.ts
 var envia_exports = {};
 __export(envia_exports, {
+  CAUSAS_DE_COTACAO_VAZIA: () => CAUSAS_DE_COTACAO_VAZIA,
   amostraDeServicos: () => amostraDeServicos2,
   cancelarEnvio: () => cancelarEnvio,
   cotar: () => cotar2,
@@ -2555,12 +2556,23 @@ async function cotar2(c, cepDestino, itens, apenasServicos = [], ufDestino = "",
   if (itens.length === 0) return { opcoes: [], erro: "Carrinho vazio." };
   const uf = String(ufDestino ?? "").toUpperCase().slice(0, 2);
   const corpo = {
-    origin: origem(c),
+    /*
+     * Bairro vazio não vai: a própria documentação da Envia lista "endereço
+     * inválido" como causa de cotação vazia, e bairro é obrigatório para as
+     * transportadoras brasileiras. No remetente ele é um campo opcional do
+     * painel — aqui, na cotação, entra um valor genérico em vez de vazio.
+     *
+     * Isto vale SÓ para cotar. A etiqueta continua saindo com o endereço que a
+     * lojista cadastrou, sem remendo: uma etiqueta com bairro inventado é uma
+     * encomenda que volta.
+     */
+    origin: { ...origem(c), district: c.originDistrict || "Centro" },
     destination: {
       name: "Cliente",
       phone: c.originPhone,
       street: "Nao informado",
       number: "S/N",
+      district: "Centro",
       city: cidadeDestino || uf || "Nao informado",
       state: uf,
       country: "BR",
@@ -2573,6 +2585,14 @@ async function cotar2(c, cepDestino, itens, apenasServicos = [], ufDestino = "",
   const { dados, erro } = await chamar(c, "/ship/rate/", corpo);
   if (erro !== "") return { opcoes: [], erro };
   const todas = mapearOpcoes2(listaDe(dados));
+  if (todas.length === 0) {
+    console.error(
+      "[queops] Envia cotou ZERO transportadoras.",
+      `origem ${c.originCep} \u2192 destino ${destino}.`,
+      "resposta:",
+      JSON.stringify(dados ?? null).slice(0, 600)
+    );
+  }
   if (apenasServicos.length === 0) return { opcoes: todas, erro: "" };
   const marcados = new Set(apenasServicos.map((x) => x.toLowerCase()));
   return { opcoes: todas.filter((o) => marcados.has(o.servico)), erro: "" };
@@ -2662,7 +2682,7 @@ async function rastrear(c, codigo) {
   })).filter((e) => e.descricao !== "");
   return { eventos, erro: "" };
 }
-var MIN_COMPRIMENTO2, MIN_LARGURA2, MIN_ALTURA2, MIN_PESO_GRAMAS2, SEM_ETIQUETA;
+var MIN_COMPRIMENTO2, MIN_LARGURA2, MIN_ALTURA2, MIN_PESO_GRAMAS2, CAUSAS_DE_COTACAO_VAZIA, SEM_ETIQUETA;
 var init_envia = __esm({
   "server/src/envia.ts"() {
     "use strict";
@@ -2687,6 +2707,7 @@ var init_envia = __esm({
     __name(mapearOpcoes2, "mapearOpcoes");
     __name(cotar2, "cotar");
     __name(amostraDeServicos2, "amostraDeServicos");
+    CAUSAS_DE_COTACAO_VAZIA = "Pela documenta\xE7\xE3o da Envia, cota\xE7\xE3o vazia tem quatro causas: a transportadora n\xE3o atende a rota; o endere\xE7o de origem est\xE1 incompleto (bairro em branco \xE9 o caso mais comum); o peso ou as medidas do pacote est\xE3o fora do que ela aceita; ou a conta n\xE3o tem aquela transportadora habilitada. Vale conferir o cadastro do remetente antes de abrir chamado.";
     SEM_ETIQUETA = {
       erro: "",
       rastreio: "",
@@ -2872,7 +2893,13 @@ async function providerTest(id, f) {
       };
     }
     case "envia": {
-      const { credsFrom: enviaCreds, amostraDeServicos: amostraEnvia, ehSandbox: ehSandbox2, problemaNasCredenciais: problemaNasCredenciais2 } = await Promise.resolve().then(() => (init_envia(), envia_exports));
+      const {
+        credsFrom: enviaCreds,
+        amostraDeServicos: amostraEnvia,
+        ehSandbox: ehSandbox2,
+        problemaNasCredenciais: problemaNasCredenciais2,
+        CAUSAS_DE_COTACAO_VAZIA: CAUSAS_DE_COTACAO_VAZIA2
+      } = await Promise.resolve().then(() => (init_envia(), envia_exports));
       const creds = enviaCreds(f);
       const falta = problemaNasCredenciais2(creds);
       if (falta !== "") return { ok: false, message: falta };
@@ -2882,7 +2909,7 @@ async function providerTest(id, f) {
       if (cotaram.length === 0) {
         return {
           ok: false,
-          message: `O token foi aceito, mas nenhuma transportadora cotou de ${creds.originCep} para S\xE3o Paulo. Confirme com a Envia se a conta atende frete nacional no Brasil e quais transportadoras est\xE3o habilitadas nela.`
+          message: `O token foi aceito, mas nenhuma transportadora cotou de ${creds.originCep} para S\xE3o Paulo (1 kg). ${CAUSAS_DE_COTACAO_VAZIA2}`
         };
       }
       const amostra = cotaram.slice(0, 4).map((o) => `${o.nome} R$ ${o.preco.toFixed(2).replace(".", ",")}`).join(" \xB7 ");
