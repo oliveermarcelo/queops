@@ -18,7 +18,7 @@
  */
 
 import { closePool, q } from '../server/src/db.ts';
-import { mapearOpcoes, credsFrom, problemaNasCredenciais, ehSandbox, detalheDoErro } from '../server/src/envia.ts';
+import { mapearOpcoes, credsFrom, problemaNasCredenciais, ehSandbox, detalheDoErro, pacoteDo, causasDeCotacaoVazia } from '../server/src/envia.ts';
 import { dadosDaTransportadora } from '../server/src/pricing.ts';
 
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8080';
@@ -113,6 +113,70 @@ ok(opcoes[1].servico === 'jadlog|package', '1 · o par da segunda transportadora
 ok(opcoes[2].erro !== '' && opcoes[2].preco === 0,
   '1 · serviço sem preço vira erro, e não uma opção de R$ 0,00',
   JSON.stringify(opcoes[2]));
+
+// ------------------------------- 1b. a caixa que vai na cotação ----
+
+/*
+ * A transportadora mede a EMBALAGEM, não a peça.
+ *
+ * A cotação ia sempre com 16 × 11 × 2 cm, o mínimo dos Correios. Um quilo
+ * nessa caixa dá quase 3 g/cm³ — mais denso que alumínio. Transportadora que
+ * confere cubagem não cota isso, e a conta voltava com zero opções sem dizer
+ * por quê.
+ */
+const CARRINHO = [{ id: 'x', pesoGramas: 1000, precoUnitario: 100, quantidade: 1 }];
+
+const semCaixa = pacoteDo(CARRINHO, credsFrom({ token: 't' }));
+ok(
+  semCaixa.dimensions.length === 16 && semCaixa.dimensions.width === 11
+    && semCaixa.dimensions.height === 2,
+  '1b · sem caixa configurada, cai no mínimo de postagem',
+  JSON.stringify(semCaixa.dimensions),
+);
+
+const comCaixa = pacoteDo(CARRINHO, credsFrom({
+  token: 't', boxLength: '30', boxWidth: '20', boxHeight: '15',
+}));
+ok(
+  comCaixa.dimensions.length === 30 && comCaixa.dimensions.width === 20
+    && comCaixa.dimensions.height === 15,
+  '1b · a caixa do painel é a que vai na cotação',
+  JSON.stringify(comCaixa.dimensions),
+);
+
+const virgula = pacoteDo(CARRINHO, credsFrom({ token: 't', boxLength: '30,5' }));
+ok(virgula.dimensions.length === 30.5, '1b · aceita vírgula, que é como se digita aqui');
+
+const pequena = pacoteDo(CARRINHO, credsFrom({
+  token: 't', boxLength: '5', boxWidth: '5', boxHeight: '1',
+}));
+ok(
+  pequena.dimensions.length === 16 && pequena.dimensions.width === 11
+    && pequena.dimensions.height === 2,
+  '1b · caixa menor que o mínimo sobe para o mínimo — o balcão recusaria',
+  JSON.stringify(pequena.dimensions),
+);
+
+const absurda = pacoteDo(CARRINHO, credsFrom({ token: 't', boxLength: '3000' }));
+ok(
+  absurda.dimensions.length === 200,
+  '1b · e um zero a mais digitado por engano não vira uma caixa de 30 metros',
+  String(absurda.dimensions.length),
+);
+
+const negativa = pacoteDo(CARRINHO, credsFrom({ token: 't', boxHeight: '-4' }));
+ok(negativa.dimensions.height === 2, '1b · medida negativa é ignorada');
+
+ok(
+  /CAIXA PADRÃO/.test(causasDeCotacaoVazia(credsFrom({ token: 't' }))),
+  '1b · sem caixa, a explicação de "ninguém cotou" começa por ela',
+);
+ok(
+  /30 × 20 × 15/.test(causasDeCotacaoVazia(credsFrom({
+    token: 't', boxLength: '30', boxWidth: '20', boxHeight: '15',
+  }))),
+  '1b · com caixa, a explicação diz qual caixa foi usada',
+);
 
 // -------------------------- 2. o par não vaza para o ERP ----
 

@@ -2501,15 +2501,16 @@ var init_melhorenvio = __esm({
 // server/src/envia.ts
 var envia_exports = {};
 __export(envia_exports, {
-  CAUSAS_DE_COTACAO_VAZIA: () => CAUSAS_DE_COTACAO_VAZIA,
   amostraDeServicos: () => amostraDeServicos2,
   cancelarEnvio: () => cancelarEnvio,
+  causasDeCotacaoVazia: () => causasDeCotacaoVazia,
   cotar: () => cotar2,
   credsFrom: () => credsFrom2,
   detalheDoErro: () => detalheDoErro2,
   ehSandbox: () => ehSandbox,
   gerarEtiqueta: () => gerarEtiqueta,
   mapearOpcoes: () => mapearOpcoes2,
+  pacoteDo: () => pacoteDo,
   problemaNasCredenciais: () => problemaNasCredenciais,
   rastrear: () => rastrear,
   servicosSelecionados: () => servicosSelecionados2
@@ -2530,8 +2531,16 @@ function credsFrom2(f) {
     originDistrict: s("originDistrict"),
     originCity: s("originCity"),
     originState: s("originState").toUpperCase().slice(0, 2),
-    originCep: s("originCep").replace(/\D/g, "")
+    originCep: s("originCep").replace(/\D/g, ""),
+    boxLength: medida(s("boxLength")),
+    boxWidth: medida(s("boxWidth")),
+    boxHeight: medida(s("boxHeight"))
   };
+}
+function medida(v) {
+  const n = Number(String(v).replace(",", "."));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(200, Math.round(n * 10) / 10);
 }
 function ehSandbox(c) {
   return c.sandbox === "sandbox" || c.sandbox === "teste" || c.sandbox === "test";
@@ -2558,7 +2567,7 @@ function numero2(v) {
   const n = Number(String(v ?? "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }
-function pacoteDo(itens) {
+function pacoteDo(itens, c) {
   const gramas = itens.reduce(
     (t, i) => t + Math.max(0, i.pesoGramas) * Math.max(1, Math.round(i.quantidade)),
     0
@@ -2575,7 +2584,11 @@ function pacoteDo(itens) {
     lengthUnit: "CM",
     weightUnit: "KG",
     weight: Math.max(MIN_PESO_GRAMAS2, Math.round(gramas)) / 1e3,
-    dimensions: { length: MIN_COMPRIMENTO2, width: MIN_LARGURA2, height: MIN_ALTURA2 }
+    dimensions: {
+      length: Math.max(MIN_COMPRIMENTO2, c.boxLength),
+      width: Math.max(MIN_LARGURA2, c.boxWidth),
+      height: Math.max(MIN_ALTURA2, c.boxHeight)
+    }
   };
 }
 function origem(c) {
@@ -2710,7 +2723,7 @@ async function cotar2(c, cepDestino, itens, apenasServicos = [], ufDestino = "",
       country: "BR",
       postalCode: destino
     },
-    packages: [pacoteDo(itens)],
+    packages: [pacoteDo(itens, c)],
     shipment: { type: 1 },
     settings: { currency: "BRL" }
   };
@@ -2739,6 +2752,10 @@ async function amostraDeServicos2(c) {
     "Sao Paulo"
   );
 }
+function causasDeCotacaoVazia(c) {
+  const semCaixa = c.boxLength === 0 && c.boxWidth === 0 && c.boxHeight === 0;
+  return "Pela documenta\xE7\xE3o da Envia, cota\xE7\xE3o vazia tem quatro causas: as medidas ou o peso do pacote est\xE3o fora do que a transportadora aceita; o endere\xE7o de origem est\xE1 incompleto (bairro em branco \xE9 o caso mais comum); a transportadora n\xE3o atende a rota; ou a conta n\xE3o tem aquela transportadora habilitada." + (semCaixa ? " Comece pela CAIXA PADR\xC3O, logo acima: em branco, a cota\xE7\xE3o vai com 16 \xD7 11 \xD7 2 cm, que \xE9 o m\xEDnimo dos Correios \u2014 uma caixa desse tamanho com 1 kg dentro \xE9 mais densa que alum\xEDnio, e quem confere cubagem n\xE3o cota." : ` A caixa configurada \xE9 ${c.boxLength || 16} \xD7 ${c.boxWidth || 11} \xD7 ${c.boxHeight || 2} cm; confira se \xE9 mesmo a que voc\xEAs usam.`);
+}
 async function gerarEtiqueta(c, servico, destino, itens) {
   const problema = problemaNasCredenciais(c);
   if (problema !== "") return { ...SEM_ETIQUETA, erro: problema };
@@ -2758,7 +2775,7 @@ async function gerarEtiqueta(c, servico, destino, itens) {
   const corpo = {
     origin: origem(c),
     destination: destinoApi(destino),
-    packages: [pacoteDo(itens)],
+    packages: [pacoteDo(itens, c)],
     shipment: { type: 1, carrier: transportadora, service: codigo },
     /*
      * PDF em 4x6 polegadas: é o formato das impressoras térmicas de etiqueta,
@@ -2814,12 +2831,13 @@ async function rastrear(c, codigo) {
   })).filter((e) => e.descricao !== "");
   return { eventos, erro: "" };
 }
-var MIN_COMPRIMENTO2, MIN_LARGURA2, MIN_ALTURA2, MIN_PESO_GRAMAS2, CAUSAS_DE_COTACAO_VAZIA, SEM_ETIQUETA;
+var MIN_COMPRIMENTO2, MIN_LARGURA2, MIN_ALTURA2, MIN_PESO_GRAMAS2, SEM_ETIQUETA;
 var init_envia = __esm({
   "server/src/envia.ts"() {
     "use strict";
     init_providers();
     __name(credsFrom2, "credsFrom");
+    __name(medida, "medida");
     __name(ehSandbox, "ehSandbox");
     __name(base2, "base");
     __name(servicosSelecionados2, "servicosSelecionados");
@@ -2839,7 +2857,7 @@ var init_envia = __esm({
     __name(mapearOpcoes2, "mapearOpcoes");
     __name(cotar2, "cotar");
     __name(amostraDeServicos2, "amostraDeServicos");
-    CAUSAS_DE_COTACAO_VAZIA = "Pela documenta\xE7\xE3o da Envia, cota\xE7\xE3o vazia tem quatro causas: a transportadora n\xE3o atende a rota; o endere\xE7o de origem est\xE1 incompleto (bairro em branco \xE9 o caso mais comum); o peso ou as medidas do pacote est\xE3o fora do que ela aceita; ou a conta n\xE3o tem aquela transportadora habilitada. Vale conferir o cadastro do remetente antes de abrir chamado.";
+    __name(causasDeCotacaoVazia, "causasDeCotacaoVazia");
     SEM_ETIQUETA = {
       erro: "",
       rastreio: "",
@@ -3030,7 +3048,7 @@ async function providerTest(id, f) {
         amostraDeServicos: amostraEnvia,
         ehSandbox: ehSandbox2,
         problemaNasCredenciais: problemaNasCredenciais2,
-        CAUSAS_DE_COTACAO_VAZIA: CAUSAS_DE_COTACAO_VAZIA2
+        causasDeCotacaoVazia: causasDeCotacaoVazia2
       } = await Promise.resolve().then(() => (init_envia(), envia_exports));
       const creds = enviaCreds(f);
       const falta = problemaNasCredenciais2(creds);
@@ -3041,7 +3059,7 @@ async function providerTest(id, f) {
       if (cotaram.length === 0) {
         return {
           ok: false,
-          message: `O token foi aceito, mas nenhuma transportadora cotou de ${creds.originCep} para S\xE3o Paulo (1 kg). ${CAUSAS_DE_COTACAO_VAZIA2}`
+          message: `O token foi aceito, mas nenhuma transportadora cotou de ${creds.originCep} para S\xE3o Paulo (1 kg). ${causasDeCotacaoVazia2(creds)}`
         };
       }
       const amostra = cotaram.slice(0, 4).map((o) => `${o.nome} R$ ${o.preco.toFixed(2).replace(".", ",")}`).join(" \xB7 ");

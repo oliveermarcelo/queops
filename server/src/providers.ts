@@ -358,7 +358,7 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
        */
       const {
         credsFrom: enviaCreds, amostraDeServicos: amostraEnvia, ehSandbox,
-        problemaNasCredenciais, CAUSAS_DE_COTACAO_VAZIA,
+        problemaNasCredenciais, causasDeCotacaoVazia,
       } = await import('./envia.ts');
       const creds = enviaCreds(f as Record<string, unknown>);
 
@@ -379,7 +379,7 @@ export async function providerTest(id: string, f: Fields): Promise<ProviderResul
         return {
           ok: false,
           message: 'O token foi aceito, mas nenhuma transportadora cotou de '
-            + `${creds.originCep} para São Paulo (1 kg). ${CAUSAS_DE_COTACAO_VAZIA}`,
+            + `${creds.originCep} para São Paulo (1 kg). ${causasDeCotacaoVazia(creds)}`,
         };
       }
 

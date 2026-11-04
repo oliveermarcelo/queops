@@ -48,6 +48,18 @@ export interface EnviaCreds {
   originCity: string;
   originState: string;
   originCep: string;
+  /**
+   * A caixa que a loja usa para postar, em centímetros.
+   *
+   * Zero significa "não informado" e cai no mínimo de postagem. A
+   * transportadora mede a EMBALAGEM, não a peça: sem isto toda cotação saía
+   * numa caixa de 16×11×2 cm, que é o mínimo dos Correios — uma caixa dessas
+   * com 1 kg dentro é mais densa que alumínio, e transportadora que confere
+   * cubagem simplesmente não cota.
+   */
+  boxLength: number;
+  boxWidth: number;
+  boxHeight: number;
 }
 
 export function credsFrom(f: Record<string, unknown>): EnviaCreds {
@@ -67,7 +79,23 @@ export function credsFrom(f: Record<string, unknown>): EnviaCreds {
     originCity: s('originCity'),
     originState: s('originState').toUpperCase().slice(0, 2),
     originCep: s('originCep').replace(/\D/g, ''),
+    boxLength: medida(s('boxLength')),
+    boxWidth: medida(s('boxWidth')),
+    boxHeight: medida(s('boxHeight')),
   };
+}
+
+/**
+ * Centímetros vindos de um campo de texto do painel.
+ *
+ * Aceita vírgula, recusa negativo e corta em 200 cm: um zero a mais digitado
+ * por engano viraria uma caixa de 11 metros, e a cotação sairia absurda sem
+ * nada na tela explicando por quê.
+ */
+function medida(v: string): number {
+  const n = Number(String(v).replace(',', '.'));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(200, Math.round(n * 10) / 10);
 }
 
 export function ehSandbox(c: EnviaCreds): boolean {
@@ -149,8 +177,14 @@ function numero(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Volume único do carrinho: peso somado, dimensões mínimas, valor declarado. */
-function pacoteDo(itens: ItemParaCotar[]): Record<string, unknown> {
+/**
+ * Volume único do carrinho: peso somado, a caixa da loja, valor declarado.
+ *
+ * As medidas nunca descem abaixo do mínimo de postagem — uma caixa menor que
+ * isso é recusada no balcão, e cotar com ela é prometer um preço que não
+ * existe.
+ */
+export function pacoteDo(itens: ItemParaCotar[], c: EnviaCreds): Record<string, unknown> {
   const gramas = itens.reduce(
     (t, i) => t + Math.max(0, i.pesoGramas) * Math.max(1, Math.round(i.quantidade)),
     0,
@@ -167,7 +201,11 @@ function pacoteDo(itens: ItemParaCotar[]): Record<string, unknown> {
     lengthUnit: 'CM',
     weightUnit: 'KG',
     weight: Math.max(MIN_PESO_GRAMAS, Math.round(gramas)) / 1000,
-    dimensions: { length: MIN_COMPRIMENTO, width: MIN_LARGURA, height: MIN_ALTURA },
+    dimensions: {
+      length: Math.max(MIN_COMPRIMENTO, c.boxLength),
+      width: Math.max(MIN_LARGURA, c.boxWidth),
+      height: Math.max(MIN_ALTURA, c.boxHeight),
+    },
   };
 }
 
@@ -409,7 +447,7 @@ export async function cotar(
       country: 'BR',
       postalCode: destino,
     },
-    packages: [pacoteDo(itens)],
+    packages: [pacoteDo(itens, c)],
     shipment: { type: 1 },
     settings: { currency: 'BRL' },
   };
@@ -466,11 +504,19 @@ export async function amostraDeServicos(
  * mensagem mandava "confirme com a Envia" e parava aí — sem dizer o que
  * perguntar, que é a parte difícil.
  */
-export const CAUSAS_DE_COTACAO_VAZIA =
-  'Pela documentação da Envia, cotação vazia tem quatro causas: a transportadora não atende '
-  + 'a rota; o endereço de origem está incompleto (bairro em branco é o caso mais comum); o peso '
-  + 'ou as medidas do pacote estão fora do que ela aceita; ou a conta não tem aquela '
-  + 'transportadora habilitada. Vale conferir o cadastro do remetente antes de abrir chamado.';
+export function causasDeCotacaoVazia(c: EnviaCreds): string {
+  const semCaixa = c.boxLength === 0 && c.boxWidth === 0 && c.boxHeight === 0;
+  return 'Pela documentação da Envia, cotação vazia tem quatro causas: as medidas ou o peso do '
+    + 'pacote estão fora do que a transportadora aceita; o endereço de origem está incompleto '
+    + '(bairro em branco é o caso mais comum); a transportadora não atende a rota; ou a conta '
+    + 'não tem aquela transportadora habilitada.'
+    + (semCaixa
+      ? ' Comece pela CAIXA PADRÃO, logo acima: em branco, a cotação vai com 16 × 11 × 2 cm, '
+        + 'que é o mínimo dos Correios — uma caixa desse tamanho com 1 kg dentro é mais densa '
+        + 'que alumínio, e quem confere cubagem não cota.'
+      : ` A caixa configurada é ${c.boxLength || 16} × ${c.boxWidth || 11} × `
+        + `${c.boxHeight || 2} cm; confira se é mesmo a que vocês usam.`);
+}
 
 // ------------------------------------------------------------ etiqueta ----
 
@@ -532,7 +578,7 @@ export async function gerarEtiqueta(
   const corpo = {
     origin: origem(c),
     destination: destinoApi(destino),
-    packages: [pacoteDo(itens)],
+    packages: [pacoteDo(itens, c)],
     shipment: { type: 1, carrier: transportadora, service: codigo },
     /*
      * PDF em 4x6 polegadas: é o formato das impressoras térmicas de etiqueta,

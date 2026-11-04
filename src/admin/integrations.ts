@@ -202,6 +202,16 @@ export const PROVIDERS: ProviderMeta[] = [
         placeholder: 'De onde as encomendas saem',
         help: 'Obrigatório: sem ele a Envia não cota nem emite etiqueta.',
       },
+      {
+        key: 'boxLength',
+        label: 'Caixa padrão — comprimento (cm)',
+        placeholder: '30',
+        help: 'A transportadora mede a EMBALAGEM, não a peça. Em branco, a cotação usa o '
+          + 'mínimo de postagem (16 × 11 × 2 cm) — e transportadora que confere cubagem não '
+          + 'cota uma caixa dessas com quilos dentro.',
+      },
+      { key: 'boxWidth', label: 'Caixa padrão — largura (cm)', placeholder: '20' },
+      { key: 'boxHeight', label: 'Caixa padrão — altura (cm)', placeholder: '15' },
     ],
   },
   {

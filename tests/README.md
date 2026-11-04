@@ -190,6 +190,18 @@ derruba os outros, e a categoria gravada **não fica travada** contra o ERP: a
 arrumação em massa é um desempate provisório, e no dia em que o `categoryCode`
 certo chegar ele deve valer.
 
+### A caixa da cotação
+
+A Envia cotava sempre numa caixa de 16 × 11 × 2 cm, o mínimo dos Correios,
+porque a loja nunca soube as medidas de nada — só o peso. Um quilo nessa caixa
+dá quase 3 g/cm³, mais denso que alumínio: transportadora que confere cubagem
+não cota, e a conta voltava com **zero opções e nenhuma explicação**.
+
+A caixa padrão passou a ser um campo do painel, e `tests/envia.mjs` cobra o que
+acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe para
+ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
+vez de uma caixa de trinta metros.
+
 ## Categoria nova no ERP — onde ela entra na loja
 
 Precisa da loja no ar.
