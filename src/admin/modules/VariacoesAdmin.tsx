@@ -221,6 +221,13 @@ function EditorDeGrupo({ grupo, onFechar }: { grupo: ProductGroupAdmin; onFechar
   const [busca, setBusca] = useState('');
   const [erro, setErro] = useState('');
   const [salvando, setSalvando] = useState(false);
+  /*
+   * Foto subindo. Sem isto dava para salvar o grupo no meio do envio: a URL
+   * chegava depois, para um editor já fechado, e a foto sumia. Repetir
+   * funcionava — na segunda vez o arquivo já está no servidor e a resposta é
+   * imediata, porque o nome do arquivo é o hash do conteúdo.
+   */
+  const [enviandoFoto, setEnviandoFoto] = useState(false);
   const [apagando, setApagando] = useState(false);
 
   const set = (patch: Partial<ProductGroupAdmin>) => setG((x) => ({ ...x, ...patch }));
@@ -292,6 +299,7 @@ function EditorDeGrupo({ grupo, onFechar }: { grupo: ProductGroupAdmin; onFechar
   const enviarFoto = async (file: File | undefined) => {
     if (!file) return;
     setErro('');
+    setEnviandoFoto(true);
     try {
       const dataUrl = await new Promise<string>((ok, nok) => {
         const fr = new FileReader();
@@ -302,6 +310,8 @@ function EditorDeGrupo({ grupo, onFechar }: { grupo: ProductGroupAdmin; onFechar
       set({ image: (await uploadImagem(dataUrl)).url });
     } catch (e) {
       setErro(msgDoErro(e));
+    } finally {
+      setEnviandoFoto(false);
     }
   };
 
@@ -587,8 +597,8 @@ function EditorDeGrupo({ grupo, onFechar }: { grupo: ProductGroupAdmin; onFechar
           ) : <span />}
           <div className="flex gap-2">
             <Btn variant="ghost" onClick={onFechar}>Cancelar</Btn>
-            <Btn disabled={salvando} onClick={() => void salvar()}>
-              {salvando ? 'Salvando…' : 'Salvar grupo'}
+            <Btn disabled={salvando || enviandoFoto} onClick={() => void salvar()}>
+              {salvando ? 'Salvando…' : enviandoFoto ? 'Enviando a foto…' : 'Salvar grupo'}
             </Btn>
           </div>
         </div>

@@ -202,6 +202,28 @@ acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe par
 ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
 vez de uma caixa de trinta metros.
 
+## Foto que some — salvar antes de o envio terminar
+
+Precisa da loja no ar e do Chromium.
+
+```bash
+node tests/e2e/foto-salvar-cedo.mjs
+```
+
+A reclamação era "subo a foto e ela não aparece no produto; se eu excluo e subo
+a mesma foto de novo, aí aparece — em alguns casos".
+
+Era uma corrida. O envio é assíncrono e o formulário não sabia disso: dava para
+clicar em Salvar antes de a URL chegar, o produto gravava sem a imagem, e a
+resposta chegava para um formulário já fechado. Repetir funcionava porque o
+nome do arquivo é o **hash do conteúdo** — na segunda vez o arquivo já está no
+disco, o servidor responde em milissegundos e não dá tempo de perder a corrida.
+Daí o "em alguns casos": dependia do tamanho do arquivo e da conexão.
+
+O teste atrasa a resposta do upload em 4 segundos de propósito e tenta salvar no
+meio — inclusive por Enter num campo de texto, que também envia o formulário e
+escapava do botão desabilitado.
+
 ## Categoria nova no ERP — onde ela entra na loja
 
 Precisa da loja no ar.

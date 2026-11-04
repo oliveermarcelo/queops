@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Search, Pencil, Trash2, X, ImagePlus, EyeOff, RotateCcw,
   ChevronLeft, ChevronRight, Star, FolderX, FolderInput,
@@ -516,6 +516,18 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
   const [p, setP] = useState<Product>(initial);
   const set = (patch: Partial<Product>) => setP((cur) => ({ ...cur, ...patch }));
 
+  /*
+   * Quantas fotos ainda estão subindo.
+   *
+   * O formulário precisa saber disso. Antes não sabia: dava para clicar em
+   * Salvar com o envio em curso, o produto gravava sem a foto, e a URL chegava
+   * depois — para um formulário já fechado. Quem fazia isso via a foto sumir, e
+   * ao repetir dava certo, porque na segunda vez o arquivo já estava no
+   * servidor e a resposta vinha em milissegundos: o nome do arquivo é o hash do
+   * conteúdo, então mandar a mesma foto de novo não grava nada.
+   */
+  const [enviandoFotos, setEnviandoFotos] = useState(0);
+
   const subcategorias = useMemo(
     () => menu.find((c) => c.id === p.category)?.subcategories ?? [],
     [menu, p.category],
@@ -530,7 +542,13 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
           <button onClick={onCancel} className="p-1.5 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100"><X size={18} /></button>
         </div>
         <form
-          onSubmit={(e) => { e.preventDefault(); onSave(p); }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            // Cinto e suspensório: o botão já está desabilitado, mas Enter num
+            // campo de texto também envia o formulário.
+            if (enviandoFotos > 0) return;
+            onSave(p);
+          }}
           className="p-6 space-y-4"
         >
           <Field label="Nome">
@@ -631,6 +649,7 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
             cover={p.image}
             images={p.images ?? []}
             onChange={(cover, images) => set({ image: cover, images })}
+            onEnviando={setEnviandoFotos}
           />
 
           <div className="grid grid-cols-2 gap-4">
@@ -685,9 +704,14 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
             </span>
           </label>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex items-center justify-end gap-2 pt-2 flex-wrap">
+            {enviandoFotos > 0 && (
+              <span className="text-[11px] text-primary-blue font-medium mr-auto">
+                Espere o envio da(s) foto(s) terminar — salvar agora gravaria o produto sem ela(s).
+              </span>
+            )}
             <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
-            <Btn type="submit">Salvar</Btn>
+            <Btn type="submit" disabled={enviandoFotos > 0}>Salvar</Btn>
           </div>
         </form>
       </div>
@@ -703,10 +727,12 @@ function ProductEditor({ initial, menu, onCancel, onSave }: {
  * de um lado para o outro; uma lista ordenada onde a primeira posição tem um
  * nome resolve igual e explica sozinha.
  */
-function EditorDeFotos({ cover, images, onChange }: {
+function EditorDeFotos({ cover, images, onChange, onEnviando }: {
   cover: string;
   images: string[];
   onChange: (cover: string, images: string[]) => void;
+  /** Avisa o formulário que há envio em curso, para ele travar o Salvar. */
+  onEnviando?: (quantas: number) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [erro, setErro] = useState('');
@@ -717,6 +743,28 @@ function EditorDeFotos({ cover, images, onChange }: {
   // desalinharia as ações de mover.
   const fotos = [cover, ...images].filter((f) => f !== '');
   const aplicar = (lista: string[]) => onChange(lista[0] ?? '', lista.slice(1));
+
+  /*
+   * A lista ATUAL, e não a que existia quando o envio começou.
+   *
+   * `fotos` é calculada na renderização. Entre escolher o arquivo e a resposta
+   * do servidor chegam segundos, e nesse intervalo a lista pode ter mudado —
+   * outra foto que terminou antes, uma URL colada, uma remoção. Montar o
+   * resultado em cima da cópia velha desfazia essas mudanças sem avisar.
+   */
+  const fotosRef = useRef(fotos);
+  fotosRef.current = fotos;
+
+  const marcarEnvio = (delta: number) => {
+    setEnviando((n) => {
+      const novo = Math.max(0, n + delta);
+      onEnviando?.(novo);
+      return novo;
+    });
+  };
+
+  // Formulário fechado no meio do envio não pode deixar o Salvar travado.
+  useEffect(() => () => onEnviando?.(0), []);
 
   const MAX = 12;
 
@@ -729,7 +777,7 @@ function EditorDeFotos({ cover, images, onChange }: {
     const aceitas: string[] = [];
 
     for (const file of lista) {
-      if (fotos.length + aceitas.length >= MAX) {
+      if (fotosRef.current.length >= MAX) {
         setErro(`Máximo de ${MAX} fotos por produto.`);
         break;
       }
@@ -739,7 +787,7 @@ function EditorDeFotos({ cover, images, onChange }: {
         continue;
       }
 
-      setEnviando((n) => n + 1);
+      marcarEnvio(1);
       try {
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -753,14 +801,20 @@ function EditorDeFotos({ cover, images, onChange }: {
          */
         const { url: salva } = await uploadImagem(dataUrl);
         aceitas.push(salva);
+        /*
+         * Entra na lista assim que chega, e não no fim do lote.
+         *
+         * Com cinco fotos, esperar a última para mostrar qualquer uma deixa a
+         * tela parada por vários segundos — e se uma falhar no meio, as que já
+         * tinham subido se perdiam junto.
+         */
+        aplicar([...fotosRef.current, salva]);
       } catch (e) {
         setErro(e instanceof Error ? e.message : 'Falha ao enviar a imagem.');
       } finally {
-        setEnviando((n) => n - 1);
+        marcarEnvio(-1);
       }
     }
-
-    if (aceitas.length > 0) aplicar([...fotos, ...aceitas]);
   };
 
   const adicionarUrl = () => {
