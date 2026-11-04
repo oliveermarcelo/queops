@@ -33,6 +33,7 @@ export function PageActions({ children }: { children: React.ReactNode }) {
 
 export function Btn({
   children, onClick, variant = 'primary', type = 'button', className = '', disabled, autoFocus,
+  title,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -41,6 +42,8 @@ export function Btn({
   className?: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  /** Explicação no hover — para um botão cujo rótulo é curto demais. */
+  title?: string;
 }) {
   const styles = {
     primary: 'bg-primary-blue hover:bg-primary-container text-white',
@@ -53,6 +56,7 @@ export function Btn({
       onClick={onClick}
       disabled={disabled}
       autoFocus={autoFocus}
+      title={title}
       className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${styles} ${className}`}
     >
       {children}

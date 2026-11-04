@@ -13,7 +13,7 @@
 
 import React, { useMemo, useState } from 'react';
 import {
-  FolderTree, Link2, Link2Off, AlertTriangle, Search, Check, RefreshCw,
+  FolderTree, FolderPlus, Link2, Link2Off, AlertTriangle, Search, Check, RefreshCw,
 } from 'lucide-react';
 import { useAdmin } from '../AdminContext';
 import { ErpCategory, GrupoParado, MotivoDeParada, ProdutosParados } from '../types';
@@ -27,11 +27,56 @@ const valorDoDestino = (c: ErpCategory) =>
   c.category === null ? '' : c.subcategory === null ? c.category : `${c.category}/${c.subcategory}`;
 
 function LinhaDaCategoria({ c }: { c: ErpCategory; key?: React.Key }) {
-  const { state, linkErpCategory } = useAdmin();
+  const { state, linkErpCategory, criarDestinoDoCodigo, desfazerDestinoDoCodigo } = useAdmin();
   const [erro, setErro] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [salvo, setSalvo] = useState(false);
   const [liberados, setLiberados] = useState(0);
+  const [criada, setCriada] = useState('');
+
+  /*
+   * Criar a prateleira que falta.
+   *
+   * O seletor ao lado só oferece o que a loja JÁ tem. Quando o ERP ganha uma
+   * categoria nova — e é o caso comum, porque a lojista cadastra lá —, não há
+   * nada para escolher: ou se mistura os produtos numa categoria existente, ou
+   * se roda o espelhamento, que apaga a árvore inteira por causa de um item.
+   */
+  /* Desfaz a criação: desamarra e apaga a prateleira, se ela estiver vazia. */
+  const desfazer = async () => {
+    setErro('');
+    setCriada('');
+    setSalvando(true);
+    try {
+      const nome = await desfazerDestinoDoCodigo(c.code);
+      setCriada(nome === ''
+        ? 'Código desamarrado.'
+        : `"${nome}" removida da loja, e o código voltou a ficar sem destino.`);
+    } catch (e) {
+      setErro(msgDoErro(e));
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const criar = async () => {
+    setErro('');
+    setLiberados(0);
+    setCriada('');
+    setSalvando(true);
+    try {
+      const r = await criarDestinoDoCodigo(c.code);
+      setCriada(r.dentroDe === ''
+        ? `"${c.name}" criada como categoria do menu.`
+        : `"${c.name}" criada dentro de ${r.dentroDe}.`);
+      setLiberados(r.released);
+      if (r.released > 0) setTimeout(() => setLiberados(0), 8000);
+    } catch (e) {
+      setErro(msgDoErro(e));
+    } finally {
+      setSalvando(false);
+    }
+  };
 
   const escolher = async (valor: string) => {
     setErro('');
@@ -102,8 +147,42 @@ function LinhaDaCategoria({ c }: { c: ErpCategory; key?: React.Key }) {
           ))}
         </select>
 
+        {!c.linked && (
+          <Btn
+            variant="ghost"
+            onClick={criar}
+            disabled={salvando}
+            className="shrink-0 whitespace-nowrap"
+            title={`Cria "${c.name}" na loja e amarra este código nela`}
+          >
+            <FolderPlus size={14} /> Criar na loja
+          </Btn>
+        )}
+
         {salvo && <Check size={16} className="text-emerald-600 shrink-0" />}
       </div>
+
+      {criada !== '' && (
+        <p className="mt-2 text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
+          <span className="flex-1 min-w-[12rem]">
+            {criada}
+            {c.linked && (
+              <> O código do ERP já está amarrado nela. A foto e a frase da vitrine ficam
+                em <b>Vitrine das Categorias</b>.</>
+            )}
+          </span>
+          {c.linked && (
+            <button
+              type="button"
+              onClick={desfazer}
+              disabled={salvando}
+              className="text-[11px] font-bold underline text-emerald-900 hover:text-emerald-700 disabled:opacity-50 shrink-0"
+            >
+              desfazer
+            </button>
+          )}
+        </p>
+      )}
 
       {erro !== '' && (
         <p className="mt-2 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">

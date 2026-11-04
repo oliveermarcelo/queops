@@ -82,6 +82,16 @@ interface AdminContextValue {
   ) => Promise<number>;
 
   /**
+   * Cria na loja a categoria que falta para um código do ERP e amarra.
+   * Devolve onde ela nasceu e quantos produtos entraram na vitrine.
+   */
+  criarDestinoDoCodigo: (code: string) => Promise<{
+    dentroDe: string; released: number; subcategory: string | null;
+  }>;
+  /** Desfaz a criação acima. Devolve o nome do que foi apagado, ou ''. */
+  desfazerDestinoDoCodigo: (code: string) => Promise<string>;
+
+  /**
    * Grava o grupo de variações inteiro. Devolve o id (o slug, que é a URL).
    */
   saveProductGroup: (id: string, grupo: Record<string, unknown>) => Promise<string>;
@@ -441,6 +451,34 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         }
         // Quantos produtos entraram na vitrine com este clique — a tela avisa.
         return r.released;
+      },
+
+      criarDestinoDoCodigo: async (code) => {
+        const r = await store.criarDestinoDoCodigo(code);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            // O menu entra junto: sem ele o seletor continuaria sem a
+            // categoria recém-criada, e a tela pareceria não ter feito nada.
+            menu: r.menu,
+            erpCategories: r.erpCategories,
+            productsWithoutCategory: r.productsWithoutCategory,
+          }));
+        }
+        return { dentroDe: r.dentroDe, released: r.released, subcategory: r.subcategory };
+      },
+
+      desfazerDestinoDoCodigo: async (code) => {
+        const r = await store.desfazerDestinoDoCodigo(code);
+        if (alive.current) {
+          setState((s) => ({
+            ...s,
+            menu: r.menu,
+            erpCategories: r.erpCategories,
+            productsWithoutCategory: r.productsWithoutCategory,
+          }));
+        }
+        return r.apagou;
       },
 
       saveProductGroup: async (id, grupo) => {

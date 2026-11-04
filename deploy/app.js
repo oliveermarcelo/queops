@@ -1093,7 +1093,130 @@ async function registrarCodigoOrfao(code, nome, exec = q) {
   );
   return { erro: "", code: c, aguardando: esperando };
 }
-var SEPARADOR, chaveDoDestino, TETO_DE_LEITURA, AMOSTRA_DE_PARADOS;
+async function criarDestinoDoCodigo(code, exec = q) {
+  const c = normalizarCodigo(code);
+  const linha = await exec.one("SELECT * FROM erp_categories WHERE code = ?", [c]);
+  if (linha === null) {
+    return { ...SEM_DESTINO, erro: "Este c\xF3digo n\xE3o veio em nenhuma carga do ERP." };
+  }
+  if (linha.category_id !== null) {
+    return { ...SEM_DESTINO, erro: "Este c\xF3digo j\xE1 est\xE1 amarrado. Desamarre antes de criar outra." };
+  }
+  const nome = String(linha.name ?? "").trim().slice(0, 120) || c;
+  const paiCodigo = linha.parent_code === null ? "" : String(linha.parent_code);
+  const pai = paiCodigo === "" ? null : await exec.one("SELECT category_id FROM erp_categories WHERE code = ?", [paiCodigo]);
+  const categoriaDoPai = pai === null || pai.category_id === null ? "" : String(pai.category_id);
+  if (categoriaDoPai !== "") {
+    const mae = await exec.one("SELECT id, name FROM categories WHERE id = ?", [categoriaDoPai]);
+    if (mae === null) {
+      return { ...SEM_DESTINO, erro: `A loja n\xE3o tem mais a categoria "${categoriaDoPai}".` };
+    }
+    const usados2 = new Set(
+      (await exec.all("SELECT id FROM subcategories WHERE parent_id = ?", [categoriaDoPai])).map((s) => String(s.id))
+    );
+    const slug2 = slugUnico(slugificar(nome), usados2);
+    const posicao2 = Number(
+      (await exec.one(
+        "SELECT COALESCE(MAX(position), -1) + 1 AS n FROM subcategories WHERE parent_id = ?",
+        [categoriaDoPai]
+      ))?.n ?? 0
+    );
+    await exec.run(
+      "INSERT INTO subcategories (parent_id, id, name, position) VALUES (?,?,?,?)",
+      [categoriaDoPai, slug2, nome, posicao2]
+    );
+    const { erro: erro2, liberados: liberados2 } = await amarrarCategoria(c, categoriaDoPai, slug2, exec);
+    if (erro2 !== "") return { ...SEM_DESTINO, erro: erro2 };
+    return {
+      erro: "",
+      categoria: categoriaDoPai,
+      subcategoria: slug2,
+      dentroDe: String(mae.name),
+      liberados: liberados2
+    };
+  }
+  const usados = new Set(
+    (await exec.all("SELECT id FROM categories")).map((x) => String(x.id))
+  );
+  const slug = slugUnico(slugificar(nome), usados);
+  const posicao = Number(
+    (await exec.one("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM categories"))?.n ?? 0
+  );
+  await exec.run(
+    `INSERT INTO categories
+       (id, name, description, icon, featured, position, image, blurb, home, group_id, manual)
+     VALUES (?,?,'','',0,?,'','',0,NULL,0)`,
+    [slug, nome, posicao]
+  );
+  const { erro, liberados } = await amarrarCategoria(c, slug, null, exec);
+  if (erro !== "") return { ...SEM_DESTINO, erro };
+  return { erro: "", categoria: slug, subcategoria: null, dentroDe: "", liberados };
+}
+async function desfazerDestinoDoCodigo(code, exec = q) {
+  const c = normalizarCodigo(code);
+  const linha = await exec.one("SELECT * FROM erp_categories WHERE code = ?", [c]);
+  if (linha === null) return { erro: "Este c\xF3digo n\xE3o veio em nenhuma carga do ERP.", apagou: "", liberados: 0 };
+  if (linha.category_id === null) {
+    return { erro: "Este c\xF3digo n\xE3o est\xE1 amarrado a nada.", apagou: "", liberados: 0 };
+  }
+  const categoria = String(linha.category_id);
+  const sub = linha.subcategory_id === null ? null : String(linha.subcategory_id);
+  const comProdutos = Number((await exec.one(
+    sub === null ? "SELECT COUNT(*) AS n FROM products WHERE category = ?" : "SELECT COUNT(*) AS n FROM products WHERE category = ? AND subcategory = ?",
+    sub === null ? [categoria] : [categoria, sub]
+  ))?.n ?? 0);
+  if (comProdutos > 0) {
+    return {
+      erro: `H\xE1 ${comProdutos} produto(s) nesta categoria. Mova-os antes de desfazer.`,
+      apagou: "",
+      liberados: 0
+    };
+  }
+  const outros = Number((await exec.one(
+    sub === null ? "SELECT COUNT(*) AS n FROM erp_categories WHERE category_id = ? AND subcategory_id IS NULL AND code <> ?" : "SELECT COUNT(*) AS n FROM erp_categories WHERE category_id = ? AND subcategory_id = ? AND code <> ?",
+    sub === null ? [categoria, c] : [categoria, sub, c]
+  ))?.n ?? 0);
+  if (outros > 0) {
+    return {
+      erro: `Outro(s) ${outros} c\xF3digo(s) do ERP apontam para esta categoria. Desamarre-os antes.`,
+      apagou: "",
+      liberados: 0
+    };
+  }
+  await amarrarCategoria(c, null, null, exec);
+  if (sub !== null) {
+    const nome = String((await exec.one(
+      "SELECT name FROM subcategories WHERE parent_id = ? AND id = ?",
+      [categoria, sub]
+    ))?.name ?? sub);
+    await exec.run("DELETE FROM subcategories WHERE parent_id = ? AND id = ?", [categoria, sub]);
+    return { erro: "", apagou: nome, liberados: 0 };
+  }
+  const cat = await exec.one("SELECT name, manual FROM categories WHERE id = ?", [categoria]);
+  if (cat === null) return { erro: "", apagou: "", liberados: 0 };
+  if (Number(cat.manual)) {
+    return {
+      erro: "",
+      apagou: "",
+      liberados: 0
+    };
+  }
+  const temSubs = Number((await exec.one(
+    "SELECT COUNT(*) AS n FROM subcategories WHERE parent_id = ?",
+    [categoria]
+  ))?.n ?? 0);
+  if (temSubs > 0) {
+    return {
+      erro: `Esta categoria tem ${temSubs} subcategoria(s) dentro. Desfa\xE7a-as antes.`,
+      apagou: "",
+      liberados: 0
+    };
+  }
+  await exec.run("UPDATE categories SET group_id = NULL WHERE group_id = ?", [categoria]);
+  await exec.run("DELETE FROM categories WHERE id = ?", [categoria]);
+  return { erro: "", apagou: String(cat.name), liberados: 0 };
+}
+var SEPARADOR, chaveDoDestino, TETO_DE_LEITURA, AMOSTRA_DE_PARADOS, SEM_DESTINO;
 var init_erp_categorias = __esm({
   "server/src/erp-categorias.ts"() {
     "use strict";
@@ -1117,6 +1240,15 @@ var init_erp_categorias = __esm({
     __name(detalheDeProdutosSemCategoria, "detalheDeProdutosSemCategoria");
     __name(reaplicarCodigo, "reaplicarCodigo");
     __name(registrarCodigoOrfao, "registrarCodigoOrfao");
+    SEM_DESTINO = {
+      erro: "",
+      categoria: "",
+      subcategoria: null,
+      dentroDe: "",
+      liberados: 0
+    };
+    __name(criarDestinoDoCodigo, "criarDestinoDoCodigo");
+    __name(desfazerDestinoDoCodigo, "desfazerDestinoDoCodigo");
   }
 });
 
@@ -5282,6 +5414,45 @@ adminRoutes.post("/erp-categories", h(async (req, res) => {
     code: r.code,
     /** Quantos produtos passam a depender só da amarração deste código. */
     waiting: r.aguardando,
+    erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria()
+  });
+}));
+async function menuAtual() {
+  const subs = /* @__PURE__ */ new Map();
+  for (const sub of await q.all("SELECT * FROM subcategories ORDER BY position ASC, name ASC")) {
+    const key = String(sub.parent_id);
+    const entry = { id: String(sub.id), name: String(sub.name) };
+    const list = subs.get(key);
+    if (list) list.push(entry);
+    else subs.set(key, [entry]);
+  }
+  return montarMenu(await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC"), subs);
+}
+__name(menuAtual, "menuAtual");
+adminRoutes.post("/erp-categories/:code/criar-destino", h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await criarDestinoDoCodigo(String(req.params.code ?? ""));
+  if (r.erro !== "") fail(r.erro, 422, "invalid_code");
+  jsonOk(res, {
+    ok: true,
+    category: r.categoria,
+    subcategory: r.subcategoria,
+    dentroDe: r.dentroDe,
+    released: r.liberados,
+    menu: await menuAtual(),
+    erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria()
+  });
+}));
+adminRoutes.post("/erp-categories/:code/desfazer-destino", h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await desfazerDestinoDoCodigo(String(req.params.code ?? ""));
+  if (r.erro !== "") fail(r.erro, 422, "invalid_undo");
+  jsonOk(res, {
+    ok: true,
+    apagou: r.apagou,
+    menu: await menuAtual(),
     erpCategories: (await q.all("SELECT * FROM erp_categories ORDER BY name ASC")).map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria()
   });

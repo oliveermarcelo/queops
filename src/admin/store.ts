@@ -11,7 +11,7 @@
  */
 
 import { api } from '../api/client';
-import { Product } from '../types';
+import { MenuCategory, Product } from '../types';
 import {
   AdminState, OrderStatus, Coupon, StoreSettings, IntegrationConfig,
   IntegrationId, AbandonedStatus, RecoveryConfig, ShippingConfig, TrackingEvent, Webhook,
@@ -268,6 +268,37 @@ export function registrarCodigoDoErp(
   erpCategories: ErpCategory[]; productsWithoutCategory: number;
 }> {
   return api.post('/admin/erp-categories', { code, name });
+}
+
+/**
+ * Cria na loja a categoria que falta para um código do ERP, e amarra.
+ *
+ * Para quando o ERP ganha uma categoria nova: o seletor só oferece o que a
+ * loja já tem, e as outras saídas eram misturar prateleira ou espelhar a
+ * árvore inteira.
+ */
+export function criarDestinoDoCodigo(code: string): Promise<{
+  category: string;
+  subcategory: string | null;
+  dentroDe: string;
+  released: number;
+  menu: MenuCategory[];
+  erpCategories: ErpCategory[];
+  productsWithoutCategory: number;
+}> {
+  return api.post(`/admin/erp-categories/${encodeURIComponent(code)}/criar-destino`);
+}
+
+/**
+ * Desfaz a criação acima: desamarra e apaga a prateleira, se estiver vazia.
+ */
+export function desfazerDestinoDoCodigo(code: string): Promise<{
+  apagou: string;
+  menu: MenuCategory[];
+  erpCategories: ErpCategory[];
+  productsWithoutCategory: number;
+}> {
+  return api.post(`/admin/erp-categories/${encodeURIComponent(code)}/desfazer-destino`);
 }
 
 /**

@@ -16,7 +16,8 @@ import { encryptPayload } from '../crypto.ts';
 import { placeholders, q, type Row } from '../db.ts';
 import { fail } from '../errors.ts';
 import {
-  amarrarCategoria, detalheDeProdutosSemCategoria, erpCategoriaParaApi, espelharArvoreDoErp,
+  amarrarCategoria, criarDestinoDoCodigo, desfazerDestinoDoCodigo,
+  detalheDeProdutosSemCategoria, erpCategoriaParaApi, espelharArvoreDoErp,
   produtosSemCategoria, reaplicarCodigo, registrarCodigoOrfao,
 } from '../erp-categorias.ts';
 import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
@@ -424,6 +425,67 @@ adminRoutes.post('/erp-categories', h(async (req, res) => {
     code: r.code,
     /** Quantos produtos passam a depender só da amarração deste código. */
     waiting: r.aguardando,
+    erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
+      .map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria(),
+  });
+}));
+
+/** O menu como a vitrine o vê — para a tela repintar o seletor sem recarregar. */
+async function menuAtual(): Promise<unknown> {
+  const subs = new Map<string, { id: string; name: string }[]>();
+  for (const sub of await q.all('SELECT * FROM subcategories ORDER BY position ASC, name ASC')) {
+    const key = String(sub.parent_id);
+    const entry = { id: String(sub.id), name: String(sub.name) };
+    const list = subs.get(key);
+    if (list) list.push(entry);
+    else subs.set(key, [entry]);
+  }
+  return montarMenu(await q.all('SELECT * FROM categories ORDER BY position ASC, name ASC'), subs);
+}
+
+/**
+ * POST /api/admin/erp-categories/:code/criar-destino — cria a prateleira que falta.
+ *
+ * Categoria nova no ERP chega na lista sem ter onde ser amarrada: o seletor
+ * só oferece o que a loja já tem. Sem esta rota, as saídas eram misturar os
+ * produtos numa categoria existente ou rodar o espelhamento, que apaga a
+ * árvore inteira para resolver um item só.
+ */
+adminRoutes.post('/erp-categories/:code/criar-destino', h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await criarDestinoDoCodigo(String(req.params.code ?? ''));
+  if (r.erro !== '') fail(r.erro, 422, 'invalid_code');
+
+  jsonOk(res, {
+    ok: true,
+    category: r.categoria,
+    subcategory: r.subcategoria,
+    dentroDe: r.dentroDe,
+    released: r.liberados,
+    menu: await menuAtual(),
+    erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
+      .map(erpCategoriaParaApi),
+    productsWithoutCategory: await produtosSemCategoria(),
+  });
+}));
+
+/**
+ * POST /api/admin/erp-categories/:code/desfazer-destino — desfaz a criação.
+ *
+ * Criar sem poder desfazer é uma armadilha: a tela de vitrine não apaga
+ * categoria vinda do ERP, e subcategoria ela nem lista. Recusa quando há
+ * produto dentro ou outro código apontando para a mesma prateleira.
+ */
+adminRoutes.post('/erp-categories/:code/desfazer-destino', h(async (req, res) => {
+  await requireAdmin(req);
+  const r = await desfazerDestinoDoCodigo(String(req.params.code ?? ''));
+  if (r.erro !== '') fail(r.erro, 422, 'invalid_undo');
+
+  jsonOk(res, {
+    ok: true,
+    apagou: r.apagou,
+    menu: await menuAtual(),
     erpCategories: (await q.all('SELECT * FROM erp_categories ORDER BY name ASC'))
       .map(erpCategoriaParaApi),
     productsWithoutCategory: await produtosSemCategoria(),

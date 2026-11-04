@@ -854,3 +854,206 @@ export async function registrarCodigoOrfao(
 
   return { erro: '', code: c, aguardando: esperando };
 }
+
+/**
+ * Cria na loja a prateleira que falta para um código do ERP, e amarra.
+ *
+ * O ERP ganha uma categoria nova, ela chega na lista, e a amarração fica sem
+ * destino: o seletor só oferece o que a loja JÁ tem. As duas saídas eram ruins
+ * — jogar os produtos numa categoria existente, que mistura prateleira, ou
+ * rodar o espelhamento, que apaga a árvore inteira para resolver um item.
+ *
+ * Esta é a terceira: cria UMA categoria, com o nome que veio do ERP, no lugar
+ * que a hierarquia do ERP indica, e amarra o código nela. Nada mais é tocado.
+ *
+ * Onde ela nasce:
+ *   - tem pai no ERP, e o pai já está amarrado → subcategoria dentro da
+ *     categoria do pai, que é onde a lojista espera encontrá-la;
+ *   - sem pai, ou pai ainda não amarrado → categoria de primeiro nível.
+ *
+ * `manual = 0` porque ela espelha uma categoria do ERP: um espelhamento
+ * posterior deve poder refazê-la, como faz com todas as outras.
+ */
+export interface DestinoCriado {
+  /** Motivo da recusa, ou string vazia. */
+  erro: string;
+  /** Slug da categoria da loja. */
+  categoria: string;
+  /** Slug da subcategoria, ou null quando nasceu no primeiro nível. */
+  subcategoria: string | null;
+  /** Nome da categoria-mãe, para a tela dizer onde a coisa foi parar. */
+  dentroDe: string;
+  /** Produtos que entraram na vitrine por causa disto. */
+  liberados: number;
+}
+
+const SEM_DESTINO: DestinoCriado = {
+  erro: '', categoria: '', subcategoria: null, dentroDe: '', liberados: 0,
+};
+
+export async function criarDestinoDoCodigo(
+  code: string,
+  exec: Q = q,
+): Promise<DestinoCriado> {
+  const c = normalizarCodigo(code);
+  const linha = await exec.one('SELECT * FROM erp_categories WHERE code = ?', [c]);
+  if (linha === null) {
+    return { ...SEM_DESTINO, erro: 'Este código não veio em nenhuma carga do ERP.' };
+  }
+  if (linha.category_id !== null) {
+    return { ...SEM_DESTINO, erro: 'Este código já está amarrado. Desamarre antes de criar outra.' };
+  }
+
+  const nome = String(linha.name ?? '').trim().slice(0, 120) || c;
+
+  /*
+   * O pai do ERP decide se isto vira subcategoria.
+   *
+   * A loja tem dois níveis. Se o pai está amarrado a uma subcategoria, não há
+   * terceiro nível para descer: a nova entra ao lado dela, dentro da mesma
+   * categoria. É mais raso que o ERP, e é o que a vitrine sabe mostrar.
+   */
+  const paiCodigo = linha.parent_code === null ? '' : String(linha.parent_code);
+  const pai = paiCodigo === ''
+    ? null
+    : await exec.one('SELECT category_id FROM erp_categories WHERE code = ?', [paiCodigo]);
+  const categoriaDoPai = pai === null || pai.category_id === null ? '' : String(pai.category_id);
+
+  if (categoriaDoPai !== '') {
+    const mae = await exec.one('SELECT id, name FROM categories WHERE id = ?', [categoriaDoPai]);
+    if (mae === null) {
+      return { ...SEM_DESTINO, erro: `A loja não tem mais a categoria "${categoriaDoPai}".` };
+    }
+
+    const usados = new Set<string>(
+      (await exec.all('SELECT id FROM subcategories WHERE parent_id = ?', [categoriaDoPai]))
+        .map((s) => String(s.id)),
+    );
+    const slug = slugUnico(slugificar(nome), usados);
+    const posicao = Number(
+      (await exec.one(
+        'SELECT COALESCE(MAX(position), -1) + 1 AS n FROM subcategories WHERE parent_id = ?',
+        [categoriaDoPai],
+      ))?.n ?? 0,
+    );
+    await exec.run(
+      'INSERT INTO subcategories (parent_id, id, name, position) VALUES (?,?,?,?)',
+      [categoriaDoPai, slug, nome, posicao],
+    );
+
+    const { erro, liberados } = await amarrarCategoria(c, categoriaDoPai, slug, exec);
+    if (erro !== '') return { ...SEM_DESTINO, erro };
+    return {
+      erro: '', categoria: categoriaDoPai, subcategoria: slug,
+      dentroDe: String(mae.name), liberados,
+    };
+  }
+
+  // Sem pai amarrado: nasce no primeiro nível, ao lado das outras.
+  const usados = new Set<string>(
+    (await exec.all('SELECT id FROM categories')).map((x) => String(x.id)),
+  );
+  const slug = slugUnico(slugificar(nome), usados);
+  const posicao = Number(
+    (await exec.one('SELECT COALESCE(MAX(position), -1) + 1 AS n FROM categories'))?.n ?? 0,
+  );
+  await exec.run(
+    `INSERT INTO categories
+       (id, name, description, icon, featured, position, image, blurb, home, group_id, manual)
+     VALUES (?,?,'','',0,?,'','',0,NULL,0)`,
+    [slug, nome, posicao],
+  );
+
+  const { erro, liberados } = await amarrarCategoria(c, slug, null, exec);
+  if (erro !== '') return { ...SEM_DESTINO, erro };
+  return { erro: '', categoria: slug, subcategoria: null, dentroDe: '', liberados };
+}
+
+/**
+ * Desfaz o que `criarDestinoDoCodigo` fez: desamarra e apaga a prateleira.
+ *
+ * Um botão que cria sem poder desfazer é uma armadilha: o clique errado deixa
+ * uma categoria vazia no menu da loja para sempre, e a tela de vitrine não
+ * apaga categoria vinda do ERP — menos ainda subcategoria, que ela nem lista.
+ *
+ * Só apaga o que é seguro apagar: prateleira sem produto nenhum e sem nenhum
+ * outro código do ERP apontando para ela. Fora disso, recusa e diz por quê.
+ */
+export async function desfazerDestinoDoCodigo(
+  code: string,
+  exec: Q = q,
+): Promise<{ erro: string; apagou: string; liberados: number }> {
+  const c = normalizarCodigo(code);
+  const linha = await exec.one('SELECT * FROM erp_categories WHERE code = ?', [c]);
+  if (linha === null) return { erro: 'Este código não veio em nenhuma carga do ERP.', apagou: '', liberados: 0 };
+  if (linha.category_id === null) {
+    return { erro: 'Este código não está amarrado a nada.', apagou: '', liberados: 0 };
+  }
+
+  const categoria = String(linha.category_id);
+  const sub = linha.subcategory_id === null ? null : String(linha.subcategory_id);
+
+  // Produto dentro dela: desfazer tiraria os produtos da vitrine sem avisar.
+  const comProdutos = Number((await exec.one(
+    sub === null
+      ? 'SELECT COUNT(*) AS n FROM products WHERE category = ?'
+      : 'SELECT COUNT(*) AS n FROM products WHERE category = ? AND subcategory = ?',
+    sub === null ? [categoria] : [categoria, sub],
+  ))?.n ?? 0);
+  if (comProdutos > 0) {
+    return {
+      erro: `Há ${comProdutos} produto(s) nesta categoria. Mova-os antes de desfazer.`,
+      apagou: '', liberados: 0,
+    };
+  }
+
+  // Outro código do ERP usando o mesmo destino: apagar quebraria a dele.
+  const outros = Number((await exec.one(
+    sub === null
+      ? 'SELECT COUNT(*) AS n FROM erp_categories WHERE category_id = ? AND subcategory_id IS NULL AND code <> ?'
+      : 'SELECT COUNT(*) AS n FROM erp_categories WHERE category_id = ? AND subcategory_id = ? AND code <> ?',
+    sub === null ? [categoria, c] : [categoria, sub, c],
+  ))?.n ?? 0);
+  if (outros > 0) {
+    return {
+      erro: `Outro(s) ${outros} código(s) do ERP apontam para esta categoria. Desamarre-os antes.`,
+      apagou: '', liberados: 0,
+    };
+  }
+
+  await amarrarCategoria(c, null, null, exec);
+
+  if (sub !== null) {
+    const nome = String((await exec.one(
+      'SELECT name FROM subcategories WHERE parent_id = ? AND id = ?', [categoria, sub],
+    ))?.name ?? sub);
+    await exec.run('DELETE FROM subcategories WHERE parent_id = ? AND id = ?', [categoria, sub]);
+    return { erro: '', apagou: nome, liberados: 0 };
+  }
+
+  /*
+   * Categoria de primeiro nível: só apaga a que nasceu do ERP (`manual = 0`).
+   * Categoria geral criada à mão é organização da loja, e some pela tela de
+   * vitrine — não por um botão da tela de amarração.
+   */
+  const cat = await exec.one('SELECT name, manual FROM categories WHERE id = ?', [categoria]);
+  if (cat === null) return { erro: '', apagou: '', liberados: 0 };
+  if (Number(cat.manual)) {
+    return {
+      erro: '', apagou: '',
+      liberados: 0,
+    };
+  }
+  const temSubs = Number((await exec.one(
+    'SELECT COUNT(*) AS n FROM subcategories WHERE parent_id = ?', [categoria],
+  ))?.n ?? 0);
+  if (temSubs > 0) {
+    return {
+      erro: `Esta categoria tem ${temSubs} subcategoria(s) dentro. Desfaça-as antes.`,
+      apagou: '', liberados: 0,
+    };
+  }
+  await exec.run('UPDATE categories SET group_id = NULL WHERE group_id = ?', [categoria]);
+  await exec.run('DELETE FROM categories WHERE id = ?', [categoria]);
+  return { erro: '', apagou: String(cat.name), liberados: 0 };
+}

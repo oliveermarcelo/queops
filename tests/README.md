@@ -190,6 +190,31 @@ derruba os outros, e a categoria gravada **não fica travada** contra o ERP: a
 arrumação em massa é um desempate provisório, e no dia em que o `categoryCode`
 certo chegar ele deve valer.
 
+## Categoria nova no ERP — onde ela entra na loja
+
+Precisa da loja no ar.
+
+```bash
+npm run teste:categoria-nova    # 22 verificações pela HTTP
+```
+
+A lojista cadastra "Incensos" no ERP. A categoria chega, aparece na lista do
+painel, e o seletor de amarração **não oferece nada** — porque ele lista o que a
+LOJA tem, e a loja não ganhou prateleira nenhuma. Sobravam duas saídas, as duas
+ruins: jogar os produtos numa categoria existente, misturando prateleira, ou
+rodar o espelhamento, que apaga a árvore inteira por causa de um item.
+
+O teste cobra a terceira: criar a categoria a partir do nome que veio do ERP, no
+lugar que a hierarquia do ERP indica — subcategoria dentro da categoria do pai
+quando o pai já está amarrado, primeiro nível quando não —, amarrando o código e
+soltando na vitrine os produtos que estavam esperando por ele.
+
+Cobra também o **desfazer**, que é o que separa um botão de uma armadilha: a
+tela de vitrine não apaga categoria vinda do ERP e nem sequer lista
+subcategorias, então sem isso um clique errado deixaria uma prateleira vazia no
+menu para sempre. Desfazer é recusado quando há produto dentro ou quando outro
+código do ERP aponta para a mesma prateleira.
+
 ## Variações — o grupo morre na vitrine
 
 Precisa da loja no ar.
