@@ -166,3 +166,43 @@ export async function apagarImagem(url: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Quais fotos o catálogo usa e o servidor não tem.
+ *
+ * Existe porque a falha era invisível: o banco guarda `/midia/abc.png`, o
+ * arquivo some do disco, e a loja mostra um quadrado cinza. Nada no painel
+ * dizia que o problema era o ARQUIVO — a conclusão natural de quem cadastrou é
+ * que o upload não funciona, e a reação é subir tudo de novo.
+ *
+ * O caso que leva a isso é o deploy: `midia/` fica dentro da pasta da
+ * aplicação, e publicar substituindo a pasta inteira leva as fotos junto. Por
+ * isso a contagem fica à vista no painel, e não num comando de SSH.
+ */
+export interface FotosAusentes {
+  /** Quantas URLs distintas de /midia o catálogo referencia. */
+  referenciadas: number;
+  /** Quantas delas não estão no disco. */
+  ausentes: number;
+  /** Algumas, para conferir à mão. */
+  exemplos: string[];
+  /** A pasta onde o servidor procura — é o que se muda no MIDIA_DIR. */
+  pasta: string;
+}
+
+export function conferirMidia(urls: string[]): FotosAusentes {
+  const pasta = pastaDeMidia();
+  const distintas = [...new Set(urls.filter((u) => ehUrlDeMidia(u)))];
+  const faltando: string[] = [];
+
+  for (const url of distintas) {
+    if (!existsSync(path.join(pasta, path.basename(url)))) faltando.push(url);
+  }
+
+  return {
+    referenciadas: distintas.length,
+    ausentes: faltando.length,
+    exemplos: faltando.slice(0, 5),
+    pasta,
+  };
+}

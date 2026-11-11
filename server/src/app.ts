@@ -155,6 +155,19 @@ export function createApp(): express.Express {
     }),
   );
 
+  /*
+   * Foto que não está no disco responde 404 — e não a página da loja.
+   *
+   * Sem isto, o pedido de `/midia/abc.png` caía no fallback da SPA e voltava
+   * HTTP 200 com o index.html. O navegador recebia uma página onde esperava um
+   * PNG, não desenhava nada, e não havia erro em lugar nenhum: nem no console,
+   * nem na aba de rede, nem no painel. A miniatura ficava num quadrado cinza
+   * vazio e a conclusão era "o upload não funciona".
+   */
+  app.use('/midia', (_req, res) => {
+    res.status(404).type('text/plain').send('Imagem não encontrada.');
+  });
+
   const publicDir = path.resolve(process.cwd(), config.publicDir);
   const indexHtml = path.join(publicDir, 'index.html');
 

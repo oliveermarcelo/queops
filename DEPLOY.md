@@ -150,13 +150,38 @@ Na tela da aplicação Node, seção **Environment variables**, adicione:
 | `APP_ENV` | `production` |
 | `SECURE_COOKIES` | `true` |
 | `PUBLIC_DIR` | `public` (opcional — o servidor detecta sozinho) |
-| `MIDIA_DIR` | `midia` (opcional — pasta das fotos enviadas pelo painel) |
+| `MIDIA_DIR` | caminho ABSOLUTO fora da pasta da aplicação — ver abaixo |
 | `NOTAS_DIR` | `notas` (opcional — pasta das notas fiscais enviadas pelo ERP) |
 
 ```bash
 # gera a APP_KEY (32 bytes em base64)
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
+
+### MIDIA_DIR: as fotos NÃO podem morar dentro da aplicação
+
+Sem `MIDIA_DIR`, as fotos enviadas pelo painel vão para `midia/`, dentro da
+pasta da aplicação. Se a publicação substitui essa pasta — e substitui, quando
+se sobe o pacote por cima ou se apaga a pasta antes —, **todas as fotos somem
+de uma vez**. O banco continua guardando `/midia/abc.png`, o arquivo não existe
+mais, e cada produto fica com um quadrado cinza. Subir a foto de novo resolve
+aquele produto até a próxima publicação.
+
+Aponte para uma pasta IRMÃ da aplicação, que o deploy não alcança:
+
+```
+MIDIA_DIR=/home/SEU_USUARIO/queops_midia
+```
+
+Mesma coisa para `NOTAS_DIR`. E antes de trocar, mova o que já existe:
+
+```bash
+mkdir -p ~/queops_midia
+mv ~/queops/midia/* ~/queops_midia/ 2>/dev/null
+```
+
+Painel → Produtos avisa, em vermelho, quando o catálogo aponta para fotos que
+não estão no disco — é o sintoma deste problema.
 
 > **Guarde a `APP_KEY` junto das senhas do projeto.** É ela que cifra as
 > credenciais das integrações. Trocá-la depois torna ilegíveis os tokens já

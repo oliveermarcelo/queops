@@ -24,7 +24,7 @@ import { destravarCampos, travarCamposEditados } from '../erp-produtos.ts';
 import {
   body, bodyBool, bodyFloat, bodyInt, bodyStr, brl, digits, iso, jsonOk, queryStr,
 } from '../http.ts';
-import { guardarImagem } from '../midia.ts';
+import { conferirMidia, guardarImagem } from '../midia.ts';
 import {
   apagarGrupo, carregarGrupos, gravarGrupo, type GrupoPedido,
 } from '../variacoes.ts';
@@ -726,6 +726,22 @@ adminRoutes.post('/midia', h(async (req, res) => {
   const r = await guardarImagem(dataUrl);
   if (r.erro !== '') fail(r.erro, 422, 'invalid_image');
   jsonOk(res, { ok: true, url: r.url, bytes: r.bytes, reaproveitada: r.reaproveitada }, 201);
+}));
+
+/**
+ * GET /api/admin/midia/ausentes — fotos que o catálogo usa e o disco não tem.
+ *
+ * A falha era invisível: o banco guarda a URL, o arquivo some, e a loja mostra
+ * um quadrado cinza. Nada dizia que o problema era o ARQUIVO, então a conclusão
+ * de quem cadastrou era "o upload não funciona" — e a reação, subir tudo de
+ * novo, que não resolve se a pasta continuar sendo apagada.
+ */
+adminRoutes.get('/midia/ausentes', h(async (req, res) => {
+  await requireAdmin(req);
+  // Capa e galeria: a galeria é tabela à parte, e some do mesmo jeito.
+  const capas = await q.all("SELECT image AS url FROM products WHERE image <> ''");
+  const galeria = await q.all("SELECT url FROM product_images WHERE url <> ''");
+  jsonOk(res, conferirMidia([...capas, ...galeria].map((l) => String(l.url ?? ''))));
 }));
 
 /**

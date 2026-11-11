@@ -202,6 +202,26 @@ acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe par
 ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
 vez de uma caixa de trinta metros.
 
+## Foto que some — o arquivo não está mais no servidor
+
+Precisa da loja no ar.
+
+```bash
+npm run teste:midia
+```
+
+O banco guarda `/midia/abc.png`. Quando o arquivo sai do disco — e sai, se a
+publicação substitui a pasta da aplicação, porque `midia/` fica dentro dela —,
+o pedido daquela URL caía no **fallback da SPA**: HTTP 200 com o `index.html`.
+O navegador recebia uma página onde esperava um PNG. Nada desenhado, nada no
+console, nada na aba de rede. Quem cadastrou conclui que o upload não funciona e
+sobe tudo outra vez — o que resolve até a próxima publicação.
+
+O teste sobe uma foto, confere que ela é servida como imagem, **apaga o arquivo**
+e cobra duas coisas: a URL passa a responder 404 (e não HTML), e o painel sabe
+contar quantas fotos do catálogo estão faltando, quais são e em que pasta elas
+eram procuradas — que é o caminho para `MIDIA_DIR`.
+
 ## Foto que some — salvar antes de o envio terminar
 
 Precisa da loja no ar e do Chromium.

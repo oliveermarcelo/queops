@@ -271,6 +271,21 @@ export function registrarCodigoDoErp(
 }
 
 /**
+ * Fotos que o catálogo usa e o servidor não tem mais.
+ *
+ * O banco guarda a URL; o arquivo pode ter sumido do disco. Quando isso
+ * acontece a loja mostra um quadrado cinza e nada explica o motivo.
+ */
+export function fotosAusentes(): Promise<{
+  referenciadas: number;
+  ausentes: number;
+  exemplos: string[];
+  pasta: string;
+}> {
+  return api.get('/admin/midia/ausentes');
+}
+
+/**
  * Cria na loja a categoria que falta para um código do ERP, e amarra.
  *
  * Para quando o ERP ganha uma categoria nova: o seletor só oferece o que a

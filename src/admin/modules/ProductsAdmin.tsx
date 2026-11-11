@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { MenuCategory, Product } from '../../types';
 import { useAdmin } from '../AdminContext';
-import { uploadImagem } from '../store';
+import { fotosAusentes, uploadImagem } from '../store';
 import { brl, Card, Btn, ConfirmDialog, Field, inputCls } from '../ui';
 import { safeImageSrc } from '../../utils/safeUrl';
 
@@ -66,6 +66,29 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
    * logo depois de clicar: a leitura natural é que algo quebrou.
    */
   const [aviso, setAviso] = useState('');
+
+  /*
+   * Fotos que o catálogo usa e o servidor não tem mais.
+   *
+   * A falha era invisível: o banco guarda `/midia/abc.png`, o arquivo some do
+   * disco, e a tela mostra um quadrado cinza. Pior, o pedido do arquivo voltava
+   * HTTP 200 com a página da loja, então nem na aba de rede dava para ver.
+   * Quem cadastrou conclui que o upload não funciona e sobe tudo de novo — o
+   * que não resolve, se a pasta continuar sendo apagada a cada publicação.
+   */
+  const [semArquivo, setSemArquivo] = useState<{
+    ausentes: number; referenciadas: number; pasta: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    fotosAusentes()
+      .then((r) => { if (vivo) setSemArquivo(r); })
+      // Silencioso de propósito: é um aviso, e falhar ao buscá-lo não pode
+      // encher a tela de produtos de erro.
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, []);
 
   /*
    * Produto sem categoria é invisível na loja, e era invisível TAMBÉM aqui:
@@ -155,6 +178,20 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
           <b>Estes produtos não aparecem na vitrine.</b> Marque os que vão para a mesma categoria e
           use a barra que aparece — ou, se eles vieram do ERP com um código de categoria, resolva de
           uma vez em <b>Categorias do ERP</b>, que amarra o código e libera todos juntos.
+        </div>
+      )}
+
+      {semArquivo !== null && semArquivo.ausentes > 0 && (
+        <div className="text-xs leading-relaxed text-red-900 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          <b>
+            {semArquivo.ausentes} de {semArquivo.referenciadas} foto(s) não estão no servidor.
+          </b>{' '}
+          O produto guarda o endereço da imagem, mas o arquivo não está mais na pasta
+          <code className="mx-1 font-mono">{semArquivo.pasta}</code> — por isso a miniatura
+          aparece em branco aqui e na loja. Subir a foto de novo resolve aquele produto, mas o
+          arquivo some outra vez se a pasta for substituída na próxima publicação: o normal é
+          apontar <code className="mx-1 font-mono">MIDIA_DIR</code> para uma pasta FORA da
+          aplicação, que o deploy não alcança.
         </div>
       )}
 

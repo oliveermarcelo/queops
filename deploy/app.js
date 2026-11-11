@@ -4034,6 +4034,25 @@ async function guardarImagem(dataUrl) {
   return { erro: "", url: `/midia/${nome}`, bytes: lido.bytes.length, reaproveitada: false };
 }
 __name(guardarImagem, "guardarImagem");
+function ehUrlDeMidia(url) {
+  return /^\/midia\/[0-9a-f]{24}\.(png|jpg|webp|avif|gif)$/i.test(String(url));
+}
+__name(ehUrlDeMidia, "ehUrlDeMidia");
+function conferirMidia(urls) {
+  const pasta = pastaDeMidia();
+  const distintas = [...new Set(urls.filter((u) => ehUrlDeMidia(u)))];
+  const faltando = [];
+  for (const url of distintas) {
+    if (!(0, import_node_fs3.existsSync)(import_node_path3.default.join(pasta, import_node_path3.default.basename(url)))) faltando.push(url);
+  }
+  return {
+    referenciadas: distintas.length,
+    ausentes: faltando.length,
+    exemplos: faltando.slice(0, 5),
+    pasta
+  };
+}
+__name(conferirMidia, "conferirMidia");
 
 // server/src/routes/account.ts
 var import_express = require("express");
@@ -5603,6 +5622,12 @@ adminRoutes.post("/midia", h(async (req, res) => {
   const r = await guardarImagem(dataUrl);
   if (r.erro !== "") fail(r.erro, 422, "invalid_image");
   jsonOk(res, { ok: true, url: r.url, bytes: r.bytes, reaproveitada: r.reaproveitada }, 201);
+}));
+adminRoutes.get("/midia/ausentes", h(async (req, res) => {
+  await requireAdmin(req);
+  const capas = await q.all("SELECT image AS url FROM products WHERE image <> ''");
+  const galeria = await q.all("SELECT url FROM product_images WHERE url <> ''");
+  jsonOk(res, conferirMidia([...capas, ...galeria].map((l) => String(l.url ?? ""))));
 }));
 adminRoutes.delete("/products/:id", h(async (req, res) => {
   await requireAdmin(req);
@@ -8054,6 +8079,9 @@ function createApp() {
       }
     })
   );
+  app.use("/midia", (_req, res) => {
+    res.status(404).type("text/plain").send("Imagem n\xE3o encontrada.");
+  });
   const publicDir = import_node_path5.default.resolve(process.cwd(), config.publicDir);
   const indexHtml = import_node_path5.default.join(publicDir, "index.html");
   app.use(
