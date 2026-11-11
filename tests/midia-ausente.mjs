@@ -85,7 +85,11 @@ ok(
 
 // -------------------------------------------------------------- 2 ----
 // Some com o arquivo, que é o que a publicação faz com a pasta inteira.
-const pasta = path.resolve(process.cwd(), process.env.MIDIA_DIR ?? 'midia');
+// A pasta vem do SERVIDOR, e não de um palpite daqui: é ele que decide onde
+// grava, e o teste tem de olhar no mesmo lugar.
+const onde = await chamar('GET', '/api/admin/midia/ausentes');
+const pasta = String(onde.json?.pasta ?? '');
+ok(pasta !== '', '2 · o servidor diz em que pasta grava', pasta);
 const arquivo = path.join(pasta, path.basename(url));
 ok(existsSync(arquivo), '2 · o arquivo está na pasta de mídia', arquivo);
 unlinkSync(arquivo);

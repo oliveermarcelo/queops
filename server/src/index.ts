@@ -7,7 +7,7 @@
  */
 
 import { createApp } from './app.ts';
-import { config, configProblems } from './config.ts';
+import { config, configProblems, configWarnings } from './config.ts';
 import { closePool, q } from './db.ts';
 
 async function main(): Promise<void> {
@@ -19,6 +19,15 @@ async function main(): Promise<void> {
     console.error('(ou num arquivo .env, em desenvolvimento). Veja o .env.example.');
     process.exit(1);
   }
+
+  /*
+   * Avisos não derrubam a loja, mas precisam aparecer.
+   *
+   * O caso que motivou isto não dava erro nenhum: as fotos simplesmente não
+   * estavam mais lá depois de publicar, e nada em lugar nenhum ligava uma
+   * coisa à outra.
+   */
+  for (const aviso of configWarnings()) console.error('[queops] ATENÇÃO: ' + aviso);
 
   // Falha cedo e com mensagem clara se o banco não responder, em vez de deixar
   // a loja no ar devolvendo 503 em toda requisição.

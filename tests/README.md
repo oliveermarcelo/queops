@@ -202,6 +202,23 @@ acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe par
 ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
 vez de uma caixa de trinta metros.
 
+## A pasta de conteúdo sobrevive a uma publicação?
+
+```bash
+npm run teste:pasta     # sem rede e sem banco
+```
+
+A hospedagem publica criando um diretório novo a cada versão
+(`.../hbuilds/versions/<id>/nodejs/`) e descartando o anterior inteiro. Com a
+pasta de mídia relativa à aplicação, toda publicação começava com a pasta
+vazia. Confiar em alguém lembrar de definir `MIDIA_DIR` não é correção: é a
+mesma armadilha com um aviso em cima.
+
+O teste cobra que o padrão saia do diretório de versão sozinho, que duas
+versões diferentes apontem para a MESMA pasta (senão a foto de ontem some), e
+que **fora desse formato nada mude** — uma instalação que está bem não pode
+passar a procurar numa pasta vazia.
+
 ## Foto que some — o arquivo não está mais no servidor
 
 Precisa da loja no ar.

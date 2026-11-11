@@ -65,6 +65,12 @@ function detectPublicDir() {
   }
   return "public";
 }
+function pastaDuravel(nomeRelativo, nomeFora, cwd = process.cwd()) {
+  const caminho = cwd.replace(/\\/g, "/");
+  const corte = caminho.indexOf("/hbuilds/versions/");
+  if (corte === -1) return nomeRelativo;
+  return import_node_path2.default.join(caminho.slice(0, corte), nomeFora);
+}
 function envBool(name, fallback) {
   const v = process.env[name];
   if (v === void 0 || v === "") return fallback;
@@ -79,6 +85,7 @@ var init_config = __esm({
     import_node_path2 = __toESM(require("node:path"), 1);
     __name(env, "env");
     __name(detectPublicDir, "detectPublicDir");
+    __name(pastaDuravel, "pastaDuravel");
     __name(envBool, "envBool");
     config = {
       env: env("APP_ENV", "production") === "development" ? "development" : "production",
@@ -98,8 +105,8 @@ var init_config = __esm({
       appUrl: env("APP_URL", "https://queopspiramides.com.br"),
       secureCookies: envBool("SECURE_COOKIES", true),
       publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
-      midiaDir: env("MIDIA_DIR", "midia"),
-      notasDir: env("NOTAS_DIR", "notas"),
+      midiaDir: env("MIDIA_DIR", "") || pastaDuravel("midia", "queops_midia"),
+      notasDir: env("NOTAS_DIR", "") || pastaDuravel("notas", "queops_notas"),
       trustProxy: envBool("TRUST_PROXY", true)
     };
   }

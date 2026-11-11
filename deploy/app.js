@@ -65,6 +65,12 @@ function detectPublicDir() {
   }
   return "public";
 }
+function pastaDuravel(nomeRelativo, nomeFora, cwd = process.cwd()) {
+  const caminho = cwd.replace(/\\/g, "/");
+  const corte = caminho.indexOf("/hbuilds/versions/");
+  if (corte === -1) return nomeRelativo;
+  return import_node_path2.default.join(caminho.slice(0, corte), nomeFora);
+}
 function envBool(name, fallback) {
   const v = process.env[name];
   if (v === void 0 || v === "") return fallback;
@@ -83,6 +89,20 @@ function configProblems() {
   }
   return p;
 }
+function configWarnings() {
+  const avisos = [];
+  const dentroDaVersao = /* @__PURE__ */ __name((pasta) => /[/\\]hbuilds[/\\]versions[/\\]/.test(import_node_path2.default.resolve(process.cwd(), pasta)), "dentroDaVersao");
+  for (const [nome, pasta] of [
+    ["MIDIA_DIR", config.midiaDir],
+    ["NOTAS_DIR", config.notasDir]
+  ]) {
+    if (!dentroDaVersao(pasta)) continue;
+    avisos.push(
+      `${nome} aponta para dentro do diret\xF3rio de vers\xE3o (${pasta}). A hospedagem descarta esse diret\xF3rio inteiro a cada publica\xE7\xE3o, e tudo que estiver ali some junto \u2014 foi assim que 1.398 fotos de produto se perderam. Aponte para um caminho absoluto fora de hbuilds/.`
+    );
+  }
+  return avisos;
+}
 var import_node_fs2, import_node_path2, config;
 var init_config = __esm({
   "server/src/config.ts"() {
@@ -92,6 +112,7 @@ var init_config = __esm({
     import_node_path2 = __toESM(require("node:path"), 1);
     __name(env, "env");
     __name(detectPublicDir, "detectPublicDir");
+    __name(pastaDuravel, "pastaDuravel");
     __name(envBool, "envBool");
     config = {
       env: env("APP_ENV", "production") === "development" ? "development" : "production",
@@ -111,11 +132,12 @@ var init_config = __esm({
       appUrl: env("APP_URL", "https://queopspiramides.com.br"),
       secureCookies: envBool("SECURE_COOKIES", true),
       publicDir: env("PUBLIC_DIR", "") || detectPublicDir(),
-      midiaDir: env("MIDIA_DIR", "midia"),
-      notasDir: env("NOTAS_DIR", "notas"),
+      midiaDir: env("MIDIA_DIR", "") || pastaDuravel("midia", "queops_midia"),
+      notasDir: env("NOTAS_DIR", "") || pastaDuravel("notas", "queops_notas"),
       trustProxy: envBool("TRUST_PROXY", true)
     };
     __name(configProblems, "configProblems");
+    __name(configWarnings, "configWarnings");
   }
 });
 
@@ -8165,6 +8187,7 @@ async function main() {
     console.error("(ou num arquivo .env, em desenvolvimento). Veja o .env.example.");
     process.exit(1);
   }
+  for (const aviso of configWarnings()) console.error("[queops] ATEN\xC7\xC3O: " + aviso);
   try {
     await q.one("SELECT 1 AS ok");
   } catch (e) {

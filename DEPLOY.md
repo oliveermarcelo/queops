@@ -150,7 +150,7 @@ Na tela da aplicação Node, seção **Environment variables**, adicione:
 | `APP_ENV` | `production` |
 | `SECURE_COOKIES` | `true` |
 | `PUBLIC_DIR` | `public` (opcional — o servidor detecta sozinho) |
-| `MIDIA_DIR` | caminho ABSOLUTO fora da pasta da aplicação — ver abaixo |
+| `MIDIA_DIR` | opcional — o servidor já escolhe uma pasta segura; ver abaixo |
 | `NOTAS_DIR` | `notas` (opcional — pasta das notas fiscais enviadas pelo ERP) |
 
 ```bash
@@ -158,30 +158,40 @@ Na tela da aplicação Node, seção **Environment variables**, adicione:
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-### MIDIA_DIR: as fotos NÃO podem morar dentro da aplicação
+### Onde ficam as fotos e as notas fiscais
 
-Sem `MIDIA_DIR`, as fotos enviadas pelo painel vão para `midia/`, dentro da
-pasta da aplicação. Se a publicação substitui essa pasta — e substitui, quando
-se sobe o pacote por cima ou se apaga a pasta antes —, **todas as fotos somem
-de uma vez**. O banco continua guardando `/midia/abc.png`, o arquivo não existe
-mais, e cada produto fica com um quadrado cinza. Subir a foto de novo resolve
-aquele produto até a próxima publicação.
+A hospedagem publica criando um diretório NOVO a cada versão
+(`.../hbuilds/versions/<id>/nodejs/`) e **descartando o anterior inteiro**.
+Tudo que a aplicação escreveu dentro do diretório dela some na publicação
+seguinte. Foi assim que 1.398 fotos de produto se perderam de uma vez: o banco
+continuava guardando `/midia/abc.png`, o arquivo não existia mais, e cada
+produto ficava com um quadrado cinza.
 
-Aponte para uma pasta IRMÃ da aplicação, que o deploy não alcança:
+**O servidor agora resolve isso sozinho.** Quando percebe que está rodando de
+um diretório de versão, ele grava fora dele:
+
+```
+.../queopspiramides.com.br/queops_midia     fotos do painel
+.../queopspiramides.com.br/queops_notas     XML e PDF das notas fiscais
+```
+
+Essas pastas ficam ao lado de `hbuilds/`, e o deploy não as alcança. Não é
+preciso configurar nada.
+
+`MIDIA_DIR` e `NOTAS_DIR` continuam valendo e têm precedência — use-as se
+quiser outro lugar (um disco maior, um backup separado). Com caminho absoluto:
 
 ```
 MIDIA_DIR=/home/SEU_USUARIO/queops_midia
+NOTAS_DIR=/home/SEU_USUARIO/queops_notas
 ```
 
-Mesma coisa para `NOTAS_DIR`. E antes de trocar, mova o que já existe:
+Se apontar para dentro de `hbuilds/`, o servidor avisa no log do boot
+(`[queops] ATENÇÃO: ...`) e sobe assim mesmo — derrubar a loja por isso seria
+pior que o problema.
 
-```bash
-mkdir -p ~/queops_midia
-mv ~/queops/midia/* ~/queops_midia/ 2>/dev/null
-```
-
-Painel → Produtos avisa, em vermelho, quando o catálogo aponta para fotos que
-não estão no disco — é o sintoma deste problema.
+Painel → Produtos mostra, em vermelho, quantas fotos o catálogo usa e o
+servidor não tem. É o sintoma deste problema, dito em português.
 
 > **Guarde a `APP_KEY` junto das senhas do projeto.** É ela que cifra as
 > credenciais das integrações. Trocá-la depois torna ilegíveis os tokens já
