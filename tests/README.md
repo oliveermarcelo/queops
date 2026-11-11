@@ -202,6 +202,29 @@ acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe par
 ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
 vez de uma caixa de trinta metros.
 
+## Mil fotos sem abrir produto por produto
+
+Precisa da loja no ar.
+
+```bash
+npm run teste:fotos-massa
+```
+
+`PUT /products/:id` aceita `image`, mas só como URL — quem tem as fotos num
+diretório não tem onde publicá-las para a loja poder baixar. Faltava uma rota
+que recebesse os BYTES, e sem ela refazer 1.264 fotos significava abrir produto
+por produto no painel.
+
+A rota autentica por **chave de API**, e não por senha: carga em massa não é
+lugar para a senha de ninguém. O teste cobra o caminho feliz (capa, galeria, a
+mesma foto reaproveitando o arquivo) e os quatro jeitos de dar errado — chave
+inválida, produto inexistente, corpo sem imagem, e conteúdo que não é imagem
+(HTML servido do domínio da loja é XSS).
+
+`scripts/subir-fotos.mjs` é quem usa isso: lê uma pasta, casa cada arquivo com
+um produto por SKU ou por nome, e **não grava nada sem `--confirmo`** — casar
+foto errada em escala é pior que não ter foto.
+
 ## A pasta de conteúdo sobrevive a uma publicação?
 
 ```bash

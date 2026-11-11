@@ -94,6 +94,14 @@ export function createApp(): express.Express {
    * mostraria como "erro ao salvar", sem dizer que o problema era o tamanho.
    */
   api.use('/admin/midia', express.json({ limit: '6mb' }));
+  /*
+   * A mesma exceção vale para a foto que chega pela API do ERP.
+   *
+   * Sem isto, `POST /v1/products/:id/imagem` bateria no limite de 1 MB e
+   * responderia 413 — que, numa carga de mil fotos, pareceria "a loja recusou
+   * minhas fotos" em vez de "o arquivo é grande".
+   */
+  api.use(/^\/v1\/products\/[^/]+\/imagem$/, express.json({ limit: '6mb' }));
   api.use(express.json({ limit: '1mb' }));
   // Corpo inválido responde no formato de erro da API, não no HTML do Express.
   api.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {

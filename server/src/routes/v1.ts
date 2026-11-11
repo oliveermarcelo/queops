@@ -21,6 +21,7 @@ import {
 } from '../erp-categorias.ts';
 import { gravarProdutoDoErp } from '../erp-produtos.ts';
 import { body, bodyFloat, bodyInt, bodyStr, iso, jsonOk, mysqlDateTime, queryStr } from '../http.ts';
+import { guardarImagem } from '../midia.ts';
 import { lerMultipart } from '../multipart.ts';
 import {
   apagarArquivoDaNota, chaveDeNfeValida, COLUNAS_DA_NOTA, guardarArquivoDaNota, invoiceRowToApi,
@@ -297,6 +298,58 @@ v1Routes.put('/products/:id', h(async (req, res) => {
     );
   }
   jsonOk(res, resultado, resultado.criado ? 201 : 200);
+}));
+
+/**
+ * POST /api/v1/products/:id/imagem — manda a FOTO, e não o endereço dela.
+ *
+ * `PUT /products/:id` aceita `image`, mas só como URL: quem está do outro lado
+ * precisa já ter a foto publicada em algum lugar. Para um ERP isso é um
+ * problema (a foto está num diretório interno), e para uma carga em massa é
+ * impossível — não dá para hospedar 1.264 fotos só para a loja poder baixá-las.
+ *
+ * Aqui entram os BYTES. O arquivo é gravado como qualquer upload do painel, o
+ * nome é o hash do conteúdo, e a mesma foto mandada duas vezes não duplica
+ * nada. Autentica por chave de API, como o resto desta API: carga em massa não
+ * é lugar para a senha de ninguém.
+ *
+ * `?galeria=1` acrescenta à galeria em vez de trocar a capa.
+ */
+v1Routes.post('/products/:id/imagem', h(async (req, res) => {
+  await requireApiKey(req);
+  const id = String(req.params.id ?? '');
+  const produto = await q.one('SELECT id FROM products WHERE id = ?', [id]);
+  if (produto === null) fail('Produto não encontrado.', 404, 'not_found');
+
+  const dataUrl = bodyStr(body(req), 'dataUrl', '', 6_000_000);
+  if (dataUrl === '') fail('Envie a imagem no campo "dataUrl".', 422, 'missing_image');
+
+  const r = await guardarImagem(dataUrl);
+  if (r.erro !== '') fail(r.erro, 422, 'invalid_image');
+
+  const galeria = queryStr(req, 'galeria') === '1';
+  if (galeria) {
+    const posicao = Number((await q.one(
+      'SELECT COALESCE(MAX(position), -1) + 1 AS n FROM product_images WHERE product_id = ?',
+      [id],
+    ))?.n ?? 0);
+    await q.run(
+      'INSERT INTO product_images (product_id, url, position) VALUES (?,?,?)',
+      [id, r.url, posicao],
+    );
+  } else {
+    await q.run('UPDATE products SET image = ? WHERE id = ?', [r.url, id]);
+  }
+
+  jsonOk(res, {
+    ok: true,
+    id,
+    url: r.url,
+    bytes: r.bytes,
+    /** Verdadeiro quando o arquivo já existia: a mesma foto não ocupa disco duas vezes. */
+    reaproveitada: r.reaproveitada,
+    destino: galeria ? 'galeria' : 'capa',
+  }, 201);
 }));
 
 /**
