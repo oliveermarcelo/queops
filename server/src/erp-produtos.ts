@@ -27,6 +27,7 @@
 import { q, type Q, type Row } from './db.ts';
 import { traduzirCodigo } from './erp-categorias.ts';
 import { round2 } from './http.ts';
+import { baixarImagem, ehUrlDeMidia } from './midia.ts';
 import { pesoEmGramas } from './pricing.ts';
 import { safeImageUrl } from './routes/admin.ts';
 import { getSettings } from './store.ts';
@@ -62,7 +63,7 @@ const CAMPOS: Record<string, string> = {
  * lista, o laço o trataria como campo desconhecido e devolveria um aviso
  * dizendo que o campo pedido pelo próprio integrador não é gravável.
  */
-const EXTRAS = new Set(['id', 'categoryCode']);
+const EXTRAS = new Set(['id', 'categoryCode', 'image']);
 
 export interface ResultadoGravacao {
   id: string;
@@ -147,13 +148,6 @@ export function converter(campo: string, valor: unknown): Convertido {
       }
       return { valor: gravado };
     }
-    case 'image': {
-      const url = String(valor ?? '').slice(0, 500);
-      if (url !== '' && !safeImageUrl(url)) {
-        return { valor: null, erro: 'image não é um endereço de imagem aceito' };
-      }
-      return { valor: url };
-    }
     /*
      * `weight` é o peso em QUILOS, número.
      *
@@ -217,6 +211,18 @@ export function converter(campo: string, valor: unknown): Convertido {
           + 'numérico, em quilos — mande 0.2 em vez de "0,2kg".',
       };
     }
+    /*
+     * `image` NÃO é gravada por aqui — o download acontece em
+     * `gravarProdutoDoErp`, fora do laço, porque é assíncrono.
+     *
+     * Este caso existe só para a TRAVA: quando a lojista troca a foto pelo
+     * painel, `travarCamposEditados` compara o valor novo com o antigo e
+     * precisa de uma conversão que não falhe. Sem ele, a conversão caía no
+     * `default` ("campo não gravável"), a comparação era pulada, e a foto
+     * escolhida à mão voltava a ser sobrescrita pelo ERP no ciclo seguinte.
+     */
+    case 'image':
+      return texto(500);
     case 'weightLabel':
       // Só rótulo de vitrine ("Base 15cm · cobre"). Não influencia frete.
       return texto(120);
@@ -323,6 +329,69 @@ export async function gravarProdutoDoErp(
               + 'O produto foi gravado e fica fora da vitrine até a amarração em '
               + 'Painel → Categorias do ERP; quando ela acontecer, ele entra sozinho.',
         );
+      }
+    }
+  }
+
+  /*
+   * `image` — o ERP manda o ENDEREÇO, a loja baixa o ARQUIVO.
+   *
+   * Fora do laço porque baixar é assíncrono, e porque a decisão não é só
+   * converter um valor: é preciso saber se aquela mesma origem já foi baixada
+   * antes.
+   *
+   * Antes a loja guardava o endereço como veio. Três problemas, e os três
+   * apareceram: a vitrine ficava refém do servidor do ERP, endereço de rede
+   * interna não funciona de fora, e nada garantia que aquilo era imagem. Agora
+   * a foto vira arquivo da loja no mesmo instante em que o produto chega — que
+   * é o que faz "o produto já vem com imagem" ser verdade.
+   *
+   * Falha ao baixar NÃO derruba a gravação. O produto é bem mais importante
+   * que a foto dele: recusar o produto inteiro porque uma URL respondeu 404
+   * travaria o ciclo do ERP por causa de uma imagem.
+   */
+  if ('image' in dto) {
+    if (travados.has('image')) {
+      resultado.ignored.push({ field: 'image', reason: 'locked_in_panel' });
+    } else {
+      const bruto = String(dto.image ?? '').trim().slice(0, 500);
+
+      if (bruto === '') {
+        colunas.push('image', 'image_source');
+        valores.push('', '');
+        resultado.applied.push('image');
+      } else if (ehUrlDeMidia(bruto)) {
+        // Já é um arquivo nosso: o ERP está devolvendo o que leu da loja.
+        colunas.push('image');
+        valores.push(bruto);
+        resultado.applied.push('image');
+      } else if (!safeImageUrl(bruto)) {
+        resultado.error = {
+          code: 'invalid_field',
+          message: 'image não é um endereço de imagem aceito',
+        };
+        return resultado;
+      } else if (atual !== null && String(atual.image_source ?? '') === bruto
+                 && String(atual.image ?? '') !== '') {
+        /*
+         * Mesma origem de antes: não baixa de novo.
+         *
+         * Sem isto, cada ciclo de sincronização baixaria as mil e quatrocentas
+         * fotos para chegar exatamente no mesmo arquivo — o nome é o hash do
+         * conteúdo, então o resultado seria idêntico.
+         */
+        resultado.ignored.push({ field: 'image', reason: 'unchanged' });
+      } else {
+        const baixada = await baixarImagem(bruto);
+        if (baixada.erro !== '') {
+          resultado.warnings.push(
+            `image não foi gravada: ${baixada.erro} O produto foi salvo sem mexer na foto atual.`,
+          );
+        } else {
+          colunas.push('image', 'image_source');
+          valores.push(baixada.url, bruto);
+          resultado.applied.push('image');
+        }
       }
     }
   }

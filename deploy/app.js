@@ -518,211 +518,6 @@ var init_http = __esm({
   }
 });
 
-// server/src/notas.ts
-function pastaDeNotas() {
-  return import_node_path4.default.resolve(process.cwd(), config.notasDir);
-}
-function novoToken() {
-  return (0, import_node_crypto4.randomBytes)(24).toString("hex");
-}
-function tokenValido(token) {
-  return /^[0-9a-f]{48}$/.test(String(token));
-}
-function caminhoDoArquivo(token, extensao) {
-  return import_node_path4.default.join(pastaDeNotas(), `${token}.${extensao}`);
-}
-async function guardarArquivoDaNota(token, extensao, bytes) {
-  const pasta = pastaDeNotas();
-  await import_node_fs4.promises.mkdir(pasta, { recursive: true });
-  const temporario = import_node_path4.default.join(pasta, `.tmp-${(0, import_node_crypto4.randomBytes)(8).toString("hex")}`);
-  await import_node_fs4.promises.writeFile(temporario, bytes, { mode: 384 });
-  await import_node_fs4.promises.rename(temporario, caminhoDoArquivo(token, extensao));
-}
-async function lerArquivoDaNota(token, extensao) {
-  if (!tokenValido(token)) return null;
-  try {
-    return await import_node_fs4.promises.readFile(caminhoDoArquivo(token, extensao));
-  } catch {
-    return null;
-  }
-}
-async function apagarArquivoDaNota(token, extensao) {
-  if (!tokenValido(token)) return false;
-  try {
-    await import_node_fs4.promises.unlink(caminhoDoArquivo(token, extensao));
-    return true;
-  } catch {
-    return false;
-  }
-}
-function chaveDeNfeValida(chave) {
-  return /^\d{44}$/.test(String(chave));
-}
-function problemaNoPdf(bytes) {
-  if (bytes.length === 0) return "O PDF chegou vazio.";
-  if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") {
-    return 'O arquivo enviado em "pdf" n\xE3o \xE9 um PDF (n\xE3o come\xE7a com %PDF-).';
-  }
-  return "";
-}
-function problemaNoXml(bytes) {
-  if (bytes.length === 0) return "O XML chegou vazio.";
-  let texto;
-  try {
-    texto = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return "O XML precisa estar em UTF-8 \u2014 a NF-e autorizada sempre est\xE1.";
-  }
-  if (texto.charCodeAt(0) === 65279) texto = texto.slice(1);
-  if (/<!\s*(DOCTYPE|ENTITY)/i.test(texto)) {
-    return "O XML declara DOCTYPE ou ENTITY. NF-e autorizada n\xE3o tem declara\xE7\xE3o de entidade, e ela \xE9 a porta de entrada de XXE \u2014 o arquivo foi recusado.";
-  }
-  const problema = problemaDeFormaDoXml(texto);
-  return problema === "" ? "" : `O XML n\xE3o est\xE1 bem formado: ${problema}.`;
-}
-function problemaNasEntidades(trecho) {
-  let i = trecho.indexOf("&");
-  while (i >= 0) {
-    const fim = trecho.indexOf(";", i + 1);
-    if (fim < 0 || fim - i > 12) return `refer\xEAncia "&" sem ";" logo depois`;
-    const nome = trecho.slice(i + 1, fim);
-    if (!ENTIDADE.test(nome)) return `entidade "&${nome};" n\xE3o \xE9 permitida`;
-    i = trecho.indexOf("&", fim + 1);
-  }
-  return "";
-}
-function fimDaTag(s, inicio) {
-  let aspas = "";
-  for (let i = inicio; i < s.length; i++) {
-    const c = s[i];
-    if (aspas !== "") {
-      if (c === aspas) aspas = "";
-      continue;
-    }
-    if (c === '"' || c === "'") aspas = c;
-    else if (c === ">") return i;
-  }
-  return -1;
-}
-function problemaNosAtributos(resto) {
-  let i = 0;
-  for (; ; ) {
-    while (i < resto.length && /\s/.test(resto[i])) i++;
-    if (i >= resto.length) return "";
-    const m = /^([^\s=/>]+)\s*=\s*("([^"]*)"|'([^']*)')/.exec(resto.slice(i));
-    if (m === null) return `atributo malformado em "${resto.slice(i, i + 30).trim()}"`;
-    if (!NOME.test(m[1])) return `nome de atributo inv\xE1lido "${m[1]}"`;
-    const problema = problemaNasEntidades(m[3] ?? m[4] ?? "");
-    if (problema !== "") return problema;
-    i += m[0].length;
-  }
-}
-function problemaDeFormaDoXml(s) {
-  const pilha = [];
-  let raizes = 0;
-  let i = 0;
-  const foraDaRaiz = /* @__PURE__ */ __name(() => pilha.length === 0, "foraDaRaiz");
-  while (i < s.length) {
-    const abre = s.indexOf("<", i);
-    const texto = abre < 0 ? s.slice(i) : s.slice(i, abre);
-    if (foraDaRaiz() && texto.trim() !== "") return "h\xE1 texto fora do elemento raiz";
-    const problemaDeTexto = problemaNasEntidades(texto);
-    if (problemaDeTexto !== "") return problemaDeTexto;
-    if (abre < 0) break;
-    if (s.startsWith("<!--", abre)) {
-      const fim = s.indexOf("-->", abre + 4);
-      if (fim < 0) return "coment\xE1rio n\xE3o fechado";
-      i = fim + 3;
-      continue;
-    }
-    if (s.startsWith("<![CDATA[", abre)) {
-      if (foraDaRaiz()) return "CDATA fora do elemento raiz";
-      const fim = s.indexOf("]]>", abre + 9);
-      if (fim < 0) return "CDATA n\xE3o fechado";
-      i = fim + 3;
-      continue;
-    }
-    if (s.startsWith("<?", abre)) {
-      const fim = s.indexOf("?>", abre + 2);
-      if (fim < 0) return "declara\xE7\xE3o <? ... ?> n\xE3o fechada";
-      i = fim + 2;
-      continue;
-    }
-    if (s.startsWith("<!", abre)) {
-      return "declara\xE7\xE3o <! ... > n\xE3o \xE9 aceita";
-    }
-    const fecha = fimDaTag(s, abre + 1);
-    if (fecha < 0) return "tag n\xE3o fechada";
-    const bruto = s.slice(abre + 1, fecha);
-    i = fecha + 1;
-    if (bruto.startsWith("/")) {
-      const nome = bruto.slice(1).trim();
-      if (!NOME.test(nome)) return `nome de elemento inv\xE1lido "${nome}"`;
-      if (pilha.pop() !== nome) return `</${nome}> n\xE3o fecha o elemento aberto`;
-      continue;
-    }
-    const proprio = bruto.endsWith("/");
-    const miolo = proprio ? bruto.slice(0, -1) : bruto;
-    const m = /^([^\s/>]+)([\s\S]*)$/.exec(miolo.trim());
-    if (m === null) return "tag vazia";
-    if (!NOME.test(m[1])) return `nome de elemento inv\xE1lido "${m[1]}"`;
-    const problemaDeAtributo = problemaNosAtributos(m[2]);
-    if (problemaDeAtributo !== "") return problemaDeAtributo;
-    if (foraDaRaiz()) raizes++;
-    if (!proprio) pilha.push(m[1]);
-  }
-  if (pilha.length > 0) return `o elemento <${pilha[pilha.length - 1]}> ficou aberto`;
-  if (raizes === 0) return "n\xE3o h\xE1 elemento nenhum";
-  if (raizes > 1) return "h\xE1 mais de um elemento raiz";
-  return "";
-}
-function invoiceRowToApi(r) {
-  const token = /* @__PURE__ */ __name((t, ext) => `${config.appUrl.replace(/\/+$/, "")}/api/v1/invoices/${String(t)}.${ext}`, "token");
-  return {
-    key: String(r.nfe_key ?? ""),
-    number: Number(r.number) || 0,
-    series: Number(r.series) || 0,
-    issuedAt: iso(r.issued_at),
-    /** Texto, não número — ver o comentário acima. */
-    totalAmount: String(r.total_amount_txt ?? r.total_amount ?? "0"),
-    status: String(r.status ?? "authorized"),
-    xmlUrl: token(r.xml_token, "xml"),
-    pdfUrl: token(r.pdf_token, "pdf")
-  };
-}
-var import_node_crypto4, import_node_fs4, import_node_path4, TETO_XML, TETO_PDF, TETO_CORPO, NOME, ENTIDADE, COLUNAS_DA_NOTA;
-var init_notas = __esm({
-  "server/src/notas.ts"() {
-    "use strict";
-    import_node_crypto4 = require("node:crypto");
-    import_node_fs4 = require("node:fs");
-    import_node_path4 = __toESM(require("node:path"), 1);
-    init_config();
-    init_http();
-    TETO_XML = 1024 * 1024;
-    TETO_PDF = 2 * 1024 * 1024;
-    TETO_CORPO = TETO_XML + TETO_PDF + 128 * 1024;
-    __name(pastaDeNotas, "pastaDeNotas");
-    __name(novoToken, "novoToken");
-    __name(tokenValido, "tokenValido");
-    __name(caminhoDoArquivo, "caminhoDoArquivo");
-    __name(guardarArquivoDaNota, "guardarArquivoDaNota");
-    __name(lerArquivoDaNota, "lerArquivoDaNota");
-    __name(apagarArquivoDaNota, "apagarArquivoDaNota");
-    __name(chaveDeNfeValida, "chaveDeNfeValida");
-    __name(problemaNoPdf, "problemaNoPdf");
-    __name(problemaNoXml, "problemaNoXml");
-    NOME = /^[A-Za-z_:][A-Za-z0-9_.:-]*$/;
-    ENTIDADE = /^(amp|lt|gt|quot|apos|#\d{1,7}|#x[0-9A-Fa-f]{1,6})$/;
-    __name(problemaNasEntidades, "problemaNasEntidades");
-    __name(fimDaTag, "fimDaTag");
-    __name(problemaNosAtributos, "problemaNosAtributos");
-    __name(problemaDeFormaDoXml, "problemaDeFormaDoXml");
-    __name(invoiceRowToApi, "invoiceRowToApi");
-    COLUNAS_DA_NOTA = "nfe_key, order_id, number, series, issued_at, status, xml_token, pdf_token, CAST(total_amount AS CHAR) AS total_amount_txt";
-  }
-});
-
 // server/src/erp-categorias.ts
 function normalizarCodigo(bruto) {
   return String(bruto ?? "").trim().slice(0, 60);
@@ -1636,6 +1431,211 @@ var init_variacoes = __esm({
     __name(slugLivre, "slugLivre");
     __name(gravarGrupo, "gravarGrupo");
     __name(apagarGrupo, "apagarGrupo");
+  }
+});
+
+// server/src/notas.ts
+function pastaDeNotas() {
+  return import_node_path3.default.resolve(process.cwd(), config.notasDir);
+}
+function novoToken() {
+  return (0, import_node_crypto3.randomBytes)(24).toString("hex");
+}
+function tokenValido(token) {
+  return /^[0-9a-f]{48}$/.test(String(token));
+}
+function caminhoDoArquivo(token, extensao) {
+  return import_node_path3.default.join(pastaDeNotas(), `${token}.${extensao}`);
+}
+async function guardarArquivoDaNota(token, extensao, bytes) {
+  const pasta = pastaDeNotas();
+  await import_node_fs3.promises.mkdir(pasta, { recursive: true });
+  const temporario = import_node_path3.default.join(pasta, `.tmp-${(0, import_node_crypto3.randomBytes)(8).toString("hex")}`);
+  await import_node_fs3.promises.writeFile(temporario, bytes, { mode: 384 });
+  await import_node_fs3.promises.rename(temporario, caminhoDoArquivo(token, extensao));
+}
+async function lerArquivoDaNota(token, extensao) {
+  if (!tokenValido(token)) return null;
+  try {
+    return await import_node_fs3.promises.readFile(caminhoDoArquivo(token, extensao));
+  } catch {
+    return null;
+  }
+}
+async function apagarArquivoDaNota(token, extensao) {
+  if (!tokenValido(token)) return false;
+  try {
+    await import_node_fs3.promises.unlink(caminhoDoArquivo(token, extensao));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function chaveDeNfeValida(chave) {
+  return /^\d{44}$/.test(String(chave));
+}
+function problemaNoPdf(bytes) {
+  if (bytes.length === 0) return "O PDF chegou vazio.";
+  if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") {
+    return 'O arquivo enviado em "pdf" n\xE3o \xE9 um PDF (n\xE3o come\xE7a com %PDF-).';
+  }
+  return "";
+}
+function problemaNoXml(bytes) {
+  if (bytes.length === 0) return "O XML chegou vazio.";
+  let texto;
+  try {
+    texto = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return "O XML precisa estar em UTF-8 \u2014 a NF-e autorizada sempre est\xE1.";
+  }
+  if (texto.charCodeAt(0) === 65279) texto = texto.slice(1);
+  if (/<!\s*(DOCTYPE|ENTITY)/i.test(texto)) {
+    return "O XML declara DOCTYPE ou ENTITY. NF-e autorizada n\xE3o tem declara\xE7\xE3o de entidade, e ela \xE9 a porta de entrada de XXE \u2014 o arquivo foi recusado.";
+  }
+  const problema = problemaDeFormaDoXml(texto);
+  return problema === "" ? "" : `O XML n\xE3o est\xE1 bem formado: ${problema}.`;
+}
+function problemaNasEntidades(trecho) {
+  let i = trecho.indexOf("&");
+  while (i >= 0) {
+    const fim = trecho.indexOf(";", i + 1);
+    if (fim < 0 || fim - i > 12) return `refer\xEAncia "&" sem ";" logo depois`;
+    const nome = trecho.slice(i + 1, fim);
+    if (!ENTIDADE.test(nome)) return `entidade "&${nome};" n\xE3o \xE9 permitida`;
+    i = trecho.indexOf("&", fim + 1);
+  }
+  return "";
+}
+function fimDaTag(s, inicio) {
+  let aspas = "";
+  for (let i = inicio; i < s.length; i++) {
+    const c = s[i];
+    if (aspas !== "") {
+      if (c === aspas) aspas = "";
+      continue;
+    }
+    if (c === '"' || c === "'") aspas = c;
+    else if (c === ">") return i;
+  }
+  return -1;
+}
+function problemaNosAtributos(resto) {
+  let i = 0;
+  for (; ; ) {
+    while (i < resto.length && /\s/.test(resto[i])) i++;
+    if (i >= resto.length) return "";
+    const m = /^([^\s=/>]+)\s*=\s*("([^"]*)"|'([^']*)')/.exec(resto.slice(i));
+    if (m === null) return `atributo malformado em "${resto.slice(i, i + 30).trim()}"`;
+    if (!NOME.test(m[1])) return `nome de atributo inv\xE1lido "${m[1]}"`;
+    const problema = problemaNasEntidades(m[3] ?? m[4] ?? "");
+    if (problema !== "") return problema;
+    i += m[0].length;
+  }
+}
+function problemaDeFormaDoXml(s) {
+  const pilha = [];
+  let raizes = 0;
+  let i = 0;
+  const foraDaRaiz = /* @__PURE__ */ __name(() => pilha.length === 0, "foraDaRaiz");
+  while (i < s.length) {
+    const abre = s.indexOf("<", i);
+    const texto = abre < 0 ? s.slice(i) : s.slice(i, abre);
+    if (foraDaRaiz() && texto.trim() !== "") return "h\xE1 texto fora do elemento raiz";
+    const problemaDeTexto = problemaNasEntidades(texto);
+    if (problemaDeTexto !== "") return problemaDeTexto;
+    if (abre < 0) break;
+    if (s.startsWith("<!--", abre)) {
+      const fim = s.indexOf("-->", abre + 4);
+      if (fim < 0) return "coment\xE1rio n\xE3o fechado";
+      i = fim + 3;
+      continue;
+    }
+    if (s.startsWith("<![CDATA[", abre)) {
+      if (foraDaRaiz()) return "CDATA fora do elemento raiz";
+      const fim = s.indexOf("]]>", abre + 9);
+      if (fim < 0) return "CDATA n\xE3o fechado";
+      i = fim + 3;
+      continue;
+    }
+    if (s.startsWith("<?", abre)) {
+      const fim = s.indexOf("?>", abre + 2);
+      if (fim < 0) return "declara\xE7\xE3o <? ... ?> n\xE3o fechada";
+      i = fim + 2;
+      continue;
+    }
+    if (s.startsWith("<!", abre)) {
+      return "declara\xE7\xE3o <! ... > n\xE3o \xE9 aceita";
+    }
+    const fecha = fimDaTag(s, abre + 1);
+    if (fecha < 0) return "tag n\xE3o fechada";
+    const bruto = s.slice(abre + 1, fecha);
+    i = fecha + 1;
+    if (bruto.startsWith("/")) {
+      const nome = bruto.slice(1).trim();
+      if (!NOME.test(nome)) return `nome de elemento inv\xE1lido "${nome}"`;
+      if (pilha.pop() !== nome) return `</${nome}> n\xE3o fecha o elemento aberto`;
+      continue;
+    }
+    const proprio = bruto.endsWith("/");
+    const miolo = proprio ? bruto.slice(0, -1) : bruto;
+    const m = /^([^\s/>]+)([\s\S]*)$/.exec(miolo.trim());
+    if (m === null) return "tag vazia";
+    if (!NOME.test(m[1])) return `nome de elemento inv\xE1lido "${m[1]}"`;
+    const problemaDeAtributo = problemaNosAtributos(m[2]);
+    if (problemaDeAtributo !== "") return problemaDeAtributo;
+    if (foraDaRaiz()) raizes++;
+    if (!proprio) pilha.push(m[1]);
+  }
+  if (pilha.length > 0) return `o elemento <${pilha[pilha.length - 1]}> ficou aberto`;
+  if (raizes === 0) return "n\xE3o h\xE1 elemento nenhum";
+  if (raizes > 1) return "h\xE1 mais de um elemento raiz";
+  return "";
+}
+function invoiceRowToApi(r) {
+  const token = /* @__PURE__ */ __name((t, ext) => `${config.appUrl.replace(/\/+$/, "")}/api/v1/invoices/${String(t)}.${ext}`, "token");
+  return {
+    key: String(r.nfe_key ?? ""),
+    number: Number(r.number) || 0,
+    series: Number(r.series) || 0,
+    issuedAt: iso(r.issued_at),
+    /** Texto, não número — ver o comentário acima. */
+    totalAmount: String(r.total_amount_txt ?? r.total_amount ?? "0"),
+    status: String(r.status ?? "authorized"),
+    xmlUrl: token(r.xml_token, "xml"),
+    pdfUrl: token(r.pdf_token, "pdf")
+  };
+}
+var import_node_crypto3, import_node_fs3, import_node_path3, TETO_XML, TETO_PDF, TETO_CORPO, NOME, ENTIDADE, COLUNAS_DA_NOTA;
+var init_notas = __esm({
+  "server/src/notas.ts"() {
+    "use strict";
+    import_node_crypto3 = require("node:crypto");
+    import_node_fs3 = require("node:fs");
+    import_node_path3 = __toESM(require("node:path"), 1);
+    init_config();
+    init_http();
+    TETO_XML = 1024 * 1024;
+    TETO_PDF = 2 * 1024 * 1024;
+    TETO_CORPO = TETO_XML + TETO_PDF + 128 * 1024;
+    __name(pastaDeNotas, "pastaDeNotas");
+    __name(novoToken, "novoToken");
+    __name(tokenValido, "tokenValido");
+    __name(caminhoDoArquivo, "caminhoDoArquivo");
+    __name(guardarArquivoDaNota, "guardarArquivoDaNota");
+    __name(lerArquivoDaNota, "lerArquivoDaNota");
+    __name(apagarArquivoDaNota, "apagarArquivoDaNota");
+    __name(chaveDeNfeValida, "chaveDeNfeValida");
+    __name(problemaNoPdf, "problemaNoPdf");
+    __name(problemaNoXml, "problemaNoXml");
+    NOME = /^[A-Za-z_:][A-Za-z0-9_.:-]*$/;
+    ENTIDADE = /^(amp|lt|gt|quot|apos|#\d{1,7}|#x[0-9A-Fa-f]{1,6})$/;
+    __name(problemaNasEntidades, "problemaNasEntidades");
+    __name(fimDaTag, "fimDaTag");
+    __name(problemaNosAtributos, "problemaNosAtributos");
+    __name(problemaDeFormaDoXml, "problemaDeFormaDoXml");
+    __name(invoiceRowToApi, "invoiceRowToApi");
+    COLUNAS_DA_NOTA = "nfe_key, order_id, number, series, issued_at, status, xml_token, pdf_token, CAST(total_amount AS CHAR) AS total_amount_txt";
   }
 });
 
@@ -2894,6 +2894,285 @@ var init_envia = __esm({
   }
 });
 
+// server/src/correios.ts
+var correios_exports = {};
+__export(correios_exports, {
+  SERVICO_PAC: () => SERVICO_PAC,
+  SERVICO_SEDEX: () => SERVICO_SEDEX,
+  _internos: () => _internos,
+  autenticar: () => autenticar,
+  cotar: () => cotar3,
+  cotarTodos: () => cotarTodos,
+  credsFrom: () => credsFrom3,
+  esquecerToken: () => esquecerToken,
+  nomeDoServico: () => nomeDoServico,
+  rastrear: () => rastrear2,
+  servicesOf: () => servicesOf
+});
+function nomeDoServico(codigo) {
+  return NOMES[codigo] ?? `Correios ${codigo}`;
+}
+function credsFrom3(f) {
+  const s = /* @__PURE__ */ __name((k) => String(f[k] ?? "").trim(), "s");
+  return {
+    user: s("user"),
+    accessCode: s("accessCode"),
+    postingCard: s("postingCard").replace(/\D/g, ""),
+    contract: s("contract"),
+    dr: s("dr"),
+    services: s("services"),
+    originCep: s("originCep").replace(/\D/g, "")
+  };
+}
+function servicesOf(c) {
+  const lista = (c.services ?? "").split(/[,;\s]+/).map((x) => x.replace(/\D/g, "")).filter((x) => x.length > 0);
+  return lista.length > 0 ? lista : [SERVICO_PAC, SERVICO_SEDEX];
+}
+async function autenticar(c) {
+  const chave = `${c.user}:${c.postingCard}`;
+  const agora = Date.now();
+  const salvo = cache.get(chave);
+  if (salvo && salvo.expiraEm - 5 * 6e4 > agora) {
+    return { token: salvo.token, erro: "" };
+  }
+  const basic = Buffer.from(`${c.user}:${c.accessCode}`).toString("base64");
+  const r = await httpCall(
+    "POST",
+    `${BASE}/token/v1/autentica/cartaopostagem`,
+    { Authorization: "Basic " + basic },
+    { numero: c.postingCard }
+  );
+  if (!r.ok) return { token: "", erro: explicar(r) };
+  let dados;
+  try {
+    dados = JSON.parse(r.body);
+  } catch {
+    return { token: "", erro: "Resposta inesperada dos Correios ao autenticar." };
+  }
+  if (!dados.token) return { token: "", erro: "Os Correios n\xE3o devolveram token." };
+  const expira = dados.expiraEm ? Date.parse(dados.expiraEm) : NaN;
+  cache.set(chave, {
+    token: dados.token,
+    expiraEm: Number.isFinite(expira) ? expira : agora + 12 * 36e5
+  });
+  return { token: dados.token, erro: "" };
+}
+function esquecerToken(c) {
+  cache.delete(`${c.user}:${c.postingCard}`);
+}
+function explicar(r, onde = "auth") {
+  if (r.status === 401 || r.status === 403) {
+    return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
+  }
+  if (r.status === 400) {
+    const detalhe = detalheDoErro3(r.body);
+    if (detalhe !== "") return detalhe;
+    if (onde === "cotacao") {
+      return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Confira em "Servi\xE7os a cotar" se os c\xF3digos pertencem ao seu contrato \u2014 os de balc\xE3o (04510 PAC, 04014 Sedex) cotam sem contrato e servem para testar.';
+    }
+    return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
+  }
+  if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
+  return `Correios responderam HTTP ${r.status}.`;
+}
+function detalheDoErro3(body2) {
+  const limpo = String(body2 ?? "").trim();
+  if (limpo === "") return "";
+  try {
+    const d = JSON.parse(limpo);
+    const candidatos2 = [
+      d.msgs,
+      d.msg,
+      d.message,
+      d.txErro,
+      d.error,
+      d.descricao,
+      d.causa,
+      d.mensagem,
+      d.detail,
+      d.erros
+    ];
+    for (const c of candidatos2) {
+      if (Array.isArray(c) && c.length > 0) {
+        const partes = c.map((x) => {
+          if (typeof x === "string") return x;
+          const o = x;
+          return String(o?.descricao ?? o?.mensagem ?? o?.msg ?? JSON.stringify(x));
+        });
+        return partes.join(" \xB7 ").slice(0, 300);
+      }
+      if (typeof c === "string" && c.trim() !== "") return c.trim().slice(0, 300);
+    }
+    return limpo.slice(0, 300);
+  } catch {
+    return limpo.length <= 300 ? limpo : "";
+  }
+}
+function moeda(v) {
+  const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+async function cotar3(c, servico, cepDestino, pesoGramas, dim = {}) {
+  const vazio = { servico, nome: nomeDoServico(servico), preco: 0, prazoDias: 0, erro: "" };
+  const { token, erro } = await autenticar(c);
+  if (erro) return { ...vazio, erro };
+  const origem2 = (c.originCep ?? "").replace(/\D/g, "");
+  const destino = String(cepDestino ?? "").replace(/\D/g, "");
+  if (origem2.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
+  if (destino.length !== 8) return { ...vazio, erro: "CEP de destino inv\xE1lido." };
+  const produto = {
+    coProduto: servico,
+    nuRequisicao: "1",
+    cepOrigem: origem2,
+    cepDestino: destino,
+    psObjeto: String(Math.max(300, Math.round(pesoGramas))),
+    tpObjeto: "2",
+    // pacote
+    comprimento: String(Math.max(16, dim.comprimento ?? 16)),
+    altura: String(Math.max(2, dim.altura ?? 5)),
+    largura: String(Math.max(11, dim.largura ?? 11))
+  };
+  const contrato = (c.contract ?? "").replace(/\D/g, "");
+  const dr = (c.dr ?? "").replace(/\D/g, "");
+  if (contrato !== "" && dr !== "") {
+    produto.nuContrato = contrato;
+    produto.nuDR = dr;
+  }
+  const corpo = { idLote: "1", parametrosProduto: [produto] };
+  const corpoPrazo = {
+    idLote: "1",
+    parametrosPrazo: [{
+      coProduto: servico,
+      nuRequisicao: "1",
+      cepOrigem: origem2,
+      cepDestino: destino
+    }]
+  };
+  const auth = { Authorization: "Bearer " + token };
+  const [preco, prazo] = await Promise.all([
+    httpCall("POST", `${BASE}/preco/v1/nacional`, auth, corpo),
+    httpCall("POST", `${BASE}/prazo/v1/nacional`, auth, corpoPrazo)
+  ]);
+  if (preco.status === 401) {
+    esquecerToken(c);
+    return { ...vazio, erro: "Token expirado; tente de novo." };
+  }
+  if (!preco.ok) {
+    console.error(
+      `[queops] Correios recusaram a cota\xE7\xE3o de ${servico} (HTTP ${preco.status}):`,
+      String(preco.body ?? "").slice(0, 600)
+    );
+    return { ...vazio, erro: explicar(preco, "cotacao") };
+  }
+  try {
+    const p = JSON.parse(preco.body);
+    const item = Array.isArray(p) ? p[0] : null;
+    if (!item) return { ...vazio, erro: "Correios n\xE3o devolveram pre\xE7o." };
+    if (item.txErro) return { ...vazio, erro: String(item.txErro) };
+    let dias = 0;
+    if (prazo.ok) {
+      const q2 = JSON.parse(prazo.body);
+      dias = Number(q2?.[0]?.prazoEntrega ?? 0) || 0;
+      if (dias === 0) {
+        console.warn(
+          `[queops] Correios n\xE3o devolveram prazo para ${servico}:`,
+          String(prazo.body ?? "").slice(0, 300)
+        );
+      }
+    } else {
+      console.warn(
+        `[queops] falha ao consultar o prazo de ${servico} (HTTP ${prazo.status}):`,
+        String(prazo.body ?? "").slice(0, 300)
+      );
+    }
+    return {
+      servico,
+      nome: nomeDoServico(servico),
+      preco: moeda(item.pcFinal ?? item.pcBase),
+      prazoDias: dias,
+      erro: ""
+    };
+  } catch {
+    return { ...vazio, erro: "Resposta inesperada dos Correios ao cotar." };
+  }
+}
+async function cotarTodos(c, cepDestino, pesoGramas, dim) {
+  const servicos = servicesOf(c);
+  const todas = await Promise.all(servicos.map((s) => cotar3(c, s, cepDestino, pesoGramas, dim)));
+  const boas = todas.filter((x) => x.erro === "" && x.preco > 0);
+  return boas.length > 0 ? boas.sort((a, b) => a.preco - b.preco) : todas;
+}
+async function rastrear2(c, codigo) {
+  const { token, erro } = await autenticar(c);
+  if (erro) return { eventos: [], erro };
+  const limpo = String(codigo ?? "").trim().toUpperCase().replace(/\s/g, "");
+  if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(limpo)) {
+    return { eventos: [], erro: "C\xF3digo de rastreio inv\xE1lido (formato AA123456789BR)." };
+  }
+  const r = await httpCall(
+    "GET",
+    `${BASE}/srorastro/v1/objetos/${limpo}?resultado=T`,
+    { Authorization: "Bearer " + token }
+  );
+  if (r.status === 401) {
+    esquecerToken(c);
+    return { eventos: [], erro: "Token expirado; tente de novo." };
+  }
+  if (!r.ok) return { eventos: [], erro: explicar(r, "rastreio") };
+  try {
+    const dados = JSON.parse(r.body);
+    const obj = dados.objetos?.[0];
+    if (!obj) return { eventos: [], erro: "Objeto n\xE3o encontrado." };
+    if (obj.mensagem) return { eventos: [], erro: String(obj.mensagem) };
+    const brutos = obj.eventos ?? [];
+    const eventos = brutos.map((e) => {
+      const u = e.unidade ?? {};
+      const end = u.endereco ?? {};
+      const cidade = String(end.cidade ?? "");
+      const uf = String(end.uf ?? "");
+      return {
+        data: String(e.dtHrCriado ?? ""),
+        descricao: String(e.descricao ?? ""),
+        local: cidade && uf ? `${cidade}/${uf}` : String(u.tipo ?? "")
+      };
+    });
+    return { eventos, erro: "" };
+  } catch {
+    return { eventos: [], erro: "Resposta inesperada dos Correios ao rastrear." };
+  }
+}
+var BASE, SERVICO_PAC, SERVICO_SEDEX, NOMES, cache, _internos;
+var init_correios = __esm({
+  "server/src/correios.ts"() {
+    "use strict";
+    init_providers();
+    BASE = "https://api.correios.com.br";
+    SERVICO_PAC = "03298";
+    SERVICO_SEDEX = "03220";
+    NOMES = {
+      "03298": "PAC",
+      "03220": "Sedex",
+      "03158": "Sedex 10",
+      "03204": "Sedex Hoje",
+      "04510": "PAC",
+      "04014": "Sedex"
+    };
+    __name(nomeDoServico, "nomeDoServico");
+    __name(credsFrom3, "credsFrom");
+    __name(servicesOf, "servicesOf");
+    cache = /* @__PURE__ */ new Map();
+    __name(autenticar, "autenticar");
+    __name(esquecerToken, "esquecerToken");
+    __name(explicar, "explicar");
+    __name(detalheDoErro3, "detalheDoErro");
+    _internos = { detalheDoErro: detalheDoErro3 };
+    __name(moeda, "moeda");
+    __name(cotar3, "cotar");
+    __name(cotarTodos, "cotarTodos");
+    __name(rastrear2, "rastrear");
+  }
+});
+
 // server/src/providers.ts
 function isPrivateIp(ip) {
   const kind = (0, import_node_net2.isIP)(ip);
@@ -3277,285 +3556,6 @@ var init_providers = __esm({
     __name(providerTest, "providerTest");
     __name(providerSendWhatsapp, "providerSendWhatsapp");
     __name(fireWebhooks, "fireWebhooks");
-  }
-});
-
-// server/src/correios.ts
-var correios_exports = {};
-__export(correios_exports, {
-  SERVICO_PAC: () => SERVICO_PAC,
-  SERVICO_SEDEX: () => SERVICO_SEDEX,
-  _internos: () => _internos,
-  autenticar: () => autenticar,
-  cotar: () => cotar3,
-  cotarTodos: () => cotarTodos,
-  credsFrom: () => credsFrom3,
-  esquecerToken: () => esquecerToken,
-  nomeDoServico: () => nomeDoServico,
-  rastrear: () => rastrear2,
-  servicesOf: () => servicesOf
-});
-function nomeDoServico(codigo) {
-  return NOMES[codigo] ?? `Correios ${codigo}`;
-}
-function credsFrom3(f) {
-  const s = /* @__PURE__ */ __name((k) => String(f[k] ?? "").trim(), "s");
-  return {
-    user: s("user"),
-    accessCode: s("accessCode"),
-    postingCard: s("postingCard").replace(/\D/g, ""),
-    contract: s("contract"),
-    dr: s("dr"),
-    services: s("services"),
-    originCep: s("originCep").replace(/\D/g, "")
-  };
-}
-function servicesOf(c) {
-  const lista = (c.services ?? "").split(/[,;\s]+/).map((x) => x.replace(/\D/g, "")).filter((x) => x.length > 0);
-  return lista.length > 0 ? lista : [SERVICO_PAC, SERVICO_SEDEX];
-}
-async function autenticar(c) {
-  const chave = `${c.user}:${c.postingCard}`;
-  const agora = Date.now();
-  const salvo = cache.get(chave);
-  if (salvo && salvo.expiraEm - 5 * 6e4 > agora) {
-    return { token: salvo.token, erro: "" };
-  }
-  const basic = Buffer.from(`${c.user}:${c.accessCode}`).toString("base64");
-  const r = await httpCall(
-    "POST",
-    `${BASE}/token/v1/autentica/cartaopostagem`,
-    { Authorization: "Basic " + basic },
-    { numero: c.postingCard }
-  );
-  if (!r.ok) return { token: "", erro: explicar(r) };
-  let dados;
-  try {
-    dados = JSON.parse(r.body);
-  } catch {
-    return { token: "", erro: "Resposta inesperada dos Correios ao autenticar." };
-  }
-  if (!dados.token) return { token: "", erro: "Os Correios n\xE3o devolveram token." };
-  const expira = dados.expiraEm ? Date.parse(dados.expiraEm) : NaN;
-  cache.set(chave, {
-    token: dados.token,
-    expiraEm: Number.isFinite(expira) ? expira : agora + 12 * 36e5
-  });
-  return { token: dados.token, erro: "" };
-}
-function esquecerToken(c) {
-  cache.delete(`${c.user}:${c.postingCard}`);
-}
-function explicar(r, onde = "auth") {
-  if (r.status === 401 || r.status === 403) {
-    return "Usu\xE1rio ou c\xF3digo de acesso recusado. Lembre: o c\xF3digo de acesso \xE0 API n\xE3o \xE9 a senha do site \u2014 gere em Meu Correios \u2192 Gerenciar acesso \xE0 API.";
-  }
-  if (r.status === 400) {
-    const detalhe = detalheDoErro3(r.body);
-    if (detalhe !== "") return detalhe;
-    if (onde === "cotacao") {
-      return 'Cota\xE7\xE3o recusada pelos Correios, sem detalhe. Confira em "Servi\xE7os a cotar" se os c\xF3digos pertencem ao seu contrato \u2014 os de balc\xE3o (04510 PAC, 04014 Sedex) cotam sem contrato e servem para testar.';
-    }
-    return "Requisi\xE7\xE3o recusada. Confira o n\xFAmero do cart\xE3o de postagem.";
-  }
-  if (r.status === 0) return `N\xE3o foi poss\xEDvel falar com os Correios: ${r.error}`;
-  return `Correios responderam HTTP ${r.status}.`;
-}
-function detalheDoErro3(body2) {
-  const limpo = String(body2 ?? "").trim();
-  if (limpo === "") return "";
-  try {
-    const d = JSON.parse(limpo);
-    const candidatos2 = [
-      d.msgs,
-      d.msg,
-      d.message,
-      d.txErro,
-      d.error,
-      d.descricao,
-      d.causa,
-      d.mensagem,
-      d.detail,
-      d.erros
-    ];
-    for (const c of candidatos2) {
-      if (Array.isArray(c) && c.length > 0) {
-        const partes = c.map((x) => {
-          if (typeof x === "string") return x;
-          const o = x;
-          return String(o?.descricao ?? o?.mensagem ?? o?.msg ?? JSON.stringify(x));
-        });
-        return partes.join(" \xB7 ").slice(0, 300);
-      }
-      if (typeof c === "string" && c.trim() !== "") return c.trim().slice(0, 300);
-    }
-    return limpo.slice(0, 300);
-  } catch {
-    return limpo.length <= 300 ? limpo : "";
-  }
-}
-function moeda(v) {
-  const n = Number(String(v ?? "").replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(n) ? n : 0;
-}
-async function cotar3(c, servico, cepDestino, pesoGramas, dim = {}) {
-  const vazio = { servico, nome: nomeDoServico(servico), preco: 0, prazoDias: 0, erro: "" };
-  const { token, erro } = await autenticar(c);
-  if (erro) return { ...vazio, erro };
-  const origem2 = (c.originCep ?? "").replace(/\D/g, "");
-  const destino = String(cepDestino ?? "").replace(/\D/g, "");
-  if (origem2.length !== 8) return { ...vazio, erro: "CEP de origem n\xE3o configurado no painel." };
-  if (destino.length !== 8) return { ...vazio, erro: "CEP de destino inv\xE1lido." };
-  const produto = {
-    coProduto: servico,
-    nuRequisicao: "1",
-    cepOrigem: origem2,
-    cepDestino: destino,
-    psObjeto: String(Math.max(300, Math.round(pesoGramas))),
-    tpObjeto: "2",
-    // pacote
-    comprimento: String(Math.max(16, dim.comprimento ?? 16)),
-    altura: String(Math.max(2, dim.altura ?? 5)),
-    largura: String(Math.max(11, dim.largura ?? 11))
-  };
-  const contrato = (c.contract ?? "").replace(/\D/g, "");
-  const dr = (c.dr ?? "").replace(/\D/g, "");
-  if (contrato !== "" && dr !== "") {
-    produto.nuContrato = contrato;
-    produto.nuDR = dr;
-  }
-  const corpo = { idLote: "1", parametrosProduto: [produto] };
-  const corpoPrazo = {
-    idLote: "1",
-    parametrosPrazo: [{
-      coProduto: servico,
-      nuRequisicao: "1",
-      cepOrigem: origem2,
-      cepDestino: destino
-    }]
-  };
-  const auth = { Authorization: "Bearer " + token };
-  const [preco, prazo] = await Promise.all([
-    httpCall("POST", `${BASE}/preco/v1/nacional`, auth, corpo),
-    httpCall("POST", `${BASE}/prazo/v1/nacional`, auth, corpoPrazo)
-  ]);
-  if (preco.status === 401) {
-    esquecerToken(c);
-    return { ...vazio, erro: "Token expirado; tente de novo." };
-  }
-  if (!preco.ok) {
-    console.error(
-      `[queops] Correios recusaram a cota\xE7\xE3o de ${servico} (HTTP ${preco.status}):`,
-      String(preco.body ?? "").slice(0, 600)
-    );
-    return { ...vazio, erro: explicar(preco, "cotacao") };
-  }
-  try {
-    const p = JSON.parse(preco.body);
-    const item = Array.isArray(p) ? p[0] : null;
-    if (!item) return { ...vazio, erro: "Correios n\xE3o devolveram pre\xE7o." };
-    if (item.txErro) return { ...vazio, erro: String(item.txErro) };
-    let dias = 0;
-    if (prazo.ok) {
-      const q2 = JSON.parse(prazo.body);
-      dias = Number(q2?.[0]?.prazoEntrega ?? 0) || 0;
-      if (dias === 0) {
-        console.warn(
-          `[queops] Correios n\xE3o devolveram prazo para ${servico}:`,
-          String(prazo.body ?? "").slice(0, 300)
-        );
-      }
-    } else {
-      console.warn(
-        `[queops] falha ao consultar o prazo de ${servico} (HTTP ${prazo.status}):`,
-        String(prazo.body ?? "").slice(0, 300)
-      );
-    }
-    return {
-      servico,
-      nome: nomeDoServico(servico),
-      preco: moeda(item.pcFinal ?? item.pcBase),
-      prazoDias: dias,
-      erro: ""
-    };
-  } catch {
-    return { ...vazio, erro: "Resposta inesperada dos Correios ao cotar." };
-  }
-}
-async function cotarTodos(c, cepDestino, pesoGramas, dim) {
-  const servicos = servicesOf(c);
-  const todas = await Promise.all(servicos.map((s) => cotar3(c, s, cepDestino, pesoGramas, dim)));
-  const boas = todas.filter((x) => x.erro === "" && x.preco > 0);
-  return boas.length > 0 ? boas.sort((a, b) => a.preco - b.preco) : todas;
-}
-async function rastrear2(c, codigo) {
-  const { token, erro } = await autenticar(c);
-  if (erro) return { eventos: [], erro };
-  const limpo = String(codigo ?? "").trim().toUpperCase().replace(/\s/g, "");
-  if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(limpo)) {
-    return { eventos: [], erro: "C\xF3digo de rastreio inv\xE1lido (formato AA123456789BR)." };
-  }
-  const r = await httpCall(
-    "GET",
-    `${BASE}/srorastro/v1/objetos/${limpo}?resultado=T`,
-    { Authorization: "Bearer " + token }
-  );
-  if (r.status === 401) {
-    esquecerToken(c);
-    return { eventos: [], erro: "Token expirado; tente de novo." };
-  }
-  if (!r.ok) return { eventos: [], erro: explicar(r, "rastreio") };
-  try {
-    const dados = JSON.parse(r.body);
-    const obj = dados.objetos?.[0];
-    if (!obj) return { eventos: [], erro: "Objeto n\xE3o encontrado." };
-    if (obj.mensagem) return { eventos: [], erro: String(obj.mensagem) };
-    const brutos = obj.eventos ?? [];
-    const eventos = brutos.map((e) => {
-      const u = e.unidade ?? {};
-      const end = u.endereco ?? {};
-      const cidade = String(end.cidade ?? "");
-      const uf = String(end.uf ?? "");
-      return {
-        data: String(e.dtHrCriado ?? ""),
-        descricao: String(e.descricao ?? ""),
-        local: cidade && uf ? `${cidade}/${uf}` : String(u.tipo ?? "")
-      };
-    });
-    return { eventos, erro: "" };
-  } catch {
-    return { eventos: [], erro: "Resposta inesperada dos Correios ao rastrear." };
-  }
-}
-var BASE, SERVICO_PAC, SERVICO_SEDEX, NOMES, cache, _internos;
-var init_correios = __esm({
-  "server/src/correios.ts"() {
-    "use strict";
-    init_providers();
-    BASE = "https://api.correios.com.br";
-    SERVICO_PAC = "03298";
-    SERVICO_SEDEX = "03220";
-    NOMES = {
-      "03298": "PAC",
-      "03220": "Sedex",
-      "03158": "Sedex 10",
-      "03204": "Sedex Hoje",
-      "04510": "PAC",
-      "04014": "Sedex"
-    };
-    __name(nomeDoServico, "nomeDoServico");
-    __name(credsFrom3, "credsFrom");
-    __name(servicesOf, "servicesOf");
-    cache = /* @__PURE__ */ new Map();
-    __name(autenticar, "autenticar");
-    __name(esquecerToken, "esquecerToken");
-    __name(explicar, "explicar");
-    __name(detalheDoErro3, "detalheDoErro");
-    _internos = { detalheDoErro: detalheDoErro3 };
-    __name(moeda, "moeda");
-    __name(cotar3, "cotar");
-    __name(cotarTodos, "cotarTodos");
-    __name(rastrear2, "rastrear");
   }
 });
 
@@ -3998,10 +3998,11 @@ init_errors();
 init_http();
 
 // server/src/midia.ts
-var import_node_crypto3 = require("node:crypto");
-var import_node_fs3 = require("node:fs");
-var import_node_path3 = __toESM(require("node:path"), 1);
+var import_node_crypto4 = require("node:crypto");
+var import_node_fs4 = require("node:fs");
+var import_node_path4 = __toESM(require("node:path"), 1);
 init_config();
+init_providers();
 var TIPOS = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -4011,7 +4012,7 @@ var TIPOS = {
 };
 var TAMANHO_MAXIMO = 3 * 1024 * 1024;
 function pastaDeMidia() {
-  return import_node_path3.default.resolve(process.cwd(), config.midiaDir);
+  return import_node_path4.default.resolve(process.cwd(), config.midiaDir);
 }
 __name(pastaDeMidia, "pastaDeMidia");
 var VAZIO = Buffer.alloc(0);
@@ -4042,20 +4043,25 @@ __name(lerDataUrl, "lerDataUrl");
 async function guardarImagem(dataUrl) {
   const lido = lerDataUrl(dataUrl);
   if (lido.erro !== "") return { erro: lido.erro, url: "", bytes: 0, reaproveitada: false };
-  const pasta = pastaDeMidia();
-  await import_node_fs3.promises.mkdir(pasta, { recursive: true });
-  const hash = (0, import_node_crypto3.createHash)("sha256").update(lido.bytes).digest("hex").slice(0, 24);
-  const nome = `${hash}.${lido.extensao}`;
-  const destino = import_node_path3.default.join(pasta, nome);
-  if ((0, import_node_fs3.existsSync)(destino)) {
-    return { erro: "", url: `/midia/${nome}`, bytes: lido.bytes.length, reaproveitada: true };
-  }
-  const temporario = import_node_path3.default.join(pasta, `.tmp-${(0, import_node_crypto3.randomBytes)(8).toString("hex")}`);
-  await import_node_fs3.promises.writeFile(temporario, lido.bytes);
-  await import_node_fs3.promises.rename(temporario, destino);
-  return { erro: "", url: `/midia/${nome}`, bytes: lido.bytes.length, reaproveitada: false };
+  return await guardarBytes(lido.bytes, lido.extensao);
 }
 __name(guardarImagem, "guardarImagem");
+async function guardarBytes(bytes, extensao) {
+  const lido = { bytes, extensao };
+  const pasta = pastaDeMidia();
+  await import_node_fs4.promises.mkdir(pasta, { recursive: true });
+  const hash = (0, import_node_crypto4.createHash)("sha256").update(lido.bytes).digest("hex").slice(0, 24);
+  const nome = `${hash}.${lido.extensao}`;
+  const destino = import_node_path4.default.join(pasta, nome);
+  if ((0, import_node_fs4.existsSync)(destino)) {
+    return { erro: "", url: `/midia/${nome}`, bytes: lido.bytes.length, reaproveitada: true };
+  }
+  const temporario = import_node_path4.default.join(pasta, `.tmp-${(0, import_node_crypto4.randomBytes)(8).toString("hex")}`);
+  await import_node_fs4.promises.writeFile(temporario, lido.bytes);
+  await import_node_fs4.promises.rename(temporario, destino);
+  return { erro: "", url: `/midia/${nome}`, bytes: lido.bytes.length, reaproveitada: false };
+}
+__name(guardarBytes, "guardarBytes");
 function ehUrlDeMidia(url) {
   return /^\/midia\/[0-9a-f]{24}\.(png|jpg|webp|avif|gif)$/i.test(String(url));
 }
@@ -4065,7 +4071,7 @@ function conferirMidia(urls) {
   const distintas = [...new Set(urls.filter((u) => ehUrlDeMidia(u)))];
   const faltando = [];
   for (const url of distintas) {
-    if (!(0, import_node_fs3.existsSync)(import_node_path3.default.join(pasta, import_node_path3.default.basename(url)))) faltando.push(url);
+    if (!(0, import_node_fs4.existsSync)(import_node_path4.default.join(pasta, import_node_path4.default.basename(url)))) faltando.push(url);
   }
   return {
     referenciadas: distintas.length,
@@ -4076,6 +4082,58 @@ function conferirMidia(urls) {
   };
 }
 __name(conferirMidia, "conferirMidia");
+async function baixarImagem(url, timeoutMs = 15e3) {
+  const falha2 = /* @__PURE__ */ __name((erro) => ({ erro, url: "", bytes: 0, reaproveitada: false }), "falha");
+  let parsed;
+  try {
+    parsed = new URL(String(url ?? "").trim());
+  } catch {
+    return falha2("Endere\xE7o de imagem inv\xE1lido.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return falha2("Endere\xE7o de imagem precisa ser http ou https.");
+  }
+  if (await isInternalHost(parsed.hostname)) {
+    return falha2("Endere\xE7o interno ou reservado n\xE3o \xE9 permitido.");
+  }
+  let res;
+  try {
+    res = await fetch(parsed, {
+      // Um host público que responde 302 para 169.254.169.254 fecharia o
+      // buraco por fora; seguir redirect sozinho reabriria.
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { Accept: "image/*" }
+    });
+  } catch (e) {
+    return falha2(`N\xE3o consegui baixar a imagem: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (res.status >= 300 && res.status < 400) {
+    return falha2("O endere\xE7o da imagem redireciona, e redirecionamento n\xE3o \xE9 seguido.");
+  }
+  if (!res.ok) return falha2(`O endere\xE7o da imagem respondeu HTTP ${res.status}.`);
+  const tipo = String(res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  const extensao = TIPOS[tipo];
+  if (extensao === void 0) {
+    return falha2(`O endere\xE7o n\xE3o devolveu imagem (Content-Type: ${tipo || "ausente"}).`);
+  }
+  const declarado = Number(res.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declarado) && declarado > TAMANHO_MAXIMO) {
+    return falha2(`Imagem muito grande (${Math.round(declarado / 1024)} KB; m\xE1ximo 3 MB).`);
+  }
+  let bytes;
+  try {
+    bytes = Buffer.from(await res.arrayBuffer());
+  } catch (e) {
+    return falha2(`N\xE3o consegui ler a imagem: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (bytes.length === 0) return falha2("A imagem veio vazia.");
+  if (bytes.length > TAMANHO_MAXIMO) {
+    return falha2(`Imagem muito grande (${Math.round(bytes.length / 1024)} KB; m\xE1ximo 3 MB).`);
+  }
+  return await guardarBytes(bytes, extensao);
+}
+__name(baixarImagem, "baixarImagem");
 
 // server/src/routes/account.ts
 var import_express = require("express");
@@ -4867,7 +4925,7 @@ var CAMPOS = {
   highlight: "highlight",
   active: "active"
 };
-var EXTRAS = /* @__PURE__ */ new Set(["id", "categoryCode"]);
+var EXTRAS = /* @__PURE__ */ new Set(["id", "categoryCode", "image"]);
 function camposTravados(row) {
   const bruto = String(row?.locked_fields ?? "");
   return bruto.split(",").map((x) => x.trim()).filter((x) => x !== "");
@@ -4920,13 +4978,6 @@ function converter(campo, valor2) {
       }
       return { valor: gravado };
     }
-    case "image": {
-      const url = String(valor2 ?? "").slice(0, 500);
-      if (url !== "" && !safeImageUrl(url)) {
-        return { valor: null, erro: "image n\xE3o \xE9 um endere\xE7o de imagem aceito" };
-      }
-      return { valor: url };
-    }
     /*
      * `weight` é o peso em QUILOS, número.
      *
@@ -4975,6 +5026,18 @@ function converter(campo, valor2) {
         aviso: `weight "${bruto}" foi lido como ${Math.round(gramas) / 1e3} kg. O campo agora \xE9 num\xE9rico, em quilos \u2014 mande 0.2 em vez de "0,2kg".`
       };
     }
+    /*
+     * `image` NÃO é gravada por aqui — o download acontece em
+     * `gravarProdutoDoErp`, fora do laço, porque é assíncrono.
+     *
+     * Este caso existe só para a TRAVA: quando a lojista troca a foto pelo
+     * painel, `travarCamposEditados` compara o valor novo com o antigo e
+     * precisa de uma conversão que não falhe. Sem ele, a conversão caía no
+     * `default` ("campo não gravável"), a comparação era pulada, e a foto
+     * escolhida à mão voltava a ser sobrescrita pelo ERP no ciclo seguinte.
+     */
+    case "image":
+      return texto(500);
     case "weightLabel":
       return texto(120);
     case "highlight":
@@ -5036,6 +5099,41 @@ async function gravarProdutoDoErp(id, dto, exec = q) {
         resultado.warnings.push(
           !conhecido ? `categoryCode "${code}" n\xE3o veio em nenhuma carga de categorias. Envie PUT /api/v1/categories/{code} antes do produto. O produto foi gravado e entra na vitrine assim que o c\xF3digo existir e for amarrado \u2014 n\xE3o \xE9 preciso reenvi\xE1-lo.` : `categoryCode "${code}" (${nome}) ainda n\xE3o est\xE1 amarrado a uma categoria da loja. O produto foi gravado e fica fora da vitrine at\xE9 a amarra\xE7\xE3o em Painel \u2192 Categorias do ERP; quando ela acontecer, ele entra sozinho.`
         );
+      }
+    }
+  }
+  if ("image" in dto) {
+    if (travados.has("image")) {
+      resultado.ignored.push({ field: "image", reason: "locked_in_panel" });
+    } else {
+      const bruto = String(dto.image ?? "").trim().slice(0, 500);
+      if (bruto === "") {
+        colunas.push("image", "image_source");
+        valores.push("", "");
+        resultado.applied.push("image");
+      } else if (ehUrlDeMidia(bruto)) {
+        colunas.push("image");
+        valores.push(bruto);
+        resultado.applied.push("image");
+      } else if (!safeImageUrl(bruto)) {
+        resultado.error = {
+          code: "invalid_field",
+          message: "image n\xE3o \xE9 um endere\xE7o de imagem aceito"
+        };
+        return resultado;
+      } else if (atual !== null && String(atual.image_source ?? "") === bruto && String(atual.image ?? "") !== "") {
+        resultado.ignored.push({ field: "image", reason: "unchanged" });
+      } else {
+        const baixada = await baixarImagem(bruto);
+        if (baixada.erro !== "") {
+          resultado.warnings.push(
+            `image n\xE3o foi gravada: ${baixada.erro} O produto foi salvo sem mexer na foto atual.`
+          );
+        } else {
+          colunas.push("image", "image_source");
+          valores.push(baixada.url, bruto);
+          resultado.applied.push("image");
+        }
       }
     }
   }

@@ -18,6 +18,7 @@ import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import { config } from './config.ts';
+import { isInternalHost } from './providers.ts';
 
 /** Formatos aceitos → extensão. Raster apenas; SVG não entra (ver abaixo). */
 const TIPOS: Record<string, string> = {
@@ -116,7 +117,15 @@ export interface ResultadoDoUpload {
 export async function guardarImagem(dataUrl: string): Promise<ResultadoDoUpload> {
   const lido = lerDataUrl(dataUrl);
   if (lido.erro !== '') return { erro: lido.erro, url: '', bytes: 0, reaproveitada: false };
+  return await guardarBytes(lido.bytes, lido.extensao);
+}
 
+/** Grava bytes já validados. Separado para o download e o upload compartilharem. */
+export async function guardarBytes(
+  bytes: Buffer,
+  extensao: string,
+): Promise<ResultadoDoUpload> {
+  const lido = { bytes, extensao };
   const pasta = pastaDeMidia();
   await fs.mkdir(pasta, { recursive: true });
 
@@ -215,4 +224,92 @@ export function conferirMidia(urls: string[]): FotosAusentes {
     pasta,
     duravel: !/[/\\]hbuilds[/\\]versions[/\\]/.test(pasta),
   };
+}
+
+// ------------------------------------------------------------ download ----
+
+/**
+ * Baixa uma imagem de um endereço e guarda como arquivo da loja.
+ *
+ * Existe porque o ERP tem as fotos e a loja não: antes, mandar `image` com uma
+ * URL só gravava o ENDEREÇO. Três problemas nisso, e os três apareceram:
+ * a vitrine ficava refém do servidor do outro lado (se ele cair, a loja fica
+ * sem foto), endereço de rede interna não funciona de fora, e nada garantia
+ * que aquilo era mesmo uma imagem.
+ *
+ * Baixando, a foto passa a ser da loja: mesmo arquivo, mesmo cache, mesmo
+ * nome por hash — e sobrevive a qualquer coisa do lado de lá.
+ *
+ * As travas não são opcionais. Uma URL que vem de fora e é requisitada pelo
+ * servidor é a definição de SSRF: sem a checagem de host, bastaria mandar
+ * `http://169.254.169.254/latest/meta-data/` para a loja buscar as credenciais
+ * da própria instância.
+ */
+export async function baixarImagem(
+  url: string,
+  timeoutMs = 15_000,
+): Promise<ResultadoDoUpload> {
+  const falha = (erro: string): ResultadoDoUpload =>
+    ({ erro, url: '', bytes: 0, reaproveitada: false });
+
+  let parsed: URL;
+  try {
+    parsed = new URL(String(url ?? '').trim());
+  } catch {
+    return falha('Endereço de imagem inválido.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return falha('Endereço de imagem precisa ser http ou https.');
+  }
+  if (await isInternalHost(parsed.hostname)) {
+    return falha('Endereço interno ou reservado não é permitido.');
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(parsed, {
+      // Um host público que responde 302 para 169.254.169.254 fecharia o
+      // buraco por fora; seguir redirect sozinho reabriria.
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { Accept: 'image/*' },
+    });
+  } catch (e) {
+    return falha(`Não consegui baixar a imagem: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    return falha('O endereço da imagem redireciona, e redirecionamento não é seguido.');
+  }
+  if (!res.ok) return falha(`O endereço da imagem respondeu HTTP ${res.status}.`);
+
+  const tipo = String(res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+  const extensao = TIPOS[tipo];
+  if (extensao === undefined) {
+    return falha(`O endereço não devolveu imagem (Content-Type: ${tipo || 'ausente'}).`);
+  }
+
+  /*
+   * Confere o tamanho ANTES de ler, e de novo depois.
+   *
+   * O cabeçalho pode mentir ou faltar; ler sem limite deixaria um arquivo de
+   * gigabytes consumir a memória do servidor.
+   */
+  const declarado = Number(res.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declarado) && declarado > TAMANHO_MAXIMO) {
+    return falha(`Imagem muito grande (${Math.round(declarado / 1024)} KB; máximo 3 MB).`);
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(await res.arrayBuffer());
+  } catch (e) {
+    return falha(`Não consegui ler a imagem: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (bytes.length === 0) return falha('A imagem veio vazia.');
+  if (bytes.length > TAMANHO_MAXIMO) {
+    return falha(`Imagem muito grande (${Math.round(bytes.length / 1024)} KB; máximo 3 MB).`);
+  }
+
+  return await guardarBytes(bytes, extensao);
 }

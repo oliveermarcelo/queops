@@ -238,6 +238,17 @@ CREATE TABLE IF NOT EXISTS products (
   -- guarda "essa categoria eu já mandei" nunca mais tocaria no assunto — os
   -- produtos ficariam invisíveis para sempre, sem erro em lugar nenhum.
   pending_category_code VARCHAR(60) NOT NULL DEFAULT '',
+  -- ---------------------------------------------------------------------
+  -- De onde a foto veio, quando foi o ERP que mandou.
+  --
+  -- O ERP manda `image` como ENDEREÇO e a loja baixa o arquivo. Sem guardar a
+  -- origem, cada ciclo de sincronização baixaria tudo de novo: com mil e
+  -- quatrocentos produtos isso é mil e quatrocentas requisições a cada ciclo,
+  -- para chegar exatamente no mesmo arquivo — o nome é o hash do conteúdo.
+  --
+  -- Vazio quando a foto foi enviada pelo painel: ali não há origem externa.
+  -- ---------------------------------------------------------------------
+  image_source      VARCHAR(500) NOT NULL DEFAULT '',
   -- Grupo de variações a que este produto pertence (Painel → Variações).
   --
   -- Fica AQUI, e não numa tabela de ligação, por uma regra do contrato com o

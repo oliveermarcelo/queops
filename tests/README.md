@@ -202,6 +202,31 @@ acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe par
 ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
 vez de uma caixa de trinta metros.
 
+## A foto vem junto com o produto do ERP
+
+Precisa da loja no ar. A segunda metade precisa de internet.
+
+```bash
+npm run teste:imagem-erp
+```
+
+O UNO tem as fotos; a loja não. Antes, `image` com uma URL gravava só o
+ENDEREÇO — e isso deixava a vitrine refém do servidor do ERP, não funcionava
+com endereço de rede interna, e não garantia que aquilo era imagem. Agora a
+loja **baixa** e guarda como arquivo próprio, no mesmo envio do produto.
+
+Buscar uma URL que veio de fora é a definição de SSRF, então metade do arquivo
+é sobre as travas: endereço interno, esquema que não é http, redirecionamento
+(é por onde se chega em `169.254.169.254`), resposta que não é imagem, arquivo
+gigante. Essa parte troca o `fetch` por um de mentira — é a única forma de
+fazer um servidor remoto se comportar mal sob encomenda.
+
+A outra metade passa pela API de verdade, com um endereço público de verdade, e
+cobra o que o ERP precisa poder confiar: o produto chega com foto num envio só,
+o mesmo endereço **não** é baixado de novo no ciclo seguinte (senão mil e
+quatrocentos produtos viram mil e quatrocentos downloads por ciclo), falhar na
+foto não derruba o produto, e a foto trocada no painel não é sobrescrita.
+
 ## Mil fotos sem abrir produto por produto
 
 Precisa da loja no ar.

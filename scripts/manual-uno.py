@@ -30,7 +30,7 @@ BORDA = colors.HexColor('#d1d5db')
 AMBAR = colors.HexColor('#92400e')
 AMBAR_FUNDO = colors.HexColor('#fffbeb')
 
-VERSAO = 'Versão 3.4 — 14 de outubro de 2026'
+VERSAO = 'Versão 3.5 — 11 de novembro de 2026'
 BASE = 'https://queopspiramides.com.br'
 
 ss = getSampleStyleSheet()
@@ -522,7 +522,7 @@ PUT /api/v1/categories/0004/link
       "price": 189.9,
       "oldPrice": 219.9,                    // opcional (preço "de")
       "stock": 12,                          // número; aceita fração (12.5)
-      "image": "/produtos/piramide-cobre-15cm.jpg",
+      "image": "https://erp.uno/fotos/8821.jpg",  // ENDEREÇO; a loja baixa (4.2.1)
       "weight": 1.2,                        // número, em QUILOS
       "weightLabel": "Base 15cm · cobre",   // só texto de vitrine; não é peso
       "tag": "mais vendido",                // opcional
@@ -557,6 +557,44 @@ PUT /api/v1/categories/0004/link
         'entra em cálculo nenhum. O ERP pode ignorá-lo.<br/><br/>'
         '<b>stock</b> aceita decimal, até 3 casas. Antes, 7,5 era recusado com 422; agora atravessa '
         'inteiro nos dois sentidos. Acima de 3 casas, arredonda e avisa.'))
+    add(Spacer(1, 6))
+    add(Paragraph('4.2.1 Fotos: mande o endereço, a loja baixa o arquivo', H2))
+    add(Paragraph(
+        'Até a 3.4 este manual dizia que <font face="Courier">image</font> era da loja e que o ERP '
+        '<b>não devia enviar</b>. <b>Mudou.</b> O UNO tem as fotos dos produtos, e passar cada uma '
+        'à mão pelo painel não é trabalho que alguém termine: são mais de mil produtos.', P))
+    add(Paragraph(
+        'Agora o ERP manda <font face="Courier">image</font> com o <b>endereço público</b> da foto, '
+        'no mesmo envio do produto, e a loja <b>baixa o arquivo</b> e passa a servi-lo do próprio '
+        'domínio. Não é preciso nenhum segundo passo: o produto chega com imagem.', P))
+    add(Spacer(1, 6))
+    add(aviso(
+        'A loja BAIXA, não aponta',
+        'A diferença importa. Guardar o endereço deixaria a vitrine refém do servidor do UNO: uma '
+        'manutenção do lado de lá e a loja fica sem foto. Baixando, o arquivo vira da loja — mesmo '
+        'cache, mesmo domínio, e sobrevive a qualquer coisa.<br/><br/>'
+        '<b>O endereço precisa ser alcançável da internet.</b> A loja roda em hospedagem externa e '
+        'não enxerga a rede interna do cliente: <font face="Courier">http://192.168.0.10/fotos/...</font> '
+        'é recusado, e com razão — um servidor que busca qualquer endereço que lhe mandam é uma '
+        'porta para a rede interna.<br/><br/>'
+        '<b>O mesmo endereço não é baixado duas vezes.</b> A loja guarda de onde a foto veio; no '
+        'ciclo seguinte, se o endereço for o mesmo, ela devolve '
+        '<font face="Courier">ignored: [{field: "image", reason: "unchanged"}]</font> e não pede '
+        'nada. Mil e quatrocentos produtos não viram mil e quatrocentos downloads por ciclo. Para '
+        'trocar a foto, mande um endereço diferente.<br/><br/>'
+        '<b>Falhar na foto não derruba o produto.</b> Endereço fora do ar, resposta que não é '
+        'imagem ou arquivo acima de 3 MB devolvem 200 com o motivo em '
+        '<font face="Courier">warnings</font>, e o resto do produto é gravado. A foto que já estava '
+        'lá não é apagada.<br/><br/>'
+        '<b>A escolha do painel vence.</b> Se a lojista trocar a foto pelo painel, o campo fica '
+        'travado e o ERP recebe <font face="Courier">ignored: [{field: "image", reason: '
+        '"locked_in_panel"}]</font>. É a mesma regra dos outros campos.'))
+    add(Spacer(1, 6))
+    add(Paragraph(
+        'Quando o UNO não tiver como publicar um endereço, existe o caminho inverso — mandar o '
+        'arquivo: <font face="Courier">POST /api/v1/products/{id}/imagem</font> com '
+        '<font face="Courier">{"dataUrl": "data:image/jpeg;base64,..."}</font>. Mesma chave de API. '
+        'Com <font face="Courier">?galeria=1</font> a foto entra na galeria em vez de virar capa.', P))
     add(Spacer(1, 6))
     add(aviso(
         'Sem peso, o frete é cotado com 500 g por item',
@@ -1264,7 +1302,8 @@ GET /api/v1/products/{id} → { "product": { ..., "lockedFields": ["price"] } }
             ['name / description', 'ERP com sobrescrita', 'A loja costuma preferir o texto de vitrine ao do ERP.'],
             ['weight', 'ERP', 'Número, em quilos. Alimenta o frete; vazio custa dinheiro (seção 4).'],
             ['weightLabel', 'Painel', 'Medida exibida na vitrine. O ERP pode ignorar.'],
-            ['image / longDescription / tag / highlight', 'Loja', 'Conteúdo de vitrine; o ERP não deve enviar.'],
+            ['image', 'ERP com sobrescrita', 'Endereço público; a loja baixa (4.2.1). Travável no painel.'],
+            ['longDescription / tag / highlight', 'Loja', 'Conteúdo de vitrine; o ERP não deve enviar.'],
             ['active', 'ERP com sobrescrita', 'ERP inativa por descontinuação; loja, por curadoria.'],
             ['status do pedido', 'Compartilhado', 'Loja até paid; ERP de paid em diante.'],
         ],
