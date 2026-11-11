@@ -4071,7 +4071,8 @@ function conferirMidia(urls) {
     referenciadas: distintas.length,
     ausentes: faltando.length,
     exemplos: faltando.slice(0, 5),
-    pasta
+    pasta,
+    duravel: !/[/\\]hbuilds[/\\]versions[/\\]/.test(pasta)
   };
 }
 __name(conferirMidia, "conferirMidia");

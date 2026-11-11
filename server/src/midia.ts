@@ -188,6 +188,15 @@ export interface FotosAusentes {
   exemplos: string[];
   /** A pasta onde o servidor procura — é o que se muda no MIDIA_DIR. */
   pasta: string;
+  /**
+   * A pasta sobrevive a uma publicação?
+   *
+   * Falso quando ela está dentro do diretório de versão, que a hospedagem
+   * descarta a cada publicação. É o que separa "estas fotos se perderam antes
+   * da correção" de "estas vão se perder de novo" — duas situações que pedem
+   * ações opostas, e o aviso dizia a mesma coisa nas duas.
+   */
+  duravel: boolean;
 }
 
 export function conferirMidia(urls: string[]): FotosAusentes {
@@ -204,5 +213,6 @@ export function conferirMidia(urls: string[]): FotosAusentes {
     ausentes: faltando.length,
     exemplos: faltando.slice(0, 5),
     pasta,
+    duravel: !/[/\\]hbuilds[/\\]versions[/\\]/.test(pasta),
   };
 }

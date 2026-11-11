@@ -131,6 +131,23 @@ ok(
   String(conta.json?.pasta),
 );
 
+/*
+ * A pasta é durável? O aviso na tela muda inteiro por causa disto.
+ *
+ * Com a pasta já segura, "as novas vão sumir também" é mentira — e foi
+ * exatamente assim que a correção pareceu não ter funcionado: o texto mandava
+ * arrumar algo que já estava arrumado.
+ */
+ok(
+  typeof conta.json?.duravel === 'boolean',
+  '3 · e se aquela pasta sobrevive a uma publicação',
+  String(conta.json?.duravel),
+);
+ok(
+  conta.json?.duravel === !/[/\\]hbuilds[/\\]versions[/\\]/.test(String(conta.json?.pasta ?? '')),
+  '3 · dizendo a verdade sobre ela: durável é estar fora do diretório de versão',
+);
+
 // ------------------------------------------------------------ limpeza ----
 const id = produto.json?.product?.id ?? produto.json?.id ?? '';
 if (id !== '') await chamar('DELETE', `/api/admin/products/${id}?definitivo=1`);

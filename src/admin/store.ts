@@ -281,6 +281,8 @@ export function fotosAusentes(): Promise<{
   ausentes: number;
   exemplos: string[];
   pasta: string;
+  /** A pasta sobrevive a uma publicação? Decide o que o aviso manda fazer. */
+  duravel: boolean;
 }> {
   return api.get('/admin/midia/ausentes');
 }

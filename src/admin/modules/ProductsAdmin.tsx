@@ -77,7 +77,7 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
    * que não resolve, se a pasta continuar sendo apagada a cada publicação.
    */
   const [semArquivo, setSemArquivo] = useState<{
-    ausentes: number; referenciadas: number; pasta: string;
+    ausentes: number; referenciadas: number; pasta: string; duravel: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -181,18 +181,38 @@ export default function ProductsAdmin({ apenasSemCategoria = false }: ProductsAd
         </div>
       )}
 
+      {/*
+        Dois avisos, e não um.
+        Dizer a mesma coisa nos dois casos foi um erro caro de leitura: com a
+        pasta já segura, o aviso mandava arrumar algo que estava arrumado, e a
+        conclusão foi "não resolveu". A ação é oposta em cada caso.
+      */}
       {semArquivo !== null && semArquivo.ausentes > 0 && (
-        <div className="text-xs leading-relaxed text-red-900 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          <b>
-            {semArquivo.ausentes} de {semArquivo.referenciadas} foto(s) não estão no servidor.
-          </b>{' '}
-          O produto guarda o endereço da imagem, mas o arquivo não está mais na pasta
-          <code className="mx-1 font-mono">{semArquivo.pasta}</code> — por isso a miniatura
-          aparece em branco aqui e na loja. Subir a foto de novo resolve aquele produto, mas o
-          arquivo some outra vez se a pasta for substituída na próxima publicação: o normal é
-          apontar <code className="mx-1 font-mono">MIDIA_DIR</code> para uma pasta FORA da
-          aplicação, que o deploy não alcança.
-        </div>
+        semArquivo.duravel ? (
+          <div className="text-xs leading-relaxed text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+            <b>
+              {semArquivo.ausentes} de {semArquivo.referenciadas} foto(s) precisam ser enviadas
+              de novo.
+            </b>{' '}
+            O produto guarda o endereço da imagem, mas o arquivo não está na pasta
+            <code className="mx-1 font-mono">{semArquivo.pasta}</code> — por isso a miniatura
+            aparece em branco aqui e na loja. Essa pasta fica <b>fora</b> da aplicação e as
+            publicações não a alcançam: o que você subir a partir de agora fica. Estas aqui se
+            perderam antes disso, e só voltam sendo enviadas outra vez.
+          </div>
+        ) : (
+          <div className="text-xs leading-relaxed text-red-900 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+            <b>
+              {semArquivo.ausentes} de {semArquivo.referenciadas} foto(s) não estão no servidor —
+              e as próximas também vão sumir.
+            </b>{' '}
+            A pasta <code className="mx-1 font-mono">{semArquivo.pasta}</code> está dentro do
+            diretório que a hospedagem substitui a cada publicação. Enquanto ela não mudar, toda
+            foto enviada some na próxima vez que o site for publicado. Aponte
+            <code className="mx-1 font-mono">MIDIA_DIR</code> para um caminho absoluto fora da
+            aplicação <b>antes</b> de reenviar qualquer coisa.
+          </div>
+        )
       )}
 
       {aviso !== '' && (
