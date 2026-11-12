@@ -14,9 +14,43 @@ export type OrderStatus =
 
 export interface OrderItem {
   productId: string;
+  sku?: string;
   name: string;
   quantity: number;
   unitPrice: number;
+  discount?: number;
+  totalPrice?: number;
+}
+
+/** Para onde a encomenda vai. O ERP não emite nota nem etiqueta sem isto. */
+export interface ShippingAddress {
+  cep: string;
+  street: string;
+  number: string;
+  complement: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+  recipientName?: string;
+  phone?: string | null;
+}
+
+/**
+ * Como o pedido foi pago.
+ *
+ * `detail` é o motivo da recusa quando houve — é o campo que responde "por que
+ * esse pedido não virou venda", e sem ele a resposta exige abrir o painel do
+ * gateway.
+ */
+export interface PaymentDetails {
+  method: string;
+  brand?: string | null;
+  installments?: number;
+  paidAmount?: number | null;
+  gateway?: string | null;
+  transactionId?: string | null;
+  paidAt?: string | null;
+  detail?: string | null;
 }
 
 export interface Order {
@@ -59,6 +93,40 @@ export interface Order {
   canceledBy?: string | null;
   /** Notas fiscais enviadas pelo ERP no faturamento. Um pedido pode ter várias. */
   invoices?: OrderInvoice[];
+
+  /*
+   * ------------------------------------------------------------------
+   * O QUE A TELA DE PEDIDOS PRECISA PARA RESPONDER "PARA ONDE VAI E COMO
+   * FOI PAGO".
+   *
+   * Estes campos SEMPRE vieram do servidor — a API do ERP os consome desde
+   * o começo. Eles só não estavam declarados aqui, então o painel recebia
+   * tudo e não mostrava nada: para saber o endereço de um pedido era
+   * preciso abrir o banco.
+   * ------------------------------------------------------------------
+   */
+  customerCpf?: string;
+  /** Só dígitos, sem máscara. */
+  customerDocument?: string | null;
+  customerDocumentType?: string | null;
+  /** Observação escrita pelo comprador ("entregar após as 18h"). */
+  customerNote?: string | null;
+  shippingAddress?: ShippingAddress;
+  paymentDetails?: PaymentDetails;
+  /** "Jadlog · .Package — até 5 dias úteis": o texto que o cliente escolheu. */
+  shippingService?: string;
+  shippingCarrier?: string | null;
+  shippingServiceCode?: string | null;
+  shippingMinDays?: number;
+  shippingMaxDays?: number;
+  /** Desconto repartido: cupom e meio de pagamento são lançamentos diferentes. */
+  discountCoupon?: number;
+  discountPayment?: number;
+  updatedAt?: string;
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
+  canceledAt?: string | null;
+  trackingUrl?: string | null;
 }
 
 /** Uma NF-e do pedido. Os arquivos ficam fora do banco; aqui só as URLs. */
@@ -113,6 +181,17 @@ export interface StoreSettings {
   /** Mínimo em produtos para o desconto do Pix valer. 0 = vale sempre. */
   pixMinOrder: number;
   payments: { card: boolean; pix: boolean; boleto: boolean };
+  /**
+   * Loja fechada ao público.
+   *
+   * A vitrine vira um aviso e nenhum pedido é aceito. Nada é apagado: é uma
+   * cortina na frente da loja, não uma desmontagem.
+   */
+  storeClosed?: boolean;
+  /** O que o visitante lê quando está fechada. Vazio usa um texto padrão. */
+  closedMessage?: string;
+  /** Produto novo do ERP nasce retido para conferência de agrupamento. */
+  holdNewProducts?: boolean;
 }
 
 // ---- Abandoned carts ----

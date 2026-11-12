@@ -202,6 +202,29 @@ acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe par
 ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
 vez de uma caixa de trinta metros.
 
+## Loja fechada ao público
+
+Precisa da loja no ar.
+
+```bash
+npm run teste:loja-fechada
+```
+
+Montar uma loja leva semanas, e o endereço está no ar desde o primeiro dia.
+Esconder a vitrine no navegador **não fecha loja nenhuma**: o endereço do
+checkout continua respondendo, e basta um link antigo, um robô ou uma aba
+aberta de ontem para um pedido entrar no meio da montagem — com preço
+provisório, estoque errado e frete não configurado.
+
+Por isso o teste cobra as duas metades. A trava: pedido por link direto é
+recusado com 503 e a mensagem que a lojista escreveu, e cotar frete também —
+é o primeiro passo da compra. A passagem: quem está logado no painel atravessa
+tudo, que é como ela confere a própria loja sem reabrir para o público.
+
+E a parte que mais importa: **fechar não apaga nada**. Produtos e pedidos
+continuam no painel, e reabrir devolve a vitrine com exatamente os mesmos
+produtos. É uma cortina na frente da loja, não uma desmontagem.
+
 ## A foto vem junto com o produto do ERP
 
 Precisa da loja no ar. A segunda metade precisa de internet.

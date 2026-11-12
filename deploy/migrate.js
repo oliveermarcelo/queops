@@ -356,7 +356,25 @@ var init_store = __esm({
       // 0 mantém o comportamento de antes: desconto em qualquer valor.
       pixMinOrder: 0,
       holdNewProducts: true,
-      payments: { card: true, pix: true, boleto: true }
+      payments: { card: true, pix: true, boleto: true },
+      /*
+       * A loja está aberta ao público?
+       *
+       * Fechada, a vitrine mostra um aviso e ninguém compra — mas o painel
+       * continua inteiro e NADA é apagado: pedidos, produtos e cadastros ficam
+       * exatamente onde estão. É uma cortina na frente da loja, não uma
+       * desmontagem.
+       *
+       * Existe porque montar uma loja leva semanas e o endereço já está no ar
+       * desde o primeiro dia. Sem isto, a única forma de não receber um pedido no
+       * meio da montagem era não publicar o site — e aí ninguém consegue
+       * conferir como ele está ficando.
+       *
+       * Padrão ABERTA: uma loja que já vende não pode fechar sozinha por causa de
+       * uma atualização.
+       */
+      storeClosed: false,
+      closedMessage: ""
     };
     DEFAULT_SHIPPING = {
       defaultPrice: 24.9,

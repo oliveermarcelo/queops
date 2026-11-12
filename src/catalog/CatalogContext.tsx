@@ -31,6 +31,15 @@ export interface StorePublicSettings {
   freeShippingFrom: number;
   /** Frete padrão, usado como estimativa antes de o cliente informar o CEP. */
   shippingFrom: number;
+  /**
+   * Loja fechada ao público: a vitrine vira um aviso.
+   *
+   * Isto é APRESENTAÇÃO. Quem impede a compra é o servidor, que recusa o
+   * checkout com 503 — esconder a tela não fecha uma loja cujo endereço
+   * continua respondendo.
+   */
+  storeClosed?: boolean;
+  closedMessage?: string;
 }
 
 interface CatalogValue {
@@ -49,6 +58,8 @@ interface CatalogValue {
   categories: Category[];
   menu: MenuCategory[];
   settings: StorePublicSettings | null;
+  /** Quem está vendo é do painel? Decide se a loja fechada mostra o aviso. */
+  admin: boolean;
   loading: boolean;
   error: string | null;
   reload: () => void;
@@ -191,6 +202,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
       categories: data?.categories ?? [],
       menu: data?.menu ?? [],
       settings: data?.settings ?? null,
+      admin: data?.admin === true,
       loading,
       error,
       reload: load,

@@ -1716,7 +1716,16 @@ async function publicSettings(exec = q) {
     // 0 = não há frete grátis por valor.
     freeShippingFrom: free.enabled ? Number(free.minOrder ?? 0) || 0 : 0,
     // Estimativa exibida antes de o cliente informar o CEP.
-    shippingFrom: Number(sh.defaultPrice ?? 0) || 0
+    shippingFrom: Number(sh.defaultPrice ?? 0) || 0,
+    /*
+     * Loja fechada para o público. A vitrine troca tudo por um aviso.
+     *
+     * Sai aqui, e não só numa rota própria, porque a vitrine já busca este
+     * objeto na primeira tela: uma chamada a mais atrasaria a decisão e o
+     * cliente veria a loja piscar antes do aviso.
+     */
+    storeClosed: s.storeClosed === true,
+    closedMessage: String(s.closedMessage ?? "")
   };
 }
 function productRowToApi(r, codigos, galeria) {
@@ -2256,7 +2265,25 @@ var init_store = __esm({
       // 0 mantém o comportamento de antes: desconto em qualquer valor.
       pixMinOrder: 0,
       holdNewProducts: true,
-      payments: { card: true, pix: true, boleto: true }
+      payments: { card: true, pix: true, boleto: true },
+      /*
+       * A loja está aberta ao público?
+       *
+       * Fechada, a vitrine mostra um aviso e ninguém compra — mas o painel
+       * continua inteiro e NADA é apagado: pedidos, produtos e cadastros ficam
+       * exatamente onde estão. É uma cortina na frente da loja, não uma
+       * desmontagem.
+       *
+       * Existe porque montar uma loja leva semanas e o endereço já está no ar
+       * desde o primeiro dia. Sem isto, a única forma de não receber um pedido no
+       * meio da montagem era não publicar o site — e aí ninguém consegue
+       * conferir como ele está ficando.
+       *
+       * Padrão ABERTA: uma loja que já vende não pode fechar sozinha por causa de
+       * uma atualização.
+       */
+      storeClosed: false,
+      closedMessage: ""
     };
     DEFAULT_SHIPPING = {
       defaultPrice: 24.9,
@@ -6740,7 +6767,7 @@ publicRoutes.get("/payments/config", h(async (_req, res) => {
     methods: { card: metodos.card !== false, pix: metodos.pix !== false }
   });
 }));
-publicRoutes.get("/catalog", h(async (_req, res) => {
+publicRoutes.get("/catalog", h(async (req, res) => {
   const parents = await q.all("SELECT * FROM categories ORDER BY position ASC, name ASC");
   const children = /* @__PURE__ */ new Map();
   for (const s of await q.all("SELECT * FROM subcategories ORDER BY position ASC, name ASC")) {
@@ -6779,7 +6806,16 @@ publicRoutes.get("/catalog", h(async (_req, res) => {
      * ninguém percebe até um produto sumir da navegação.
      */
     menu: montarMenu(parents, children),
-    settings: await publicSettings()
+    settings: await publicSettings(),
+    /*
+     * Quem está pedindo é do painel?
+     *
+     * Vai junto com o catálogo, e não numa chamada à parte, porque decide a
+     * PRIMEIRA tela: com a loja fechada, a vitrine mostra o aviso para o
+     * visitante e a loja inteira para quem cuida dela. Numa segunda chamada, a
+     * loja piscaria antes de o aviso aparecer.
+     */
+    admin: await currentAdmin(req) !== null
   });
 }));
 publicRoutes.get("/products", h(async (_req, res) => {
@@ -6791,6 +6827,7 @@ publicRoutes.get("/products/:id", h(async (req, res) => {
   jsonOk(res, { product: productRowToApi(row) });
 }));
 publicRoutes.post("/checkout/quote", h(async (req, res) => {
+  if (await lojaFechadaPara(req)) await recusarPorLojaFechada();
   const b = body(req);
   const cotacao = await quoteCart(
     b.items,
@@ -6807,7 +6844,24 @@ publicRoutes.post("/checkout/quote", h(async (req, res) => {
   const admin = await currentAdmin(req);
   jsonOk(res, admin === null || !shippingNote ? publico : { ...publico, shippingNote });
 }));
+async function lojaFechadaPara(req) {
+  const s = await getSettings();
+  if (s.storeClosed !== true) return false;
+  return await currentAdmin(req) === null;
+}
+__name(lojaFechadaPara, "lojaFechadaPara");
+async function recusarPorLojaFechada() {
+  const s = await getSettings();
+  const msg = String(s.closedMessage ?? "").trim();
+  return fail(
+    msg !== "" ? msg : "A loja est\xE1 em prepara\xE7\xE3o e ainda n\xE3o est\xE1 aceitando pedidos.",
+    503,
+    "store_closed"
+  );
+}
+__name(recusarPorLojaFechada, "recusarPorLojaFechada");
 publicRoutes.post("/orders", h(async (req, res) => {
+  if (await lojaFechadaPara(req)) await recusarPorLojaFechada();
   const b = body(req);
   const name = bodyStr(b, "name", "", 160);
   const email = bodyStr(b, "email", "", 190).toLowerCase();

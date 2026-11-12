@@ -100,6 +100,57 @@ export default function SettingsAdmin() {
         </div>
       </Card>
 
+      {/*
+        A cortina da loja.
+        Fica num cartão próprio, e não no meio dos campos acima, porque é a
+        única configuração desta tela que decide se existe loja para o cliente.
+      */}
+      <Card className="p-5 space-y-3">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h3 className="font-bold text-gray-800">Loja aberta ao público</h3>
+            <p className="text-xs text-gray-400 leading-relaxed max-w-2xl mt-0.5">
+              Desligado, quem entrar no site vê um aviso em vez da vitrine, e nenhum pedido é
+              aceito — nem por link direto, nem por aba aberta de ontem. <b>Nada é apagado:</b>{' '}
+              produtos, pedidos e cadastros ficam onde estão, e tudo volta exatamente como
+              estava quando você reabrir.
+            </p>
+          </div>
+          <label className="flex items-center gap-2.5 cursor-pointer select-none shrink-0">
+            <input
+              type="checkbox"
+              checked={form.storeClosed !== true}
+              onChange={(e) => set({ storeClosed: !e.target.checked })}
+              className="accent-primary-blue w-5 h-5"
+            />
+            <span className={`text-sm font-bold ${
+              form.storeClosed === true ? 'text-amber-700' : 'text-emerald-700'
+            }`}>
+              {form.storeClosed === true ? 'Fechada' : 'Aberta'}
+            </span>
+          </label>
+        </div>
+
+        {form.storeClosed === true && (
+          <>
+            <Field label="O que o visitante vê (opcional)">
+              <textarea
+                rows={3}
+                value={form.closedMessage ?? ''}
+                onChange={(e) => set({ closedMessage: e.target.value })}
+                placeholder="Estamos preparando tudo com cuidado para receber você. Volte em breve."
+                className={inputCls}
+              />
+            </Field>
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Enquanto estiver fechada, <b>você continua vendo a loja normalmente</b> por estar
+              logada no painel — inclusive para testar uma compra. Para conferir o que o cliente
+              vê, abra o site numa janela anônima.
+            </p>
+          </>
+        )}
+      </Card>
+
       <div className="flex items-center justify-between gap-4">
         <p className="text-[11px] text-gray-400 max-w-sm">
           Estes valores valem para a loja inteira: o checkout usa o desconto do Pix e o mínimo de

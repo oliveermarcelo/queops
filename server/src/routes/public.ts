@@ -4,7 +4,7 @@
  * do navegador.
  */
 
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 
 import { csrfToken, currentAdmin, currentCustomerId } from '../auth.ts';
 import { nextCounter, q, transaction } from '../db.ts';
@@ -71,7 +71,7 @@ publicRoutes.get('/payments/config', h(async (_req, res) => {
 }));
 
 // GET /api/catalog — tudo que a vitrine precisa em uma requisição só
-publicRoutes.get('/catalog', h(async (_req, res) => {
+publicRoutes.get('/catalog', h(async (req, res) => {
   const parents = await q.all('SELECT * FROM categories ORDER BY position ASC, name ASC');
 
   const children = new Map<string, { id: string; name: string }[]>();
@@ -113,6 +113,15 @@ publicRoutes.get('/catalog', h(async (_req, res) => {
      */
     menu: montarMenu(parents, children),
     settings: await publicSettings(),
+    /*
+     * Quem está pedindo é do painel?
+     *
+     * Vai junto com o catálogo, e não numa chamada à parte, porque decide a
+     * PRIMEIRA tela: com a loja fechada, a vitrine mostra o aviso para o
+     * visitante e a loja inteira para quem cuida dela. Numa segunda chamada, a
+     * loja piscaria antes de o aviso aparecer.
+     */
+    admin: (await currentAdmin(req)) !== null,
   });
 }));
 
@@ -130,6 +139,9 @@ publicRoutes.get('/products/:id', h(async (req, res) => {
 
 // POST /api/checkout/quote — prévia de frete/cupom/total (sem gravar nada)
 publicRoutes.post('/checkout/quote', h(async (req, res) => {
+  // Cotar frete numa loja fechada é o primeiro passo de uma compra que não
+  // pode acontecer. Recusar aqui dá a mensagem certa antes do checkout.
+  if (await lojaFechadaPara(req)) await recusarPorLojaFechada();
   const b = body(req);
   const cotacao = await quoteCart(
     b.items,
@@ -154,8 +166,38 @@ publicRoutes.post('/checkout/quote', h(async (req, res) => {
   jsonOk(res, admin === null || !shippingNote ? publico : { ...publico, shippingNote });
 }));
 
+/**
+ * A loja está fechada para quem está pedindo?
+ *
+ * Esconder a vitrine no navegador não fecha loja nenhuma: o endereço do
+ * checkout continua respondendo, e basta um link antigo, um robô ou uma aba
+ * aberta de ontem para um pedido entrar no meio da montagem. A trava precisa
+ * estar AQUI, onde o pedido é criado.
+ *
+ * Quem está logado no painel passa. É o que permite à lojista percorrer a
+ * própria loja de ponta a ponta — inclusive comprando, para conferir — sem
+ * reabrir para o público.
+ */
+async function lojaFechadaPara(req: Request): Promise<boolean> {
+  const s = await getSettings();
+  if (s.storeClosed !== true) return false;
+  return (await currentAdmin(req)) === null;
+}
+
+/** 503 com o texto que a lojista escreveu, ou um padrão. */
+async function recusarPorLojaFechada(): Promise<never> {
+  const s = await getSettings();
+  const msg = String(s.closedMessage ?? '').trim();
+  return fail(
+    msg !== '' ? msg : 'A loja está em preparação e ainda não está aceitando pedidos.',
+    503,
+    'store_closed',
+  );
+}
+
 // POST /api/orders — cria o pedido de verdade
 publicRoutes.post('/orders', h(async (req, res) => {
+  if (await lojaFechadaPara(req)) await recusarPorLojaFechada();
   const b = body(req);
 
   const name = bodyStr(b, 'name', '', 160);

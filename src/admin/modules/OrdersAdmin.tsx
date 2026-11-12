@@ -4,7 +4,10 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { FileCode2, FileText, Loader2, Package, Printer, Search, Trash2 } from 'lucide-react';
+import {
+  ChevronDown, ChevronRight, FileCode2, FileText, Loader2, MapPin, Package, Printer,
+  Search, Trash2, Wallet,
+} from 'lucide-react';
 import { useAdmin } from '../AdminContext';
 import { cancelarEtiqueta, fetchOrderTracking, gerarEtiqueta, setOrderTracking } from '../store';
 import { Order, OrderInvoice, OrderStatus, TrackingEvent } from '../types';
@@ -18,6 +21,168 @@ import { brl, fmtDate, Btn, Card, ConfirmDialog, inputCls } from '../ui';
  * tela é como o botão de excluir produto passou a prometer o que a rota
  * recusava.
  */
+/** Nome legível do meio de pagamento. */
+const MEIO: Record<string, string> = {
+  pix: 'Pix',
+  card: 'Cartão de crédito',
+  boleto: 'Boleto',
+};
+
+/** "Rua X, 100 — Centro" a partir do que estiver preenchido. */
+function enderecoEmLinhas(e: NonNullable<Order['shippingAddress']>): string[] {
+  const rua = [e.street, e.number].filter((x) => String(x ?? '').trim() !== '').join(', ');
+  const linha1 = [rua, e.complement].filter((x) => String(x ?? '').trim() !== '').join(' — ');
+  const cidade = [e.city, e.state].filter((x) => String(x ?? '').trim() !== '').join('/');
+  const linha2 = [e.neighborhood, cidade].filter((x) => String(x ?? '').trim() !== '').join(' — ');
+  const cep = String(e.cep ?? '').trim();
+  return [linha1, linha2, cep === '' ? '' : `CEP ${cep}`].filter((l) => l !== '');
+}
+
+/**
+ * Tudo que a lojista precisa saber sobre um pedido, sem abrir o banco.
+ *
+ * A tela listava sete colunas e parava aí: cliente, canal, data, total,
+ * status. Para saber PARA ONDE mandar, ou COMO foi pago, não havia lugar
+ * nenhum no painel — e esses dois são justamente o que se olha depois de uma
+ * venda. Os dados sempre vieram do servidor (a API do ERP os consome desde o
+ * começo); o que faltava era mostrá-los.
+ */
+function DetalheDoPedido({ o }: { o: Order; key?: React.Key }) {
+  const ender = o.shippingAddress;
+  const pag = o.paymentDetails;
+  const temEndereco = ender !== undefined
+    && [ender.street, ender.city, ender.cep].some((x) => String(x ?? '').trim() !== '');
+
+  const Bloco = ({ titulo, icone, children }: {
+    titulo: string; icone: React.ReactNode; children: React.ReactNode;
+  }) => (
+    <div className="bg-white border border-gray-150 rounded-xl p-3.5">
+      <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">
+        {icone} {titulo}
+      </div>
+      {children}
+    </div>
+  );
+
+  const Linha = ({ rotulo, valor }: { rotulo: string; valor: React.ReactNode }) => (
+    <div className="flex justify-between gap-3 text-xs py-0.5">
+      <span className="text-gray-500 shrink-0">{rotulo}</span>
+      <span className="text-gray-800 text-right break-words">{valor}</span>
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 py-2">
+      {/* ------------------------------------------------ entrega ---- */}
+      <Bloco titulo="Entrega" icone={<MapPin size={13} />}>
+        {temEndereco ? (
+          <>
+            {(ender.recipientName ?? '') !== '' && (
+              <p className="text-sm font-semibold text-gray-800 mb-1">{ender.recipientName}</p>
+            )}
+            {enderecoEmLinhas(ender).map((l) => (
+              <p key={l} className="text-xs text-gray-700 leading-relaxed">{l}</p>
+            ))}
+            {(ender.phone ?? '') !== '' && (
+              <p className="text-xs text-gray-500 mt-1">Telefone: {ender.phone}</p>
+            )}
+          </>
+        ) : (
+          /*
+            Pedido sem endereço existe: retirada combinada, venda pelo
+            WhatsApp lançada à mão. Dizer isso é melhor que um bloco em
+            branco, que parece defeito.
+          */
+          <p className="text-xs text-gray-400">
+            Sem endereço de entrega neste pedido.
+          </p>
+        )}
+        {(o.shippingService ?? '') !== '' && (
+          <p className="text-xs text-gray-600 mt-2 pt-2 border-t border-gray-100">
+            <b>Frete:</b> {o.shippingService}
+          </p>
+        )}
+        {(o.customerNote ?? '') !== '' && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-2">
+            <b>Recado do cliente:</b> {o.customerNote}
+          </p>
+        )}
+      </Bloco>
+
+      {/* ---------------------------------------------- pagamento ---- */}
+      <Bloco titulo="Pagamento" icone={<Wallet size={13} />}>
+        <Linha rotulo="Forma" valor={MEIO[pag?.method ?? o.payment] ?? (pag?.method ?? o.payment)} />
+        {(pag?.installments ?? 0) > 1 && <Linha rotulo="Parcelas" valor={`${pag?.installments}x`} />}
+        {(pag?.brand ?? '') !== '' && pag?.brand != null && <Linha rotulo="Bandeira" valor={pag.brand} />}
+        {(pag?.gateway ?? '') !== '' && pag?.gateway != null && <Linha rotulo="Gateway" valor={pag.gateway} />}
+        <Linha
+          rotulo="Pago em"
+          valor={o.paidAt ? fmtDate(o.paidAt) : <span className="text-amber-700">ainda não</span>}
+        />
+        {(pag?.transactionId ?? '') !== '' && pag?.transactionId != null && (
+          <Linha
+            rotulo="Transação"
+            valor={<code className="font-mono text-[10px]">{pag.transactionId}</code>}
+          />
+        )}
+        {/*
+          O motivo da recusa é o campo que responde "por que esta venda não
+          aconteceu". Sem ele, a resposta exige abrir o painel do gateway.
+        */}
+        {(pag?.detail ?? '') !== '' && pag?.detail != null && (
+          <p className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 mt-2">
+            {pag.detail}
+          </p>
+        )}
+        {(o.cancelReason ?? '') !== '' && (
+          <p className="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 mt-2">
+            <b>Cancelado:</b> {o.cancelReason}
+            {(o.canceledBy ?? '') !== '' && ` (${o.canceledBy})`}
+          </p>
+        )}
+      </Bloco>
+
+      {/* ------------------------------------------------- compra ---- */}
+      <Bloco titulo="Compra" icone={<Package size={13} />}>
+        <div className="space-y-1 mb-2">
+          {o.items.map((i, n) => (
+            <div key={`${i.productId}-${n}`} className="flex justify-between gap-2 text-xs">
+              <span className="text-gray-700">
+                {i.quantity}× {i.name}
+                {(i.sku ?? '') !== '' && (
+                  <span className="text-gray-400 font-mono text-[10px]"> · {i.sku}</span>
+                )}
+              </span>
+              <span className="text-gray-800 whitespace-nowrap">
+                {brl(i.totalPrice ?? i.quantity * i.unitPrice)}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="pt-2 border-t border-gray-100">
+          <Linha rotulo="Produtos" valor={brl(o.subtotal)} />
+          <Linha rotulo="Frete" valor={brl(o.shipping)} />
+          {o.discount > 0 && (
+            <Linha
+              rotulo={o.couponCode ? `Desconto (${o.couponCode})` : 'Desconto'}
+              valor={<span className="text-emerald-700">− {brl(o.discount)}</span>}
+            />
+          )}
+          <div className="flex justify-between gap-3 text-sm font-bold pt-1.5 mt-1 border-t border-gray-100">
+            <span>Total</span>
+            <span>{brl(o.total)}</span>
+          </div>
+        </div>
+        <div className="mt-2 pt-2 border-t border-gray-100 space-y-0.5">
+          <Linha rotulo="E-mail" valor={o.customerEmail} />
+          {(o.customerPhone ?? '') !== '' && <Linha rotulo="Telefone" valor={o.customerPhone} />}
+          {(o.customerCpf ?? '') !== '' && <Linha rotulo="CPF/CNPJ" valor={o.customerCpf} />}
+        </div>
+      </Bloco>
+    </div>
+  );
+}
+
 function motivoParaNaoApagar(o: Order): string {
   if (o.paidAt || o.status === 'paid' || o.status === 'shipped' || o.status === 'delivered') {
     return 'Pedido pago não pode ser apagado — é o registro de dinheiro que entrou';
@@ -412,6 +577,11 @@ export default function OrdersAdmin() {
   const [filter, setFilter] = useState<OrderStatus | 'all'>('all');
   const [query, setQuery] = useState('');
   const [apagando, setApagando] = useState<Order | null>(null);
+  /** Pedidos com o detalhe aberto. Vários de uma vez: a lojista compara. */
+  const [abertos, setAbertos] = useState<string[]>([]);
+  const alternar = (id: string) => setAbertos(
+    (a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]),
+  );
   const [cancelando, setCancelando] = useState<Order | null>(null);
 
   const orders = useMemo(() => {
@@ -461,16 +631,38 @@ export default function OrdersAdmin() {
             <tbody>
               {orders.map((o) => (
                 <React.Fragment key={o.id}>
-                <tr className="border-b border-gray-50 hover:bg-gray-50/50">
-                  <td className="py-2.5 px-4 font-mono text-xs font-bold text-gray-700">{o.id}</td>
+                <tr
+                  className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer"
+                  /*
+                    A linha inteira abre o detalhe.
+                    Um botãozinho numa ponta é fácil de não achar — e o que a
+                    lojista quer, depois de uma venda, é justamente abrir o
+                    pedido. O clique no seletor de status e no botão de apagar
+                    não propaga (ver os onClick deles).
+                  */
+                  onClick={() => alternar(o.id)}
+                >
+                  <td className="py-2.5 px-4 font-mono text-xs font-bold text-gray-700">
+                    <span className="inline-flex items-center gap-1.5">
+                      {abertos.includes(o.id)
+                        ? <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                        : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
+                      {o.id}
+                    </span>
+                  </td>
                   <td className="py-2.5 px-4">
                     <p className="text-gray-700">{o.customerName}</p>
-                    <p className="text-[11px] text-gray-400">{o.items.length} item(ns)</p>
+                    <p className="text-[11px] text-gray-400">
+                      {o.items.length} item(ns)
+                      {(o.shippingAddress?.city ?? '') !== '' && (
+                        <> · {o.shippingAddress?.city}/{o.shippingAddress?.state}</>
+                      )}
+                    </p>
                   </td>
                   <td className="py-2.5 px-4 text-gray-500 text-xs">{CHANNEL_LABEL[o.channel]}</td>
                   <td className="py-2.5 px-4 text-gray-500 text-xs">{fmtDate(o.createdAt)}</td>
                   <td className="py-2.5 px-4 text-right font-semibold">{brl(o.total)}</td>
-                  <td className="py-2.5 px-4">
+                  <td className="py-2.5 px-4" onClick={(e) => e.stopPropagation()}>
                     <select
                       value={o.status}
                       /*
@@ -501,7 +693,7 @@ export default function OrdersAdmin() {
                       regra; sumir só faz procurar um botão que não existe.
                     */}
                     <button
-                      onClick={() => setApagando(o)}
+                      onClick={(e) => { e.stopPropagation(); setApagando(o); }}
                       disabled={motivoParaNaoApagar(o) !== ''}
                       title={motivoParaNaoApagar(o) || 'Apagar pedido'}
                       className="p-2 rounded-lg text-gray-400 enabled:hover:text-brand-red enabled:hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
@@ -510,6 +702,13 @@ export default function OrdersAdmin() {
                     </button>
                   </td>
                 </tr>
+                {abertos.includes(o.id) && (
+                  <tr className="border-b border-gray-50 bg-gray-50/60">
+                    <td colSpan={7} className="px-4">
+                      <DetalheDoPedido o={o} />
+                    </td>
+                  </tr>
+                )}
                 {/* Rastreio: só a partir do pago — antes disso não há o que despachar. */}
                 {(o.status === 'paid' || o.status === 'shipped' || o.status === 'delivered') && (
                   <tr className="border-b border-gray-50 bg-gray-50/30">

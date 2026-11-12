@@ -26,6 +26,7 @@
     "teste:cobranca": "node --env-file-if-exists=.env tests/cobranca-http.mjs",
     "teste:usuarios": "node --env-file-if-exists=.env tests/usuarios-http.mjs",
     "teste:produto-erp": "node --env-file-if-exists=.env tests/produto-erp-http.mjs",
+    "teste:loja-fechada": "node --env-file-if-exists=.env tests/loja-fechada.mjs",
     "teste:imagem-erp": "node --env-file-if-exists=.env tests/imagem-do-erp.mjs",
     "teste:fotos-massa": "node --env-file-if-exists=.env tests/fotos-em-massa.mjs",
     "teste:pasta": "node --env-file-if-exists=.env tests/pasta-duravel.mjs",

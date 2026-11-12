@@ -42,6 +42,10 @@ export interface StoreSettings {
    */
   holdNewProducts: boolean;
   payments: { card: boolean; pix: boolean; boleto: boolean };
+  /** Loja fechada ao público: a vitrine vira um aviso e ninguém compra. */
+  storeClosed: boolean;
+  /** O que o visitante lê quando a loja está fechada. Vazio usa um texto padrão. */
+  closedMessage: string;
   [k: string]: unknown;
 }
 
@@ -91,6 +95,24 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   pixMinOrder: 0,
   holdNewProducts: true,
   payments: { card: true, pix: true, boleto: true },
+  /*
+   * A loja está aberta ao público?
+   *
+   * Fechada, a vitrine mostra um aviso e ninguém compra — mas o painel
+   * continua inteiro e NADA é apagado: pedidos, produtos e cadastros ficam
+   * exatamente onde estão. É uma cortina na frente da loja, não uma
+   * desmontagem.
+   *
+   * Existe porque montar uma loja leva semanas e o endereço já está no ar
+   * desde o primeiro dia. Sem isto, a única forma de não receber um pedido no
+   * meio da montagem era não publicar o site — e aí ninguém consegue
+   * conferir como ele está ficando.
+   *
+   * Padrão ABERTA: uma loja que já vende não pode fechar sozinha por causa de
+   * uma atualização.
+   */
+  storeClosed: false,
+  closedMessage: '',
 };
 
 export const DEFAULT_SHIPPING: ShippingConfig = {
@@ -222,6 +244,15 @@ export async function publicSettings(exec: Q = q): Promise<Record<string, unknow
     freeShippingFrom: free.enabled ? Number(free.minOrder ?? 0) || 0 : 0,
     // Estimativa exibida antes de o cliente informar o CEP.
     shippingFrom: Number(sh.defaultPrice ?? 0) || 0,
+    /*
+     * Loja fechada para o público. A vitrine troca tudo por um aviso.
+     *
+     * Sai aqui, e não só numa rota própria, porque a vitrine já busca este
+     * objeto na primeira tela: uma chamada a mais atrasaria a decisão e o
+     * cliente veria a loja piscar antes do aviso.
+     */
+    storeClosed: s.storeClosed === true,
+    closedMessage: String(s.closedMessage ?? ''),
   };
 }
 
