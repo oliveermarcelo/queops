@@ -13,6 +13,7 @@ import React, { Suspense } from 'react';
 import App from './App';
 import { CatalogProvider, useCatalog } from './catalog/CatalogContext';
 import LojaFechada from './components/LojaFechada';
+import WhatsAppFlutuante from './components/WhatsAppFlutuante';
 
 const AdminApp = React.lazy(() => import('./admin/AdminApp'));
 
@@ -51,6 +52,15 @@ function LojaOuAviso() {
   return (
     <>
       <App />
+      {/*
+        Em TODA a loja — home, produto, categoria, checkout e as páginas de
+        política. Fica aqui, e não dentro do App, porque o App troca de tela
+        por estado: colocado lá dentro, o botão sumiria justamente nas telas
+        onde a dúvida aparece.
+
+        Não entra no painel: /admin nem chega neste componente.
+      */}
+      <WhatsAppFlutuante numero={settings?.whatsapp} nomeDaLoja={settings?.name} />
       {/*
         Quem cuida da loja precisa saber que está vendo algo que o cliente não
         vê. Sem esta faixa, a lojista confere a vitrine, acha tudo normal, e

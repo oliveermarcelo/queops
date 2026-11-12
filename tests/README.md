@@ -202,6 +202,25 @@ acontece nos extremos — em branco cai no mínimo, menor que o mínimo sobe par
 ele (o balcão recusaria), e um zero a mais digitado por engano vira 200 cm em
 vez de uma caixa de trinta metros.
 
+## O WhatsApp em todas as telas
+
+Precisa da loja no ar e do Chromium.
+
+```bash
+node tests/e2e/whatsapp-flutuante.mjs
+```
+
+O contato existia só no rodapé — só para quem rolasse até o fim. Quem está em
+dúvida no meio de uma página de produto é exatamente quem mais precisa
+perguntar, e era de quem o caminho estava mais longe.
+
+O teste cobra as três coisas que separam um botão flutuante útil de um
+estorvo: aparece em **todas** as telas da loja (inclusive nas páginas de
+política, que têm URL própria e remontam a árvore), **não** aparece no painel,
+e fica **abaixo** dos modais — medido com `elementFromPoint` no canto da tela,
+com a sacola aberta. Um botão flutuante por cima de um formulário cobre
+justamente o campo que a pessoa ia preencher.
+
 ## Loja fechada ao público
 
 Precisa da loja no ar.
